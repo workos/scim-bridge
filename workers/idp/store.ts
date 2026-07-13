@@ -1,0 +1,327 @@
+import type { IdpActivity, IdpAutoState, IdpGroup, IdpUser, Origin } from "./types";
+import { withD1Retry } from "../shared/db";
+
+export async function listUsers(db: D1Database, connectionId: string): Promise<IdpUser[]> {
+  const { results } = await withD1Retry(() =>
+    db
+      .prepare("SELECT * FROM idp_users WHERE connection_id = ? ORDER BY created_at")
+      .bind(connectionId)
+      .all<IdpUser>(),
+  );
+  return results;
+}
+
+export async function listGroups(db: D1Database, connectionId: string): Promise<IdpGroup[]> {
+  const { results } = await withD1Retry(() =>
+    db
+      .prepare("SELECT * FROM idp_groups WHERE connection_id = ? ORDER BY created_at")
+      .bind(connectionId)
+      .all<IdpGroup>(),
+  );
+  return results;
+}
+
+export async function listMembers(
+  db: D1Database,
+  connectionId: string,
+): Promise<{ group_id: string; user_id: string }[]> {
+  const { results } = await withD1Retry(() =>
+    db
+      .prepare(
+        "SELECT m.group_id, m.user_id FROM idp_group_members m " +
+          "JOIN idp_groups g ON g.id = m.group_id WHERE g.connection_id = ?",
+      )
+      .bind(connectionId)
+      .all<{ group_id: string; user_id: string }>(),
+  );
+  return results;
+}
+
+export async function getUser(db: D1Database, id: string): Promise<IdpUser | null> {
+  return withD1Retry(() =>
+    db.prepare("SELECT * FROM idp_users WHERE id = ?").bind(id).first<IdpUser>(),
+  );
+}
+
+export async function getGroup(db: D1Database, id: string): Promise<IdpGroup | null> {
+  return withD1Retry(() =>
+    db.prepare("SELECT * FROM idp_groups WHERE id = ?").bind(id).first<IdpGroup>(),
+  );
+}
+
+export async function userByUserName(
+  db: D1Database,
+  connectionId: string,
+  userName: string,
+): Promise<IdpUser | null> {
+  return withD1Retry(() =>
+    db
+      .prepare("SELECT * FROM idp_users WHERE connection_id = ? AND user_name = ?")
+      .bind(connectionId, userName)
+      .first<IdpUser>(),
+  );
+}
+
+export async function groupByDisplayName(
+  db: D1Database,
+  connectionId: string,
+  displayName: string,
+): Promise<IdpGroup | null> {
+  return withD1Retry(() =>
+    db
+      .prepare("SELECT * FROM idp_groups WHERE connection_id = ? AND display_name = ?")
+      .bind(connectionId, displayName)
+      .first<IdpGroup>(),
+  );
+}
+
+export async function insertUser(
+  db: D1Database,
+  user: Pick<
+    IdpUser,
+    "connection_id" | "user_name" | "external_id" | "given_name" | "family_name" | "active"
+  >,
+): Promise<IdpUser> {
+  return withD1Retry(
+    () =>
+      db
+        .prepare(
+          "INSERT INTO idp_users (connection_id, user_name, external_id, given_name, family_name, active) " +
+            "VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
+        )
+        .bind(
+          user.connection_id,
+          user.user_name,
+          user.external_id,
+          user.given_name,
+          user.family_name,
+          user.active,
+        )
+        .first<IdpUser>() as Promise<IdpUser>,
+  );
+}
+
+export async function insertGroup(
+  db: D1Database,
+  group: Pick<IdpGroup, "connection_id" | "display_name" | "external_id">,
+): Promise<IdpGroup> {
+  return withD1Retry(
+    () =>
+      db
+        .prepare(
+          "INSERT INTO idp_groups (connection_id, display_name, external_id) VALUES (?, ?, ?) RETURNING *",
+        )
+        .bind(group.connection_id, group.display_name, group.external_id)
+        .first<IdpGroup>() as Promise<IdpGroup>,
+  );
+}
+
+export async function setUserScimId(
+  db: D1Database,
+  id: string,
+  scimId: string | null,
+  status: number,
+): Promise<void> {
+  await withD1Retry(() =>
+    db
+      .prepare(
+        "UPDATE idp_users SET scim_id = COALESCE(?, scim_id), last_status = ?, updated_at = datetime('now') WHERE id = ?",
+      )
+      .bind(scimId, status, id)
+      .run(),
+  );
+}
+
+export async function setGroupScimId(
+  db: D1Database,
+  id: string,
+  scimId: string | null,
+  status: number,
+): Promise<void> {
+  await withD1Retry(() =>
+    db
+      .prepare(
+        "UPDATE idp_groups SET scim_id = COALESCE(?, scim_id), last_status = ?, updated_at = datetime('now') WHERE id = ?",
+      )
+      .bind(scimId, status, id)
+      .run(),
+  );
+}
+
+export async function setUserActive(
+  db: D1Database,
+  id: string,
+  active: number,
+  status: number,
+): Promise<void> {
+  await withD1Retry(() =>
+    db
+      .prepare(
+        "UPDATE idp_users SET active = ?, last_status = ?, updated_at = datetime('now') WHERE id = ?",
+      )
+      .bind(active, status, id)
+      .run(),
+  );
+}
+
+export async function setUserName(
+  db: D1Database,
+  id: string,
+  givenName: string,
+  familyName: string,
+  status: number,
+): Promise<void> {
+  await withD1Retry(() =>
+    db
+      .prepare(
+        "UPDATE idp_users SET given_name = ?, family_name = ?, last_status = ?, updated_at = datetime('now') WHERE id = ?",
+      )
+      .bind(givenName, familyName, status, id)
+      .run(),
+  );
+}
+
+export async function renameGroup(
+  db: D1Database,
+  id: string,
+  displayName: string,
+  status: number,
+): Promise<void> {
+  await withD1Retry(() =>
+    db
+      .prepare(
+        "UPDATE idp_groups SET display_name = ?, last_status = ?, updated_at = datetime('now') WHERE id = ?",
+      )
+      .bind(displayName, status, id)
+      .run(),
+  );
+}
+
+export async function deleteUser(db: D1Database, id: string): Promise<void> {
+  await withD1Retry(() =>
+    db.batch([
+      db.prepare("DELETE FROM idp_group_members WHERE user_id = ?").bind(id),
+      db.prepare("DELETE FROM idp_users WHERE id = ?").bind(id),
+    ]),
+  );
+}
+
+export async function deleteGroup(db: D1Database, id: string): Promise<void> {
+  await withD1Retry(() =>
+    db.batch([
+      db.prepare("DELETE FROM idp_group_members WHERE group_id = ?").bind(id),
+      db.prepare("DELETE FROM idp_groups WHERE id = ?").bind(id),
+    ]),
+  );
+}
+
+export async function addMember(db: D1Database, groupId: string, userId: string): Promise<void> {
+  await withD1Retry(() =>
+    db
+      .prepare("INSERT OR IGNORE INTO idp_group_members (group_id, user_id) VALUES (?, ?)")
+      .bind(groupId, userId)
+      .run(),
+  );
+}
+
+export async function removeMember(db: D1Database, groupId: string, userId: string): Promise<void> {
+  await withD1Retry(() =>
+    db
+      .prepare("DELETE FROM idp_group_members WHERE group_id = ? AND user_id = ?")
+      .bind(groupId, userId)
+      .run(),
+  );
+}
+
+export async function memberIds(db: D1Database, groupId: string): Promise<string[]> {
+  const { results } = await withD1Retry(() =>
+    db
+      .prepare("SELECT user_id FROM idp_group_members WHERE group_id = ?")
+      .bind(groupId)
+      .all<{ user_id: string }>(),
+  );
+  return results.map((r) => r.user_id);
+}
+
+export async function logActivity(
+  db: D1Database,
+  entry: {
+    connection_id: string;
+    origin: Origin;
+    action: string;
+    subject?: string | null;
+    method?: string | null;
+    path?: string | null;
+    status?: number | null;
+    ok: boolean;
+    detail?: string | null;
+  },
+): Promise<void> {
+  await withD1Retry(() =>
+    db
+      .prepare(
+        "INSERT INTO idp_activity (connection_id, origin, action, subject, method, path, status, ok, detail) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .bind(
+        entry.connection_id,
+        entry.origin,
+        entry.action,
+        entry.subject ?? null,
+        entry.method ?? null,
+        entry.path ?? null,
+        entry.status ?? null,
+        entry.ok ? 1 : 0,
+        entry.detail ?? null,
+      )
+      .run(),
+  );
+}
+
+export async function getAutoState(
+  db: D1Database,
+  connectionId: string,
+): Promise<IdpAutoState | null> {
+  return withD1Retry(() =>
+    db
+      .prepare("SELECT * FROM idp_auto_state WHERE connection_id = ?")
+      .bind(connectionId)
+      .first<IdpAutoState>(),
+  );
+}
+
+export async function setAutoState(
+  db: D1Database,
+  connectionId: string,
+  patch: { running?: boolean; interval_ms?: number; tickDelta?: number },
+): Promise<void> {
+  const current = await getAutoState(db, connectionId);
+  const running = patch.running ?? (current ? current.running === 1 : false);
+  const interval = patch.interval_ms ?? current?.interval_ms ?? 4000;
+  const ticks = (current?.tick_count ?? 0) + (patch.tickDelta ?? 0);
+  await withD1Retry(() =>
+    db
+      .prepare(
+        "INSERT INTO idp_auto_state (connection_id, running, interval_ms, tick_count, updated_at) " +
+          "VALUES (?, ?, ?, ?, datetime('now')) " +
+          "ON CONFLICT (connection_id) DO UPDATE SET running = excluded.running, " +
+          "interval_ms = excluded.interval_ms, tick_count = excluded.tick_count, updated_at = excluded.updated_at",
+      )
+      .bind(connectionId, running ? 1 : 0, interval, ticks)
+      .run(),
+  );
+}
+
+export async function activity(
+  db: D1Database,
+  connectionId: string,
+  limit = 50,
+): Promise<IdpActivity[]> {
+  const { results } = await withD1Retry(() =>
+    db
+      .prepare("SELECT * FROM idp_activity WHERE connection_id = ? ORDER BY id DESC LIMIT ?")
+      .bind(connectionId, limit)
+      .all<IdpActivity>(),
+  );
+  return results;
+}
