@@ -45,19 +45,19 @@ imported through the control panel.
 | `PORT` | no | `8080` | HTTP port the server listens on. |
 | `DATABASE_PATH` | no | `/data/scim-bridge.db` | SQLite file path. Mount a volume here to persist. |
 | `PANEL_AUTH_USER` / `PANEL_AUTH_PASSWORD` | no | — | HTTP Basic credentials guarding the control panel. Both blank = unauthenticated (front it with your own proxy/SSO). |
-| `APP_ENCRYPTION_KEY` | no | — | Reserved for encrypting per-connection tokens at rest. |
+| `APP_ENCRYPTION_KEY` | no | — | Reserved for encrypting per-directory tokens at rest. |
 | `DEMO_MODE` | no | `false` | Mount the bundled IdP + native-app simulators under `/__demo` for a self-contained end-to-end demo. |
 
-The `/scim/v2` data-plane is always authenticated by the per-connection proxy
+The `/scim/v2` data-plane is always authenticated by the per-directory proxy
 token the panel mints — panel auth does not gate it.
 
 ## Importing a directory
 
-1. Open `/panel` and create a connection (a directory to migrate).
+1. Open `/panel` and create a directory to migrate.
 2. Paste your **existing app's SCIM** base URL + bearer token, and the **WorkOS
    directory** endpoint + bearer token (from the WorkOS dashboard).
 3. Copy the minted **SCIM base URL + proxy token** into your IdP's SCIM
-   configuration. The connection starts in `passthrough`, so repointing the IdP
+   configuration. The directory starts in `passthrough`, so repointing the IdP
    changes no behavior — every request still reaches your native app.
 4. Advance the mode: `passthrough → dual-write → backfill → cut over`, verifying
    convergence in the Live/Mappings tabs. Roll back any time before commit.
@@ -65,8 +65,16 @@ token the panel mints — panel auth does not gate it.
 ## Demo mode
 
 `DEMO_MODE=true` mounts a simulated IdP and native SCIM app in-process (under
-`/__demo`) and points a new connection at them, so you can drive the whole
+`/__demo`) and points a new directory at them, so you can drive the whole
 migration loop with no real IdP or WorkOS account. Leave it off in production.
+
+> The **proxy handles many directories** — each imported directory is routed by
+> its own proxy token. The **bundled simulator**, though, models a **single**
+> directory (its mock WorkOS and native app share one store), so the demo runs
+> one directory end-to-end. The reference DSync listener resolves each event's
+> directory and migration mode per-directory (`directoryModeForEvent` in
+> `workers/native/listener.ts`); a real customer maps the WorkOS `directory_id`
+> to their own directory record there.
 
 ## Development
 

@@ -1,4 +1,4 @@
-import type { Connection } from "../shared/types";
+import type { Directory } from "../shared/types";
 import { getConfig } from "../shared/db";
 import * as store from "./store";
 import type { IdpEnv, IdpGroup, IdpUser, Origin } from "./types";
@@ -13,7 +13,7 @@ interface ScimResult {
 }
 
 /** Where the simulated IdP points — the proxy's inbound SCIM endpoint, keyed
- *  by the connection's proxy token, exactly as a real Okta connection would. */
+ *  by the directory's proxy token, exactly as a real Okta directory would. */
 async function scimBase(db: D1Database): Promise<string> {
   const url = (await getConfig(db, "proxy.public_url")) ?? "http://localhost:8787";
   return `${url.replace(/\/+$/, "")}/scim/v2`;
@@ -66,7 +66,7 @@ function groupResource(group: IdpGroup, members: { value: string }[]): Record<st
 
 export interface ActionContext {
   env: IdpEnv;
-  connection: Connection;
+  directory: Directory;
   origin: Origin;
 }
 
@@ -79,7 +79,7 @@ async function record(
   result: ScimResult,
 ): Promise<void> {
   await store.logActivity(ctx.env.DB, {
-    connection_id: ctx.connection.id,
+    directory_id: ctx.directory.id,
     origin: ctx.origin,
     action,
     subject,
@@ -99,7 +99,7 @@ export async function createUser(
 ): Promise<IdpUser> {
   const { db } = { db: ctx.env.DB };
   const user = await store.insertUser(db, {
-    connection_id: ctx.connection.id,
+    directory_id: ctx.directory.id,
     user_name: input.userName,
     external_id: input.externalId,
     given_name: input.givenName,
@@ -107,7 +107,7 @@ export async function createUser(
     active: 1,
   });
   const base = await scimBase(db);
-  const result = await send(base, ctx.connection.proxy_token, "POST", "/Users", userResource(user));
+  const result = await send(base, ctx.directory.proxy_token, "POST", "/Users", userResource(user));
   const scimId = typeof result.body?.id === "string" ? result.body.id : null;
   await store.setUserScimId(db, user.id, scimId, result.status);
   await record(ctx, "create user", user.user_name, "POST", "/Users", result);
@@ -127,7 +127,7 @@ export async function setActive(
     Operations: [{ op: "replace", value: { active } }],
   };
   const path = `/Users/${encodeURIComponent(user.scim_id)}`;
-  const result = await send(await scimBase(db), ctx.connection.proxy_token, "PATCH", path, patch);
+  const result = await send(await scimBase(db), ctx.directory.proxy_token, "PATCH", path, patch);
   await store.setUserActive(db, userId, active ? 1 : 0, result.status);
   await record(
     ctx,
@@ -156,7 +156,7 @@ export async function renameUser(
     ],
   };
   const path = `/Users/${encodeURIComponent(user.scim_id)}`;
-  const result = await send(await scimBase(db), ctx.connection.proxy_token, "PATCH", path, patch);
+  const result = await send(await scimBase(db), ctx.directory.proxy_token, "PATCH", path, patch);
   await store.setUserName(db, userId, givenName, familyName, result.status);
   await record(ctx, "rename user", user.user_name, "PATCH", path, result);
 }
@@ -167,7 +167,7 @@ export async function removeUser(ctx: ActionContext, userId: string): Promise<vo
   if (!user) return;
   if (user.scim_id) {
     const path = `/Users/${encodeURIComponent(user.scim_id)}`;
-    const result = await send(await scimBase(db), ctx.connection.proxy_token, "DELETE", path);
+    const result = await send(await scimBase(db), ctx.directory.proxy_token, "DELETE", path);
     await record(ctx, "delete user", user.user_name, "DELETE", path, result);
   }
   await store.deleteUser(db, userId);
@@ -179,14 +179,14 @@ export async function createGroup(
 ): Promise<IdpGroup> {
   const db = ctx.env.DB;
   const group = await store.insertGroup(db, {
-    connection_id: ctx.connection.id,
+    directory_id: ctx.directory.id,
     display_name: input.displayName,
     external_id: input.externalId,
   });
   const base = await scimBase(db);
   const result = await send(
     base,
-    ctx.connection.proxy_token,
+    ctx.directory.proxy_token,
     "POST",
     "/Groups",
     groupResource(group, []),
@@ -210,7 +210,7 @@ export async function renameGroup(
     Operations: [{ op: "replace", path: "displayName", value: displayName }],
   };
   const path = `/Groups/${encodeURIComponent(group.scim_id)}`;
-  const result = await send(await scimBase(db), ctx.connection.proxy_token, "PATCH", path, patch);
+  const result = await send(await scimBase(db), ctx.directory.proxy_token, "PATCH", path, patch);
   await store.renameGroup(db, groupId, displayName, result.status);
   await record(ctx, "rename group", displayName, "PATCH", path, result);
 }
@@ -221,7 +221,7 @@ export async function removeGroup(ctx: ActionContext, groupId: string): Promise<
   if (!group) return;
   if (group.scim_id) {
     const path = `/Groups/${encodeURIComponent(group.scim_id)}`;
-    const result = await send(await scimBase(db), ctx.connection.proxy_token, "DELETE", path);
+    const result = await send(await scimBase(db), ctx.directory.proxy_token, "DELETE", path);
     await record(ctx, "delete group", group.display_name, "DELETE", path, result);
   }
   await store.deleteGroup(db, groupId);
@@ -248,7 +248,7 @@ async function changeMembership(
           schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
           Operations: [{ op: "remove", path: `members[value eq "${user.scim_id}"]` }],
         };
-  const result = await send(await scimBase(db), ctx.connection.proxy_token, "PATCH", path, patch);
+  const result = await send(await scimBase(db), ctx.directory.proxy_token, "PATCH", path, patch);
   if (op === "add") await store.addMember(db, groupId, userId);
   else await store.removeMember(db, groupId, userId);
   await record(

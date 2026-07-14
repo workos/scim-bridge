@@ -1,5 +1,5 @@
-import type { Connection } from "../shared/types";
-import { getConnectionById, withD1Retry } from "../shared/db";
+import type { Directory } from "../shared/types";
+import { getDirectoryById, withD1Retry } from "../shared/db";
 import * as client from "./client";
 import type { ActionContext } from "./client";
 import { seedDirectory } from "./auto";
@@ -51,19 +51,19 @@ async function route(request: Request, env: IdpEnv): Promise<Response> {
     }
 
     const body = request.method === "POST" ? await readBody(request) : {};
-    const connectionId = str(body, "connectionId") || (url.searchParams.get("connectionId") ?? "");
-    const connection = connectionId ? await getConnectionById(env.DB, connectionId) : null;
-    if (!connection) {
-      return json({ error: "Unknown or missing connectionId." }, 400);
+    const directoryId = str(body, "directoryId") || (url.searchParams.get("directoryId") ?? "");
+    const directory = directoryId ? await getDirectoryById(env.DB, directoryId) : null;
+    if (!directory) {
+      return json({ error: "Unknown or missing directoryId." }, 400);
     }
 
     if (url.pathname === "/state") {
       const [users, groups, members, activity, auto] = await Promise.all([
-        store.listUsers(env.DB, connection.id),
-        store.listGroups(env.DB, connection.id),
-        store.listMembers(env.DB, connection.id),
-        store.activity(env.DB, connection.id),
-        store.getAutoState(env.DB, connection.id),
+        store.listUsers(env.DB, directory.id),
+        store.listGroups(env.DB, directory.id),
+        store.listMembers(env.DB, directory.id),
+        store.activity(env.DB, directory.id),
+        store.getAutoState(env.DB, directory.id),
       ]);
       return json({ users, groups, members, activity, auto });
     }
@@ -73,20 +73,20 @@ async function route(request: Request, env: IdpEnv): Promise<Response> {
     }
 
     if (url.pathname === "/seed") {
-      const summary = await seedDirectory(env, connection as Connection);
+      const summary = await seedDirectory(env, directory as Directory);
       return json({ ok: true, ...summary });
     }
 
     if (url.pathname === "/reset") {
-      await idpScheduler.stop(env, connection.id);
+      await idpScheduler.stop(env, directory.id);
       await withD1Retry(() =>
         env.DB.batch([
           env.DB.prepare(
-            "DELETE FROM idp_group_members WHERE group_id IN (SELECT id FROM idp_groups WHERE connection_id = ?)",
-          ).bind(connection.id),
-          env.DB.prepare("DELETE FROM idp_groups WHERE connection_id = ?").bind(connection.id),
-          env.DB.prepare("DELETE FROM idp_users WHERE connection_id = ?").bind(connection.id),
-          env.DB.prepare("DELETE FROM idp_activity WHERE connection_id = ?").bind(connection.id),
+            "DELETE FROM idp_group_members WHERE group_id IN (SELECT id FROM idp_groups WHERE directory_id = ?)",
+          ).bind(directory.id),
+          env.DB.prepare("DELETE FROM idp_groups WHERE directory_id = ?").bind(directory.id),
+          env.DB.prepare("DELETE FROM idp_users WHERE directory_id = ?").bind(directory.id),
+          env.DB.prepare("DELETE FROM idp_activity WHERE directory_id = ?").bind(directory.id),
         ]),
       );
       return json({ ok: true });
@@ -94,17 +94,17 @@ async function route(request: Request, env: IdpEnv): Promise<Response> {
 
     if (url.pathname === "/auto/start") {
       const interval = Number(body.intervalMs) || 4000;
-      await idpScheduler.start(env, connection.id, interval);
+      await idpScheduler.start(env, directory.id, interval);
       return json({ ok: true, running: true, intervalMs: interval });
     }
 
     if (url.pathname === "/auto/stop") {
-      await idpScheduler.stop(env, connection.id);
+      await idpScheduler.stop(env, directory.id);
       return json({ ok: true, running: false });
     }
 
     if (url.pathname === "/action") {
-      return handleAction(env, connection as Connection, body);
+      return handleAction(env, directory as Directory, body);
     }
 
     return json({ error: `No route for ${url.pathname}.` }, 404);
@@ -113,17 +113,17 @@ async function route(request: Request, env: IdpEnv): Promise<Response> {
 
 async function handleAction(
   env: IdpEnv,
-  connection: Connection,
+  directory: Directory,
   body: Record<string, unknown>,
 ): Promise<Response> {
-  const ctx: ActionContext = { env, connection, origin: "manual" };
+  const ctx: ActionContext = { env, directory, origin: "manual" };
   const action = str(body, "action");
 
   switch (action) {
     case "create-user": {
       const userName = str(body, "userName");
       if (!userName) return json({ error: "A user name (email) is required." }, 400);
-      if (await store.userByUserName(env.DB, connection.id, userName)) {
+      if (await store.userByUserName(env.DB, directory.id, userName)) {
         return json(
           { error: `A user named "${userName}" already exists in the simulated directory.` },
           409,
@@ -155,7 +155,7 @@ async function handleAction(
     case "create-group": {
       const displayName = str(body, "displayName");
       if (!displayName) return json({ error: "A group name is required." }, 400);
-      if (await store.groupByDisplayName(env.DB, connection.id, displayName)) {
+      if (await store.groupByDisplayName(env.DB, directory.id, displayName)) {
         return json(
           { error: `A group named "${displayName}" already exists in the simulated directory.` },
           409,

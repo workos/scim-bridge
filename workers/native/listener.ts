@@ -1,4 +1,4 @@
-import { getConfig, truncateBody, withD1Retry } from "../shared/db";
+import { getConfig, listDirectories, truncateBody, withD1Retry } from "../shared/db";
 import { NATIVE_TABLES, ScimStore } from "./store";
 import type { GroupRow, ScimResource, UserRow } from "./store";
 
@@ -55,8 +55,9 @@ export async function handleDsyncWebhook(request: Request, db: D1Database): Prom
   // here would fight the direct write path and could clobber authoritative
   // native state with a stale or out-of-order event. Only workos-only makes the
   // listener the source of truth. Echoes are still logged (as ignored) so the
-  // console shows they arrived and were deliberately not applied.
-  const mode = await primaryConnectionMode(db);
+  // console shows they arrived and were deliberately not applied. Inertness is
+  // decided PER DIRECTORY (the proxy handles many), keyed on the event.
+  const mode = await directoryModeForEvent(db, data);
   if (mode !== "workos-only") {
     // Keep the last-writer-wins high-water mark advancing even while inert, so a
     // stale pre-cutover webhook that is delivered late (out of order) can't be
@@ -524,15 +525,28 @@ async function recordEventVersion(
   );
 }
 
-/** The migration mode of the (single) proxy connection this app sits behind.
- *  The listener only applies events once that mode is workos-only. */
-async function primaryConnectionMode(db: D1Database): Promise<string | null> {
-  const row = await withD1Retry(() =>
-    db
-      .prepare("SELECT mode FROM scim_connections ORDER BY created_at LIMIT 1")
-      .first<{ mode: string }>(),
-  );
-  return row?.mode ?? null;
+/**
+ * The migration mode of the directory a DSync event belongs to. The listener
+ * only applies events once that directory's mode is `workos-only`; the proxy is
+ * multi-directory, so this is resolved per event rather than globally.
+ *
+ * A real deployment maps the WorkOS directory the event is for
+ * (`event.data.directory_id`) to its own directory record and that directory's
+ * migration mode — store the WorkOS directory id alongside your directory and
+ * look it up right here.
+ *
+ * The bundled simulator models a SINGLE directory (its mock WorkOS and native
+ * app are one shared store, and its demo events carry no `directory_id`), so
+ * with exactly one directory configured we resolve to it. With several
+ * directories and no id to map, we return `null` and the event is left
+ * unapplied rather than guessed onto the wrong directory.
+ */
+async function directoryModeForEvent(db: D1Database, data: Json): Promise<string | null> {
+  const directories = await listDirectories(db);
+  if (directories.length === 1) return directories[0].mode;
+  const directoryId = asString(data.directory_id);
+  const match = directoryId ? directories.find((d) => d.id === directoryId) : undefined;
+  return match?.mode ?? null;
 }
 
 async function isDuplicate(db: D1Database, eventId: string): Promise<boolean> {

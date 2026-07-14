@@ -8,7 +8,7 @@ import {
   useNavigation,
   useRevalidator,
 } from "react-router";
-import { getConfig, listConnections, withD1Retry } from "../../../workers/shared/db";
+import { getConfig, listDirectories, withD1Retry } from "../../../workers/shared/db";
 import type { IdpActivity } from "../../../workers/idp/types";
 import * as AlertDialog from "../../vendor/design-system/components/alert-dialog";
 import { Badge } from "../../vendor/design-system/components/badge";
@@ -83,17 +83,17 @@ interface IdpActionData {
 
 export async function loader({ context }: LoaderFunctionArgs) {
   const { env } = context.cloudflare;
-  const connections = await listConnections(env.DB);
-  const connection = connections[0] ?? null;
+  const directories = await listDirectories(env.DB);
+  const directory = directories[0] ?? null;
 
   const [idpPublicUrl, proxyPublicUrl] = await Promise.all([
     getConfig(env.DB, "idp.public_url"),
     getConfig(env.DB, "proxy.public_url"),
   ]);
 
-  if (!connection) {
+  if (!directory) {
     return {
-      connection: null,
+      directory: null,
       idpPublicUrl: idpPublicUrl ?? DEFAULT_IDP_URL,
       proxyPublicUrl: proxyPublicUrl ?? "",
       users: [] as IdpUserRow[],
@@ -108,16 +108,16 @@ export async function loader({ context }: LoaderFunctionArgs) {
     withD1Retry(() =>
       env.DB.prepare(
         "SELECT id, user_name, external_id, given_name, family_name, active, scim_id, last_status " +
-          "FROM idp_users WHERE connection_id = ? ORDER BY created_at",
+          "FROM idp_users WHERE directory_id = ? ORDER BY created_at",
       )
-        .bind(connection.id)
+        .bind(directory.id)
         .all<IdpUserRow>(),
     ),
     withD1Retry(() =>
       env.DB.prepare(
-        "SELECT id, display_name, external_id, scim_id FROM idp_groups WHERE connection_id = ? ORDER BY created_at",
+        "SELECT id, display_name, external_id, scim_id FROM idp_groups WHERE directory_id = ? ORDER BY created_at",
       )
-        .bind(connection.id)
+        .bind(directory.id)
         .all<IdpGroupRow>(),
     ),
     withD1Retry(() =>
@@ -126,27 +126,27 @@ export async function loader({ context }: LoaderFunctionArgs) {
           "FROM idp_group_members m " +
           "JOIN idp_groups g ON g.id = m.group_id " +
           "JOIN idp_users u ON u.id = m.user_id " +
-          "WHERE g.connection_id = ? ORDER BY u.user_name",
+          "WHERE g.directory_id = ? ORDER BY u.user_name",
       )
-        .bind(connection.id)
+        .bind(directory.id)
         .all<IdpMemberRow>(),
     ),
     withD1Retry(() =>
-      env.DB.prepare("SELECT * FROM idp_activity WHERE connection_id = ? ORDER BY id DESC LIMIT 50")
-        .bind(connection.id)
+      env.DB.prepare("SELECT * FROM idp_activity WHERE directory_id = ? ORDER BY id DESC LIMIT 50")
+        .bind(directory.id)
         .all<IdpActivity>(),
     ),
     withD1Retry(() =>
       env.DB.prepare(
-        "SELECT running, interval_ms, tick_count FROM idp_auto_state WHERE connection_id = ?",
+        "SELECT running, interval_ms, tick_count FROM idp_auto_state WHERE directory_id = ?",
       )
-        .bind(connection.id)
+        .bind(directory.id)
         .first<IdpAutoStateRow>(),
     ),
   ]);
 
   return {
-    connection: { id: connection.id, name: connection.name, mode: connection.mode as Mode },
+    directory: { id: directory.id, name: directory.name, mode: directory.mode as Mode },
     idpPublicUrl: idpPublicUrl ?? DEFAULT_IDP_URL,
     proxyPublicUrl: proxyPublicUrl ?? "",
     users: users.results,
@@ -164,11 +164,11 @@ export async function action({
   const { env } = context.cloudflare;
   const form = await request.formData();
   const intent = String(form.get("intent") ?? "");
-  const connectionId = String(form.get("connectionId") ?? "");
+  const directoryId = String(form.get("directoryId") ?? "");
 
-  if (!connectionId) {
+  if (!directoryId) {
     return {
-      error: "No connection exists yet — create a connection before driving the simulated IdP.",
+      error: "No directory exists yet — create a directory before driving the simulated IdP.",
     };
   }
 
@@ -187,7 +187,7 @@ export async function action({
     return { error: "That form action is not recognized." };
   }
 
-  const body: Record<string, unknown> = { connectionId };
+  const body: Record<string, unknown> = { directoryId };
 
   if (intent === "auto-start") {
     body.intervalMs = Number(form.get("intervalMs")) || DEFAULT_INTERVAL_MS;
@@ -222,8 +222,8 @@ export async function action({
   return redirect("/panel/idp");
 }
 
-function ConnectionField({ connectionId }: { connectionId: string }) {
-  return <input name="connectionId" type="hidden" value={connectionId} />;
+function DirectoryField({ directoryId }: { directoryId: string }) {
+  return <input name="directoryId" type="hidden" value={directoryId} />;
 }
 
 function fullName(user: IdpUserRow): string {
@@ -231,7 +231,7 @@ function fullName(user: IdpUserRow): string {
   return name || "—";
 }
 
-function AddUserDialog({ connectionId, pending }: { connectionId: string; pending: boolean }) {
+function AddUserDialog({ directoryId, pending }: { directoryId: string; pending: boolean }) {
   return (
     <Dialog.Root>
       <Dialog.Trigger>
@@ -244,7 +244,7 @@ function AddUserDialog({ connectionId, pending }: { connectionId: string; pendin
               title="Add user"
               description="Provisions a new user in the simulated directory. The IdP immediately sends a SCIM create through the proxy."
             />
-            <ConnectionField connectionId={connectionId} />
+            <DirectoryField directoryId={directoryId} />
             <input name="intent" type="hidden" value="action" />
             <input name="action" type="hidden" value="create-user" />
             <Flex direction="column" gap="2">
@@ -283,7 +283,7 @@ function AddUserDialog({ connectionId, pending }: { connectionId: string; pendin
   );
 }
 
-function CreateGroupDialog({ connectionId, pending }: { connectionId: string; pending: boolean }) {
+function CreateGroupDialog({ directoryId, pending }: { directoryId: string; pending: boolean }) {
   return (
     <Dialog.Root>
       <Dialog.Trigger>
@@ -296,7 +296,7 @@ function CreateGroupDialog({ connectionId, pending }: { connectionId: string; pe
               title="Create group"
               description="Creates a new group in the simulated directory and pushes it to WorkOS through the proxy."
             />
-            <ConnectionField connectionId={connectionId} />
+            <DirectoryField directoryId={directoryId} />
             <input name="intent" type="hidden" value="action" />
             <input name="action" type="hidden" value="create-group" />
             <Flex direction="column" gap="2">
@@ -324,7 +324,7 @@ function CreateGroupDialog({ connectionId, pending }: { connectionId: string; pe
   );
 }
 
-function RenameUserDialog({ connectionId, user }: { connectionId: string; user: IdpUserRow }) {
+function RenameUserDialog({ directoryId, user }: { directoryId: string; user: IdpUserRow }) {
   return (
     <Dialog.Root>
       <Dialog.Trigger>
@@ -339,7 +339,7 @@ function RenameUserDialog({ connectionId, user }: { connectionId: string; user: 
               title="Rename user"
               description={`Sends a SCIM update for ${user.user_name} through the proxy.`}
             />
-            <ConnectionField connectionId={connectionId} />
+            <DirectoryField directoryId={directoryId} />
             <input name="intent" type="hidden" value="action" />
             <input name="action" type="hidden" value="rename-user" />
             <input name="userId" type="hidden" value={user.id} />
@@ -379,7 +379,7 @@ function RenameUserDialog({ connectionId, user }: { connectionId: string; user: 
   );
 }
 
-function DeleteUserDialog({ connectionId, user }: { connectionId: string; user: IdpUserRow }) {
+function DeleteUserDialog({ directoryId, user }: { directoryId: string; user: IdpUserRow }) {
   return (
     <AlertDialog.Root>
       <AlertDialog.Trigger>
@@ -394,7 +394,7 @@ function DeleteUserDialog({ connectionId, user }: { connectionId: string; user: 
               title="Delete this user?"
               description={`The IdP will send a SCIM delete for ${user.user_name} through the proxy. This mirrors an Okta deprovisioning.`}
             />
-            <ConnectionField connectionId={connectionId} />
+            <DirectoryField directoryId={directoryId} />
             <input name="intent" type="hidden" value="action" />
             <input name="action" type="hidden" value="delete-user" />
             <input name="userId" type="hidden" value={user.id} />
@@ -415,7 +415,7 @@ function DeleteUserDialog({ connectionId, user }: { connectionId: string; user: 
   );
 }
 
-function RenameGroupDialog({ connectionId, group }: { connectionId: string; group: IdpGroupRow }) {
+function RenameGroupDialog({ directoryId, group }: { directoryId: string; group: IdpGroupRow }) {
   return (
     <Dialog.Root>
       <Dialog.Trigger>
@@ -430,7 +430,7 @@ function RenameGroupDialog({ connectionId, group }: { connectionId: string; grou
               title="Rename group"
               description={`Sends a SCIM update for ${group.display_name} through the proxy.`}
             />
-            <ConnectionField connectionId={connectionId} />
+            <DirectoryField directoryId={directoryId} />
             <input name="intent" type="hidden" value="action" />
             <input name="action" type="hidden" value="rename-group" />
             <input name="groupId" type="hidden" value={group.id} />
@@ -459,7 +459,7 @@ function RenameGroupDialog({ connectionId, group }: { connectionId: string; grou
   );
 }
 
-function DeleteGroupDialog({ connectionId, group }: { connectionId: string; group: IdpGroupRow }) {
+function DeleteGroupDialog({ directoryId, group }: { directoryId: string; group: IdpGroupRow }) {
   return (
     <AlertDialog.Root>
       <AlertDialog.Trigger>
@@ -474,7 +474,7 @@ function DeleteGroupDialog({ connectionId, group }: { connectionId: string; grou
               title="Delete this group?"
               description={`The IdP will send a SCIM delete for ${group.display_name} through the proxy.`}
             />
-            <ConnectionField connectionId={connectionId} />
+            <DirectoryField directoryId={directoryId} />
             <input name="intent" type="hidden" value="action" />
             <input name="action" type="hidden" value="delete-group" />
             <input name="groupId" type="hidden" value={group.id} />
@@ -496,12 +496,12 @@ function DeleteGroupDialog({ connectionId, group }: { connectionId: string; grou
 }
 
 function ManageMembersDialog({
-  connectionId,
+  directoryId,
   group,
   members,
   candidates,
 }: {
-  connectionId: string;
+  directoryId: string;
   group: IdpGroupRow;
   members: IdpMemberRow[];
   candidates: IdpUserRow[];
@@ -532,7 +532,7 @@ function ManageMembersDialog({
               <Flex gap="2" wrap="wrap">
                 {members.map((member) => (
                   <Form key={member.user_id} method="post">
-                    <ConnectionField connectionId={connectionId} />
+                    <DirectoryField directoryId={directoryId} />
                     <input name="intent" type="hidden" value="action" />
                     <input name="action" type="hidden" value="remove-member" />
                     <input name="groupId" type="hidden" value={group.id} />
@@ -550,7 +550,7 @@ function ManageMembersDialog({
 
           <Form method="post">
             <Flex direction="column" gap="3">
-              <ConnectionField connectionId={connectionId} />
+              <DirectoryField directoryId={directoryId} />
               <input name="intent" type="hidden" value="action" />
               <input name="action" type="hidden" value="add-member" />
               <input name="groupId" type="hidden" value={group.id} />
@@ -591,7 +591,7 @@ function ManageMembersDialog({
 }
 
 export default function PanelIdp() {
-  const { connection, idpPublicUrl, proxyPublicUrl, users, groups, members, activity, auto } =
+  const { directory, idpPublicUrl, proxyPublicUrl, users, groups, members, activity, auto } =
     useLoaderData<typeof loader>();
   const actionData = useActionData() as IdpActionData | undefined;
   const navigation = useNavigation();
@@ -617,7 +617,7 @@ export default function PanelIdp() {
     membersByGroup.set(member.group_id, list);
   }
 
-  if (!connection) {
+  if (!directory) {
     return (
       <Flex direction="column" gap="4">
         <Heading as="h2" size="5">
@@ -625,15 +625,15 @@ export default function PanelIdp() {
         </Heading>
         <Card size="3">
           <EmptyState.Root
-            title="No connection yet"
-            subtitle="Create a connection on the Connections tab first. The simulated IdP authenticates to the proxy with that connection's token."
+            title="No directory yet"
+            subtitle="Create a directory on the Directories tab first. The simulated IdP authenticates to the proxy with that directory's token."
           />
         </Card>
       </Flex>
     );
   }
 
-  const connectionId = connection.id;
+  const directoryId = directory.id;
 
   return (
     <Flex direction="column" gap="4">
@@ -661,8 +661,8 @@ export default function PanelIdp() {
       <Card size="3">
         <Flex direction="column" gap="4">
           <Flex align="center" gap="2">
-            <CardHeader title={connection.name} />
-            <ModeBadge mode={connection.mode} />
+            <CardHeader title={directory.name} />
+            <ModeBadge mode={directory.mode} />
           </Flex>
           <Grid columns={{ initial: "1", sm: "2" }} gap="4">
             <Flex direction="column" gap="2">
@@ -693,15 +693,15 @@ export default function PanelIdp() {
           />
           <Flex gap="3" wrap="wrap">
             <Form method="post">
-              <ConnectionField connectionId={connectionId} />
+              <DirectoryField directoryId={directoryId} />
               <input name="intent" type="hidden" value="seed" />
               <Button loading={pendingIntent === "seed"} type="submit">
                 Seed directory
               </Button>
             </Form>
-            <AddUserDialog connectionId={connectionId} pending={pendingAction === "create-user"} />
+            <AddUserDialog directoryId={directoryId} pending={pendingAction === "create-user"} />
             <CreateGroupDialog
-              connectionId={connectionId}
+              directoryId={directoryId}
               pending={pendingAction === "create-group"}
             />
             <AlertDialog.Root>
@@ -715,7 +715,7 @@ export default function PanelIdp() {
                       title="Reset the simulator?"
                       description="This wipes the simulated directory and activity feed and stops auto-run. It does not touch what the proxy already provisioned into WorkOS or the native app."
                     />
-                    <ConnectionField connectionId={connectionId} />
+                    <DirectoryField directoryId={directoryId} />
                     <input name="intent" type="hidden" value="reset" />
                     <AlertDialog.Footer>
                       <AlertDialog.Cancel>
@@ -744,7 +744,7 @@ export default function PanelIdp() {
           <Text color="gray" size="2">
             Auto-run churns the directory on a worker-side timer — creating, renaming, moving, and
             deactivating resources. It keeps running even if you close this tab. Watch the Native
-            app and a connection's Activity tab converge as the SCIM traffic flows.
+            app and a directory's Activity tab converge as the SCIM traffic flows.
           </Text>
           {running ? (
             <Flex align="center" gap="3" justify="between" wrap="wrap">
@@ -753,7 +753,7 @@ export default function PanelIdp() {
                 {((auto?.interval_ms ?? DEFAULT_INTERVAL_MS) / 1000).toString()} seconds.
               </Text>
               <Form method="post">
-                <ConnectionField connectionId={connectionId} />
+                <DirectoryField directoryId={directoryId} />
                 <input name="intent" type="hidden" value="auto-stop" />
                 <Button loading={pendingIntent === "auto-stop"} type="submit">
                   Stop auto-run
@@ -762,7 +762,7 @@ export default function PanelIdp() {
             </Flex>
           ) : (
             <Form method="post">
-              <ConnectionField connectionId={connectionId} />
+              <DirectoryField directoryId={directoryId} />
               <input name="intent" type="hidden" value="auto-start" />
               <Flex align="end" gap="3" wrap="wrap">
                 <Flex direction="column" gap="2">
@@ -848,7 +848,7 @@ export default function PanelIdp() {
                       <Table.Cell>
                         <Flex align="center" gap="2" justify="end">
                           <Form method="post">
-                            <ConnectionField connectionId={connectionId} />
+                            <DirectoryField directoryId={directoryId} />
                             <input name="intent" type="hidden" value="action" />
                             <input
                               name="action"
@@ -860,8 +860,8 @@ export default function PanelIdp() {
                               {user.active ? "Deactivate" : "Reactivate"}
                             </Button>
                           </Form>
-                          <RenameUserDialog connectionId={connectionId} user={user} />
-                          <DeleteUserDialog connectionId={connectionId} user={user} />
+                          <RenameUserDialog directoryId={directoryId} user={user} />
+                          <DeleteUserDialog directoryId={directoryId} user={user} />
                         </Flex>
                       </Table.Cell>
                     </Table.Row>
@@ -939,12 +939,12 @@ export default function PanelIdp() {
                           <Flex align="center" gap="2" justify="end">
                             <ManageMembersDialog
                               candidates={candidates}
-                              connectionId={connectionId}
+                              directoryId={directoryId}
                               group={group}
                               members={groupMembers}
                             />
-                            <RenameGroupDialog connectionId={connectionId} group={group} />
-                            <DeleteGroupDialog connectionId={connectionId} group={group} />
+                            <RenameGroupDialog directoryId={directoryId} group={group} />
+                            <DeleteGroupDialog directoryId={directoryId} group={group} />
                           </Flex>
                         </Table.Cell>
                       </Table.Row>

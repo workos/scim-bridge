@@ -1,8 +1,8 @@
-import type { Connection, PocEnv, ResourceType } from "../shared/types";
+import type { Directory, PocEnv, ResourceType } from "../shared/types";
 import { MIGRATED_ID_HEADER } from "../shared/types";
 import {
   deleteMapping,
-  getConnectionByToken,
+  getDirectoryByToken,
   insertProxyLog,
   type ProxyLogInsert,
 } from "../shared/db";
@@ -71,24 +71,24 @@ async function handleScim(
 
   const auth = request.headers.get("Authorization") ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length).trim() : "";
-  let connection: Connection | null = null;
+  let directory: Directory | null = null;
   try {
-    connection = await getConnectionByToken(env.DB, token);
+    directory = await getDirectoryByToken(env.DB, token);
   } catch (error) {
     log.error = errorMessage(error);
-    return finish(scimError(500, "The proxy could not resolve the connection for this token."));
+    return finish(scimError(500, "The proxy could not resolve the directory for this token."));
   }
-  if (!connection) {
+  if (!directory) {
     log.error = "missing or unknown proxy bearer token";
     return finish(
       scimError(
         401,
-        "The bearer token in the Authorization header does not match any proxy connection.",
+        "The bearer token in the Authorization header does not match any proxy directory.",
       ),
     );
   }
-  log.connection_id = connection.id;
-  log.mode = connection.mode;
+  log.directory_id = directory.id;
+  log.mode = directory.mode;
 
   if (!scimPath) {
     return finish(
@@ -103,14 +103,14 @@ async function handleScim(
   const isWrite = WRITE_METHODS.has(method) && scimPath.kind !== null;
 
   if (
-    connection.mode === "passthrough" ||
-    (connection.mode === "dualwrite-native-first" && !isWrite)
+    directory.mode === "passthrough" ||
+    (directory.mode === "dualwrite-native-first" && !isWrite)
   ) {
     let native: UpstreamResult;
     try {
-      native = await scimFetch(joinScimUrl(connection.native_url, scimPath.rest) + url.search, {
+      native = await scimFetch(joinScimUrl(directory.native_url, scimPath.rest) + url.search, {
         method,
-        token: connection.native_token,
+        token: directory.native_token,
         body: requestBody,
         contentType,
       });
@@ -124,14 +124,14 @@ async function handleScim(
     return finish(upstreamResponse(native));
   }
 
-  if (connection.mode === "dualwrite-native-first") {
-    return dualWrite(env, ctx, connection, scimPath, method, requestBody, contentType, url, log);
+  if (directory.mode === "dualwrite-native-first") {
+    return dualWrite(env, ctx, directory, scimPath, method, requestBody, contentType, url, log);
   }
 
   return workosOnly(
     env,
     ctx,
-    connection,
+    directory,
     scimPath,
     method,
     requestBody,
@@ -145,7 +145,7 @@ async function handleScim(
 async function dualWrite(
   env: PocEnv,
   ctx: ExecutionContext,
-  connection: Connection,
+  directory: Directory,
   scimPath: ScimPath,
   method: string,
   requestBody: string | null,
@@ -155,9 +155,9 @@ async function dualWrite(
 ): Promise<Response> {
   let native: UpstreamResult;
   try {
-    native = await scimFetch(joinScimUrl(connection.native_url, scimPath.rest) + url.search, {
+    native = await scimFetch(joinScimUrl(directory.native_url, scimPath.rest) + url.search, {
       method,
-      token: connection.native_token,
+      token: directory.native_token,
       body: requestBody,
       contentType,
     });
@@ -177,7 +177,7 @@ async function dualWrite(
     (async () => {
       if (isSuccess(native.status)) {
         try {
-          await mirrorDualWrite(env.DB, connection, scimPath, method, requestBody, native, log);
+          await mirrorDualWrite(env.DB, directory, scimPath, method, requestBody, native, log);
         } catch (error) {
           log.error = `mirror failed: ${errorMessage(error)}`;
         }
@@ -190,7 +190,7 @@ async function dualWrite(
 
 async function mirrorDualWrite(
   db: D1Database,
-  connection: Connection,
+  directory: Directory,
   scimPath: ScimPath,
   method: string,
   requestBody: string | null,
@@ -198,7 +198,7 @@ async function mirrorDualWrite(
   log: ProxyLogInsert,
 ): Promise<void> {
   const kind = scimPath.kind as ResourceType;
-  const maps = await loadIdMaps(db, connection.id);
+  const maps = await loadIdMaps(db, directory.id);
   const translate = makeTranslator(maps.nativeToWorkos);
 
   if (method === "POST") {
@@ -210,7 +210,7 @@ async function mirrorDualWrite(
     }
     const resource = parseJson(requestBody) ?? {};
     const body = kind === "Groups" ? translateResourceIds(resource, kind, translate) : resource;
-    applyMirrorResult(log, await mirrorUpsert(db, connection, kind, nativeId, body));
+    applyMirrorResult(log, await mirrorUpsert(db, directory, kind, nativeId, body));
     return;
   }
 
@@ -220,19 +220,19 @@ async function mirrorDualWrite(
   if (method === "PUT") {
     const resource = parseJson(requestBody) ?? {};
     const body = kind === "Groups" ? translateResourceIds(resource, kind, translate) : resource;
-    applyMirrorResult(log, await mirrorUpsert(db, connection, kind, nativeId, body));
+    applyMirrorResult(log, await mirrorUpsert(db, directory, kind, nativeId, body));
     return;
   }
 
   const workosId = translate(kind, nativeId);
-  const target = joinScimUrl(connection.workos_url, `/${kind}/${encodeURIComponent(workosId)}`);
+  const target = joinScimUrl(directory.workos_url, `/${kind}/${encodeURIComponent(workosId)}`);
 
   if (method === "PATCH") {
     const translated = translatePatchIds(parseJson(requestBody), kind, translate);
     log.workos_request = `PATCH /${kind}/${workosId}`;
     const mirror = await scimFetch(target, {
       method: "PATCH",
-      token: connection.workos_token,
+      token: directory.workos_token,
       body: translated ? JSON.stringify(translated) : requestBody,
     });
     applyWorkosLeg(log, mirror);
@@ -241,10 +241,10 @@ async function mirrorDualWrite(
 
   if (method === "DELETE") {
     log.workos_request = `DELETE /${kind}/${workosId}`;
-    const mirror = await scimFetch(target, { method: "DELETE", token: connection.workos_token });
+    const mirror = await scimFetch(target, { method: "DELETE", token: directory.workos_token });
     applyWorkosLeg(log, mirror);
     if (isSuccess(mirror.status) || mirror.status === 404) {
-      await deleteMapping(db, connection.id, kind, nativeId);
+      await deleteMapping(db, directory.id, kind, nativeId);
     } else {
       log.error = `mirror DELETE returned ${mirror.status}; id mapping kept for repair`;
     }
@@ -254,7 +254,7 @@ async function mirrorDualWrite(
 async function workosOnly(
   env: PocEnv,
   _ctx: ExecutionContext,
-  connection: Connection,
+  directory: Directory,
   scimPath: ScimPath,
   method: string,
   requestBody: string | null,
@@ -270,7 +270,7 @@ async function workosOnly(
   let migratedId: string | undefined;
 
   if (kind) {
-    const maps = await loadIdMaps(env.DB, connection.id);
+    const maps = await loadIdMaps(env.DB, directory.id);
     const toWorkos = makeTranslator(maps.nativeToWorkos);
     toNative = makeTranslator(maps.workosToNative);
     // A create after cutover must still mint a migrated id (not let WorkOS
@@ -278,7 +278,7 @@ async function workosOnly(
     // migrated ids the rest of the directory uses — e.g. group membership.
     if (method === "POST") {
       return finish(
-        await createWithMigratedId(env.DB, connection, kind, requestBody, toWorkos, log),
+        await createWithMigratedId(env.DB, directory, kind, requestBody, toWorkos, log),
       );
     }
     if (scimPath.id) {
@@ -305,9 +305,9 @@ async function workosOnly(
     `${method} ${outPath}${url.search}` + (migratedId != null ? ` +${MIGRATED_ID_HEADER}` : "");
   let workos: UpstreamResult;
   try {
-    workos = await scimFetch(joinScimUrl(connection.workos_url, outPath) + url.search, {
+    workos = await scimFetch(joinScimUrl(directory.workos_url, outPath) + url.search, {
       method,
-      token: connection.workos_token,
+      token: directory.workos_token,
       body: outBody,
       contentType,
       migratedId,
@@ -344,7 +344,7 @@ async function workosOnly(
  */
 async function createWithMigratedId(
   db: D1Database,
-  connection: Connection,
+  directory: Directory,
   kind: ResourceType,
   requestBody: string | null,
   toWorkos: (kind: ResourceType, id: string) => string,
@@ -362,7 +362,7 @@ async function createWithMigratedId(
   // the externalId (raw_attributes.externalId), which the native listener reads.
   const externalId = typeof body.externalId === "string" ? body.externalId : null;
   const mintedId = externalId ?? crypto.randomUUID();
-  const result = await mirrorUpsert(db, connection, kind, mintedId, body);
+  const result = await mirrorUpsert(db, directory, kind, mintedId, body);
   applyMirrorResult(log, result);
   if (!result.ok) {
     return scimError(

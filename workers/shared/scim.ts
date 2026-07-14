@@ -1,4 +1,4 @@
-import type { Connection, IdMapping, ResourceType } from "./types";
+import type { Directory, IdMapping, ResourceType } from "./types";
 import { MIGRATED_ID_HEADER } from "./types";
 import { getMapping, upsertMapping, withD1Retry } from "./db";
 
@@ -120,13 +120,11 @@ export interface IdTranslationMaps {
 
 export type IdTranslator = (kind: ResourceType, id: string) => string;
 
-export async function loadIdMaps(db: D1Database, connectionId: string): Promise<IdTranslationMaps> {
+export async function loadIdMaps(db: D1Database, directoryId: string): Promise<IdTranslationMaps> {
   const { results } = await withD1Retry(() =>
     db
-      .prepare(
-        "SELECT resource_type, native_id, workos_id FROM id_mappings WHERE connection_id = ?",
-      )
-      .bind(connectionId)
+      .prepare("SELECT resource_type, native_id, workos_id FROM id_mappings WHERE directory_id = ?")
+      .bind(directoryId)
       .all<Pick<IdMapping, "resource_type" | "native_id" | "workos_id">>(),
   );
   const maps: IdTranslationMaps = {
@@ -235,7 +233,7 @@ export interface MirrorResult {
  */
 export async function mirrorUpsert(
   db: D1Database,
-  connection: Connection,
+  directory: Directory,
   kind: ResourceType,
   nativeId: string,
   resource: Record<string, unknown>,
@@ -244,10 +242,10 @@ export async function mirrorUpsert(
   let ms = 0;
   try {
     const contract = await scimFetch(
-      joinScimUrl(connection.workos_url, `/${kind}/${encodeURIComponent(nativeId)}`),
+      joinScimUrl(directory.workos_url, `/${kind}/${encodeURIComponent(nativeId)}`),
       {
         method: "PUT",
-        token: connection.workos_token,
+        token: directory.workos_token,
         body: JSON.stringify({ ...resource, id: nativeId }),
         migratedId: nativeId,
       },
@@ -255,7 +253,7 @@ export async function mirrorUpsert(
     ms += contract.ms;
     if (isSuccess(contract.status)) {
       await upsertMapping(db, {
-        connection_id: connection.id,
+        directory_id: directory.id,
         resource_type: kind,
         native_id: nativeId,
         workos_id: nativeId,
@@ -281,21 +279,21 @@ export async function mirrorUpsert(
       };
     }
 
-    const existing = await getMapping(db, connection.id, kind, nativeId);
+    const existing = await getMapping(db, directory.id, kind, nativeId);
     if (existing) {
       workosRequest = `PUT /${kind}/${existing.workos_id} (fallback)`;
       const replace = await scimFetch(
-        joinScimUrl(connection.workos_url, `/${kind}/${encodeURIComponent(existing.workos_id)}`),
+        joinScimUrl(directory.workos_url, `/${kind}/${encodeURIComponent(existing.workos_id)}`),
         {
           method: "PUT",
-          token: connection.workos_token,
+          token: directory.workos_token,
           body: JSON.stringify({ ...resource, id: existing.workos_id }),
         },
       );
       ms += replace.ms;
       if (isSuccess(replace.status)) {
         await upsertMapping(db, {
-          connection_id: connection.id,
+          directory_id: directory.id,
           resource_type: kind,
           native_id: nativeId,
           workos_id: existing.workos_id,
@@ -327,9 +325,9 @@ export async function mirrorUpsert(
 
     workosRequest = `POST /${kind} (fallback)`;
     const { id: _omitted, ...stripped } = resource;
-    const create = await scimFetch(joinScimUrl(connection.workos_url, `/${kind}`), {
+    const create = await scimFetch(joinScimUrl(directory.workos_url, `/${kind}`), {
       method: "POST",
-      token: connection.workos_token,
+      token: directory.workos_token,
       body: JSON.stringify(stripped),
     });
     ms += create.ms;
@@ -347,7 +345,7 @@ export async function mirrorUpsert(
         };
       }
       await upsertMapping(db, {
-        connection_id: connection.id,
+        directory_id: directory.id,
         resource_type: kind,
         native_id: nativeId,
         workos_id: workosId,
@@ -368,8 +366,8 @@ export async function mirrorUpsert(
       if (typeof value === "string" && value !== "") {
         const filter = `${attribute} eq "${value.replaceAll('"', '\\"')}"`;
         const lookup = await scimFetch(
-          `${joinScimUrl(connection.workos_url, `/${kind}`)}?filter=${encodeURIComponent(filter)}`,
-          { method: "GET", token: connection.workos_token },
+          `${joinScimUrl(directory.workos_url, `/${kind}`)}?filter=${encodeURIComponent(filter)}`,
+          { method: "GET", token: directory.workos_token },
         );
         ms += lookup.ms;
         const listing = parseJson(lookup.bodyText);
@@ -378,7 +376,7 @@ export async function mirrorUpsert(
         const workosId = first && typeof first.id === "string" ? first.id : null;
         if (isSuccess(lookup.status) && workosId) {
           await upsertMapping(db, {
-            connection_id: connection.id,
+            directory_id: directory.id,
             resource_type: kind,
             native_id: nativeId,
             workos_id: workosId,

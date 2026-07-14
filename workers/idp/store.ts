@@ -1,21 +1,21 @@
 import type { IdpActivity, IdpAutoState, IdpGroup, IdpUser, Origin } from "./types";
 import { withD1Retry } from "../shared/db";
 
-export async function listUsers(db: D1Database, connectionId: string): Promise<IdpUser[]> {
+export async function listUsers(db: D1Database, directoryId: string): Promise<IdpUser[]> {
   const { results } = await withD1Retry(() =>
     db
-      .prepare("SELECT * FROM idp_users WHERE connection_id = ? ORDER BY created_at")
-      .bind(connectionId)
+      .prepare("SELECT * FROM idp_users WHERE directory_id = ? ORDER BY created_at")
+      .bind(directoryId)
       .all<IdpUser>(),
   );
   return results;
 }
 
-export async function listGroups(db: D1Database, connectionId: string): Promise<IdpGroup[]> {
+export async function listGroups(db: D1Database, directoryId: string): Promise<IdpGroup[]> {
   const { results } = await withD1Retry(() =>
     db
-      .prepare("SELECT * FROM idp_groups WHERE connection_id = ? ORDER BY created_at")
-      .bind(connectionId)
+      .prepare("SELECT * FROM idp_groups WHERE directory_id = ? ORDER BY created_at")
+      .bind(directoryId)
       .all<IdpGroup>(),
   );
   return results;
@@ -23,15 +23,15 @@ export async function listGroups(db: D1Database, connectionId: string): Promise<
 
 export async function listMembers(
   db: D1Database,
-  connectionId: string,
+  directoryId: string,
 ): Promise<{ group_id: string; user_id: string }[]> {
   const { results } = await withD1Retry(() =>
     db
       .prepare(
         "SELECT m.group_id, m.user_id FROM idp_group_members m " +
-          "JOIN idp_groups g ON g.id = m.group_id WHERE g.connection_id = ?",
+          "JOIN idp_groups g ON g.id = m.group_id WHERE g.directory_id = ?",
       )
-      .bind(connectionId)
+      .bind(directoryId)
       .all<{ group_id: string; user_id: string }>(),
   );
   return results;
@@ -51,26 +51,26 @@ export async function getGroup(db: D1Database, id: string): Promise<IdpGroup | n
 
 export async function userByUserName(
   db: D1Database,
-  connectionId: string,
+  directoryId: string,
   userName: string,
 ): Promise<IdpUser | null> {
   return withD1Retry(() =>
     db
-      .prepare("SELECT * FROM idp_users WHERE connection_id = ? AND user_name = ?")
-      .bind(connectionId, userName)
+      .prepare("SELECT * FROM idp_users WHERE directory_id = ? AND user_name = ?")
+      .bind(directoryId, userName)
       .first<IdpUser>(),
   );
 }
 
 export async function groupByDisplayName(
   db: D1Database,
-  connectionId: string,
+  directoryId: string,
   displayName: string,
 ): Promise<IdpGroup | null> {
   return withD1Retry(() =>
     db
-      .prepare("SELECT * FROM idp_groups WHERE connection_id = ? AND display_name = ?")
-      .bind(connectionId, displayName)
+      .prepare("SELECT * FROM idp_groups WHERE directory_id = ? AND display_name = ?")
+      .bind(directoryId, displayName)
       .first<IdpGroup>(),
   );
 }
@@ -79,18 +79,18 @@ export async function insertUser(
   db: D1Database,
   user: Pick<
     IdpUser,
-    "connection_id" | "user_name" | "external_id" | "given_name" | "family_name" | "active"
+    "directory_id" | "user_name" | "external_id" | "given_name" | "family_name" | "active"
   >,
 ): Promise<IdpUser> {
   return withD1Retry(
     () =>
       db
         .prepare(
-          "INSERT INTO idp_users (connection_id, user_name, external_id, given_name, family_name, active) " +
+          "INSERT INTO idp_users (directory_id, user_name, external_id, given_name, family_name, active) " +
             "VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
         )
         .bind(
-          user.connection_id,
+          user.directory_id,
           user.user_name,
           user.external_id,
           user.given_name,
@@ -103,15 +103,15 @@ export async function insertUser(
 
 export async function insertGroup(
   db: D1Database,
-  group: Pick<IdpGroup, "connection_id" | "display_name" | "external_id">,
+  group: Pick<IdpGroup, "directory_id" | "display_name" | "external_id">,
 ): Promise<IdpGroup> {
   return withD1Retry(
     () =>
       db
         .prepare(
-          "INSERT INTO idp_groups (connection_id, display_name, external_id) VALUES (?, ?, ?) RETURNING *",
+          "INSERT INTO idp_groups (directory_id, display_name, external_id) VALUES (?, ?, ?) RETURNING *",
         )
-        .bind(group.connection_id, group.display_name, group.external_id)
+        .bind(group.directory_id, group.display_name, group.external_id)
         .first<IdpGroup>() as Promise<IdpGroup>,
   );
 }
@@ -246,7 +246,7 @@ export async function memberIds(db: D1Database, groupId: string): Promise<string
 export async function logActivity(
   db: D1Database,
   entry: {
-    connection_id: string;
+    directory_id: string;
     origin: Origin;
     action: string;
     subject?: string | null;
@@ -260,11 +260,11 @@ export async function logActivity(
   await withD1Retry(() =>
     db
       .prepare(
-        "INSERT INTO idp_activity (connection_id, origin, action, subject, method, path, status, ok, detail) " +
+        "INSERT INTO idp_activity (directory_id, origin, action, subject, method, path, status, ok, detail) " +
           "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(
-        entry.connection_id,
+        entry.directory_id,
         entry.origin,
         entry.action,
         entry.subject ?? null,
@@ -280,47 +280,47 @@ export async function logActivity(
 
 export async function getAutoState(
   db: D1Database,
-  connectionId: string,
+  directoryId: string,
 ): Promise<IdpAutoState | null> {
   return withD1Retry(() =>
     db
-      .prepare("SELECT * FROM idp_auto_state WHERE connection_id = ?")
-      .bind(connectionId)
+      .prepare("SELECT * FROM idp_auto_state WHERE directory_id = ?")
+      .bind(directoryId)
       .first<IdpAutoState>(),
   );
 }
 
 export async function setAutoState(
   db: D1Database,
-  connectionId: string,
+  directoryId: string,
   patch: { running?: boolean; interval_ms?: number; tickDelta?: number },
 ): Promise<void> {
-  const current = await getAutoState(db, connectionId);
+  const current = await getAutoState(db, directoryId);
   const running = patch.running ?? (current ? current.running === 1 : false);
   const interval = patch.interval_ms ?? current?.interval_ms ?? 4000;
   const ticks = (current?.tick_count ?? 0) + (patch.tickDelta ?? 0);
   await withD1Retry(() =>
     db
       .prepare(
-        "INSERT INTO idp_auto_state (connection_id, running, interval_ms, tick_count, updated_at) " +
+        "INSERT INTO idp_auto_state (directory_id, running, interval_ms, tick_count, updated_at) " +
           "VALUES (?, ?, ?, ?, datetime('now')) " +
-          "ON CONFLICT (connection_id) DO UPDATE SET running = excluded.running, " +
+          "ON CONFLICT (directory_id) DO UPDATE SET running = excluded.running, " +
           "interval_ms = excluded.interval_ms, tick_count = excluded.tick_count, updated_at = excluded.updated_at",
       )
-      .bind(connectionId, running ? 1 : 0, interval, ticks)
+      .bind(directoryId, running ? 1 : 0, interval, ticks)
       .run(),
   );
 }
 
 export async function activity(
   db: D1Database,
-  connectionId: string,
+  directoryId: string,
   limit = 50,
 ): Promise<IdpActivity[]> {
   const { results } = await withD1Retry(() =>
     db
-      .prepare("SELECT * FROM idp_activity WHERE connection_id = ? ORDER BY id DESC LIMIT ?")
-      .bind(connectionId, limit)
+      .prepare("SELECT * FROM idp_activity WHERE directory_id = ? ORDER BY id DESC LIMIT ?")
+      .bind(directoryId, limit)
       .all<IdpActivity>(),
   );
   return results;

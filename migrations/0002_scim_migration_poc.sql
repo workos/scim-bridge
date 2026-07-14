@@ -1,4 +1,4 @@
--- SCIM migration PoC: proxy connections, id mappings, request log,
+-- SCIM migration PoC: proxy directories, id mappings, request log,
 -- native app directory tables, listener event log, and shared config.
 
 CREATE TABLE IF NOT EXISTS poc_config (
@@ -17,15 +17,15 @@ INSERT INTO poc_config (key, value) VALUES ('mock_workos.scim_token', lower(hex(
 INSERT INTO poc_config (key, value) VALUES ('proxy.public_url', 'http://localhost:8787');
 INSERT INTO poc_config (key, value) VALUES ('native.public_url', 'http://localhost:8788');
 
--- One row per IdP connection: the pairing between a native SCIM endpoint and
+-- One row per IdP directory: the pairing between a native SCIM endpoint and
 -- a WorkOS directory SCIM endpoint, plus the proxy mode and credentials.
-CREATE TABLE IF NOT EXISTS scim_connections (
-  id TEXT PRIMARY KEY DEFAULT ('conn_' || lower(hex(randomblob(8)))),
+CREATE TABLE IF NOT EXISTS scim_directories (
+  id TEXT PRIMARY KEY DEFAULT ('dir_' || lower(hex(randomblob(8)))),
   name TEXT NOT NULL,
   mode TEXT NOT NULL DEFAULT 'passthrough'
     CHECK (mode IN ('passthrough', 'dualwrite-native-first', 'workos-only')),
   -- Bearer token the IdP (Okta) presents to the proxy. Routes the request to
-  -- this connection.
+  -- this directory.
   proxy_token TEXT NOT NULL UNIQUE DEFAULT (lower(hex(randomblob(24)))),
   -- Native SCIM base URL (ends with /scim/v2) + credential the proxy uses.
   native_url TEXT NOT NULL DEFAULT '',
@@ -37,34 +37,31 @@ CREATE TABLE IF NOT EXISTS scim_connections (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-INSERT INTO scim_connections (name, native_url, native_token) VALUES (
-  'Default connection',
-  'http://localhost:8788/scim/v2',
-  (SELECT value FROM poc_config WHERE key = 'native.scim_token')
-);
+-- No directory is seeded here: production starts empty (import via the panel),
+-- and DEMO_MODE seeds a ready-wired demo directory at boot (see server/config).
 
 -- native_id -> workos_id per resource. With the migrated-id contract
 -- (PUT + X-WorkOS-Migrated-Id) both sides share the native id and strategy is
 -- 'migrated-id'. When the WorkOS endpoint rejects the contract the proxy
 -- falls back to POST and records the WorkOS-minted id ('fallback-post').
 CREATE TABLE IF NOT EXISTS id_mappings (
-  connection_id TEXT NOT NULL,
+  directory_id TEXT NOT NULL,
   resource_type TEXT NOT NULL CHECK (resource_type IN ('Users', 'Groups')),
   native_id TEXT NOT NULL,
   workos_id TEXT NOT NULL,
   strategy TEXT NOT NULL CHECK (strategy IN ('migrated-id', 'fallback-post')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  PRIMARY KEY (connection_id, resource_type, native_id)
+  PRIMARY KEY (directory_id, resource_type, native_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_id_mappings_workos
-  ON id_mappings (connection_id, resource_type, workos_id);
+  ON id_mappings (directory_id, resource_type, workos_id);
 
 -- Every request the proxy handles, with both legs' outcomes.
 CREATE TABLE IF NOT EXISTS proxy_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  connection_id TEXT,
+  directory_id TEXT,
   ts TEXT NOT NULL DEFAULT (datetime('now')),
   source TEXT NOT NULL DEFAULT 'idp' CHECK (source IN ('idp', 'backfill')),
   mode TEXT NOT NULL,
@@ -86,7 +83,7 @@ CREATE TABLE IF NOT EXISTS proxy_log (
   error TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_proxy_log_connection ON proxy_log (connection_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_proxy_log_directory ON proxy_log (directory_id, id DESC);
 
 -- The customer app's own directory tables, written by its native SCIM handler
 -- and (after cutover) by its DSync event listener.

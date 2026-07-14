@@ -7,7 +7,7 @@ INSERT INTO poc_config (key, value) VALUES ('idp.public_url', 'http://localhost:
 
 CREATE TABLE IF NOT EXISTS idp_users (
   id TEXT PRIMARY KEY DEFAULT ('idpu_' || lower(hex(randomblob(8)))),
-  connection_id TEXT NOT NULL,
+  directory_id TEXT NOT NULL,
   user_name TEXT NOT NULL,
   -- The stable external key the IdP emits as externalId (the DSync idp_id).
   external_id TEXT NOT NULL,
@@ -23,11 +23,11 @@ CREATE TABLE IF NOT EXISTS idp_users (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_idp_users_conn_username
-  ON idp_users (connection_id, user_name);
+  ON idp_users (directory_id, user_name);
 
 CREATE TABLE IF NOT EXISTS idp_groups (
   id TEXT PRIMARY KEY DEFAULT ('idpg_' || lower(hex(randomblob(8)))),
-  connection_id TEXT NOT NULL,
+  directory_id TEXT NOT NULL,
   display_name TEXT NOT NULL,
   external_id TEXT NOT NULL,
   scim_id TEXT,
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS idp_groups (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_idp_groups_conn_name
-  ON idp_groups (connection_id, display_name);
+  ON idp_groups (directory_id, display_name);
 
 CREATE TABLE IF NOT EXISTS idp_group_members (
   group_id TEXT NOT NULL,
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS idp_group_members (
 -- which subject, the SCIM call it made through the proxy, and the response.
 CREATE TABLE IF NOT EXISTS idp_activity (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  connection_id TEXT NOT NULL,
+  directory_id TEXT NOT NULL,
   ts TEXT NOT NULL DEFAULT (datetime('now')),
   origin TEXT NOT NULL DEFAULT 'manual' CHECK (origin IN ('manual', 'auto', 'seed')),
   action TEXT NOT NULL,
@@ -61,12 +61,12 @@ CREATE TABLE IF NOT EXISTS idp_activity (
   detail TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_idp_activity_conn ON idp_activity (connection_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_idp_activity_conn ON idp_activity (directory_id, id DESC);
 
--- Auto-run loop state, one row per connection, written by the scheduler DO so
+-- Auto-run loop state, one row per directory, written by the scheduler DO so
 -- the panel can render whether the simulated IdP is currently churning.
 CREATE TABLE IF NOT EXISTS idp_auto_state (
-  connection_id TEXT PRIMARY KEY,
+  directory_id TEXT PRIMARY KEY,
   running INTEGER NOT NULL DEFAULT 0,
   interval_ms INTEGER NOT NULL DEFAULT 4000,
   tick_count INTEGER NOT NULL DEFAULT 0,

@@ -5,7 +5,7 @@ export const MIGRATED_ID_HEADER = "X-WorkOS-Migrated-Id";
 
 export type ResourceType = "Users" | "Groups";
 
-export interface Connection {
+export interface Directory {
   id: string;
   name: string;
   mode: Mode;
@@ -19,7 +19,7 @@ export interface Connection {
 }
 
 export interface IdMapping {
-  connection_id: string;
+  directory_id: string;
   resource_type: ResourceType;
   native_id: string;
   workos_id: string;
@@ -30,7 +30,7 @@ export interface IdMapping {
 
 export interface ProxyLogEntry {
   id: number;
-  connection_id: string | null;
+  directory_id: string | null;
   ts: string;
   source: "idp" | "backfill";
   mode: string;

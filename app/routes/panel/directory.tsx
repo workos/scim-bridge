@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { Link, Outlet, useLoaderData, useLocation } from "react-router";
-import { getConnectionById } from "../../../workers/shared/db";
+import { getDirectoryById } from "../../../workers/shared/db";
 import { Flex } from "../../vendor/design-system/components/flex";
 import { Heading } from "../../vendor/design-system/components/heading";
 import { Link as DsLink } from "../../vendor/design-system/components/link";
@@ -8,29 +8,29 @@ import { TabNav } from "../../vendor/design-system/components/tab-nav";
 import { ModeBadge } from "./ui";
 
 export async function loader({ context, params }: LoaderFunctionArgs) {
-  const connection = await getConnectionById(context.cloudflare.env.DB, params.id ?? "");
-  if (!connection) {
-    throw new Response("Connection not found", { status: 404 });
+  const directory = await getDirectoryById(context.cloudflare.env.DB, params.id ?? "");
+  if (!directory) {
+    throw new Response("Directory not found", { status: 404 });
   }
-  return { connection };
+  return { directory };
 }
 
-export default function ConnectionLayout() {
-  const { connection } = useLoaderData<typeof loader>();
+export default function DirectoryLayout() {
+  const { directory } = useLoaderData<typeof loader>();
   const { pathname } = useLocation();
-  const base = `/panel/connections/${connection.id}`;
+  const base = `/panel/directories/${directory.id}`;
 
   return (
     <Flex direction="column" gap="4">
       <Flex direction="column" gap="2">
         <DsLink asChild size="2">
-          <Link to="/panel">← All connections</Link>
+          <Link to="/panel">← All directories</Link>
         </DsLink>
         <Flex align="center" gap="3">
           <Heading as="h2" size="5">
-            {connection.name}
+            {directory.name}
           </Heading>
-          <ModeBadge mode={connection.mode} />
+          <ModeBadge mode={directory.mode} />
         </Flex>
       </Flex>
 

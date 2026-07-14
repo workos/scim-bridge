@@ -17,7 +17,7 @@ import { CardHeader, formatBody, StatusCodeBadge } from "./ui";
 export async function loader({ context, params }: LoaderFunctionArgs) {
   const { results } = await withD1Retry(() =>
     context.cloudflare.env.DB.prepare(
-      "SELECT * FROM proxy_log WHERE connection_id = ? ORDER BY id DESC LIMIT 100",
+      "SELECT * FROM proxy_log WHERE directory_id = ? ORDER BY id DESC LIMIT 100",
     )
       .bind(params.id ?? "")
       .all<ProxyLogEntry>(),
@@ -92,7 +92,7 @@ function EntryDialog({ entry }: { entry: ProxyLogEntry }) {
   );
 }
 
-export default function ConnectionActivity() {
+export default function DirectoryActivity() {
   const { entries } = useLoaderData<typeof loader>();
   const revalidator = useRevalidator();
 
@@ -102,7 +102,7 @@ export default function ConnectionActivity() {
         <Flex align="center" gap="4" justify="between">
           <CardHeader
             title="Activity"
-            description="The latest 100 requests the proxy handled for this connection, with both legs' outcomes."
+            description="The latest 100 requests the proxy handled for this directory, with both legs' outcomes."
           />
           <Button
             loading={revalidator.state === "loading"}

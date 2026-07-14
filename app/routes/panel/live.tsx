@@ -1,13 +1,13 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { useEffect, useState } from "react";
 import { Form, useActionData, useLoaderData, useNavigation, useRevalidator } from "react-router";
-import type { Connection, ListenerEvent, Mode } from "../../../workers/shared/types";
+import type { Directory, ListenerEvent, Mode } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
 import {
   clearNativeDirectory,
-  getConnectionById,
-  listConnections,
-  setConnectionMode,
+  getDirectoryById,
+  listDirectories,
+  setDirectoryMode,
   withD1Retry,
 } from "../../../workers/shared/db";
 import { runBackfill } from "../../../workers/shared/backfill";
@@ -64,7 +64,7 @@ interface ScimResource {
   members?: unknown[];
 }
 
-/** Read the WorkOS side live over SCIM, so this works whether the connection
+/** Read the WorkOS side live over SCIM, so this works whether the directory
  *  points at the local mock or a real WorkOS directory. */
 async function fetchWorkosDirectory(
   url: string,
@@ -95,7 +95,7 @@ async function fetchWorkosDirectory(
   }
 }
 
-/** Empty the WorkOS directory the connection points at, over SCIM — so it
+/** Empty the WorkOS directory the directory points at, over SCIM — so it
  *  works for the local mock or a real directory. Groups first, then users. */
 async function cleanWorkosDirectory(
   url: string,
@@ -134,10 +134,10 @@ async function cleanWorkosDirectory(
 
 export async function loader({ context }: LoaderFunctionArgs) {
   const { env } = context.cloudflare;
-  const connections = await listConnections(env.DB);
-  const connection = connections[0] ?? null;
-  if (!connection) {
-    return { connection: null } as const;
+  const directories = await listDirectories(env.DB);
+  const directory = directories[0] ?? null;
+  if (!directory) {
+    return { directory: null } as const;
   }
 
   const [nativeU, idpU, nativeG, idpG, workos, auto, events] = await Promise.all([
@@ -145,8 +145,8 @@ export async function loader({ context }: LoaderFunctionArgs) {
       env.DB.prepare("SELECT user_name AS name, active FROM native_users").all<DirRow>(),
     ),
     withD1Retry(() =>
-      env.DB.prepare("SELECT user_name AS name, active FROM idp_users WHERE connection_id = ?")
-        .bind(connection.id)
+      env.DB.prepare("SELECT user_name AS name, active FROM idp_users WHERE directory_id = ?")
+        .bind(directory.id)
         .all<DirRow>(),
     ),
     withD1Retry(() =>
@@ -159,17 +159,17 @@ export async function loader({ context }: LoaderFunctionArgs) {
       env.DB.prepare(
         "SELECT g.display_name AS name, COUNT(m.user_id) AS member_count " +
           "FROM idp_groups g LEFT JOIN idp_group_members m ON m.group_id = g.id " +
-          "WHERE g.connection_id = ? GROUP BY g.id",
+          "WHERE g.directory_id = ? GROUP BY g.id",
       )
-        .bind(connection.id)
+        .bind(directory.id)
         .all<GroupRow>(),
     ),
-    fetchWorkosDirectory(connection.workos_url, connection.workos_token),
+    fetchWorkosDirectory(directory.workos_url, directory.workos_token),
     withD1Retry(() =>
       env.DB.prepare(
-        "SELECT running, interval_ms, tick_count FROM idp_auto_state WHERE connection_id = ?",
+        "SELECT running, interval_ms, tick_count FROM idp_auto_state WHERE directory_id = ?",
       )
-        .bind(connection.id)
+        .bind(directory.id)
         .first<AutoStateRow>(),
     ),
     withD1Retry(() =>
@@ -180,10 +180,10 @@ export async function loader({ context }: LoaderFunctionArgs) {
   ]);
 
   return {
-    connection: { id: connection.id, name: connection.name, mode: connection.mode },
+    directory: { id: directory.id, name: directory.name, mode: directory.mode },
     workosReachable: workos.reachable,
-    workosConfigured: connection.workos_url !== "",
-    workosIsMock: connection.workos_url.includes("/mock-workos/"),
+    workosConfigured: directory.workos_url !== "",
+    workosIsMock: directory.workos_url.includes("/mock-workos/"),
     auto: auto ?? null,
     events: events.results,
     users: { native: nativeU.results, workos: workos.users, idp: idpU.results },
@@ -207,36 +207,36 @@ export async function action({ context, request }: ActionFunctionArgs) {
     return {};
   }
 
-  const connectionId = String(form.get("connectionId") ?? "");
-  const connection = connectionId ? await getConnectionById(env.DB, connectionId) : null;
-  if (!connection) {
-    return { error: "No connection exists yet — create one on the Connections tab first." };
+  const directoryId = String(form.get("directoryId") ?? "");
+  const directory = directoryId ? await getDirectoryById(env.DB, directoryId) : null;
+  if (!directory) {
+    return { error: "No directory exists yet — create one on the Directories tab first." };
   }
 
   // --- IdP simulator controls (forwarded to the simulator worker) ---
   if (intent === "idp-seed") {
-    const r = await callIdpSimulator(env.DB, "seed", { connectionId: connection.id });
+    const r = await callIdpSimulator(env.DB, "seed", { directoryId: directory.id });
     return r.ok ? {} : { error: r.error };
   }
   if (intent === "idp-reset") {
-    const r = await callIdpSimulator(env.DB, "reset", { connectionId: connection.id });
+    const r = await callIdpSimulator(env.DB, "reset", { directoryId: directory.id });
     return r.ok ? {} : { error: r.error };
   }
   if (intent === "idp-auto-start") {
     const intervalMs = Number(form.get("intervalMs")) || DEFAULT_INTERVAL_MS;
     const r = await callIdpSimulator(env.DB, "auto/start", {
-      connectionId: connection.id,
+      directoryId: directory.id,
       intervalMs,
     });
     return r.ok ? {} : { error: r.error };
   }
   if (intent === "idp-auto-stop") {
-    const r = await callIdpSimulator(env.DB, "auto/stop", { connectionId: connection.id });
+    const r = await callIdpSimulator(env.DB, "auto/stop", { directoryId: directory.id });
     return r.ok ? {} : { error: r.error };
   }
   if (intent === "idp-action") {
     const body: Record<string, unknown> = {
-      connectionId: connection.id,
+      directoryId: directory.id,
       action: String(form.get("action") ?? ""),
     };
     for (const key of ["userName", "givenName", "familyName", "displayName"]) {
@@ -252,25 +252,25 @@ export async function action({ context, request }: ActionFunctionArgs) {
     if (!MODES.includes(mode as Mode)) {
       return { error: "That mode is not one of passthrough, dual-write, or workos-only." };
     }
-    await setConnectionMode(env.DB, connection.id, mode as Mode);
+    await setDirectoryMode(env.DB, directory.id, mode as Mode);
     return {};
   }
 
   if (intent === "run-backfill") {
-    if (connection.mode !== "dualwrite-native-first") {
+    if (directory.mode !== "dualwrite-native-first") {
       return {
         error: "Backfill only runs in dual-write, so live writes keep flowing while it replays.",
       };
     }
-    const backfill = await runBackfill(env.DB, connection as Connection);
+    const backfill = await runBackfill(env.DB, directory as Directory);
     return { backfill };
   }
 
   if (intent === "clean-workos") {
-    // Only SCIM DELETEs against the directory — never touches the connection's
+    // Only SCIM DELETEs against the directory — never touches the directory's
     // WorkOS URL/token or the id mappings. The proxy self-heals a mapping whose
     // resource was deleted on the next mirror (see mirrorUpsert).
-    const result = await cleanWorkosDirectory(connection.workos_url, connection.workos_token);
+    const result = await cleanWorkosDirectory(directory.workos_url, directory.workos_token);
     if (!result.ok) {
       return { error: "The WorkOS endpoint didn't respond, so nothing was deleted." };
     }
@@ -508,17 +508,17 @@ export default function PanelLive() {
     return () => clearInterval(id);
   }, [live, revalidator]);
 
-  if (!data.connection) {
+  if (!data.directory) {
     return (
       <EmptyState.Root
-        title="No connection yet"
-        subtitle="Create a connection on the Connections tab, then this console tracks all three directories live."
+        title="No directory yet"
+        subtitle="Create a directory on the Directories tab, then this console tracks all three directories live."
       />
     );
   }
 
-  const { connection, users, groups, workosReachable, workosConfigured, auto, events } = data;
-  const mode = connection.mode as Mode;
+  const { directory, users, groups, workosReachable, workosConfigured, auto, events } = data;
+  const mode = directory.mode as Mode;
   const userRows = reconcileUsers(users);
   const groupRows = reconcileGroups(groups);
   const userDiffs = userRows.filter((r) => r.diverged).length;
@@ -580,7 +580,7 @@ export default function PanelLive() {
             </Text>
             {MODES.map((m) => (
               <Form key={m} method="post">
-                <input name="connectionId" type="hidden" value={connection.id} />
+                <input name="directoryId" type="hidden" value={directory.id} />
                 <input name="intent" type="hidden" value="set-mode" />
                 <input name="mode" type="hidden" value={m} />
                 <Button
@@ -595,7 +595,7 @@ export default function PanelLive() {
             ))}
             <Box className="grow" />
             <Form method="post">
-              <input name="connectionId" type="hidden" value={connection.id} />
+              <input name="directoryId" type="hidden" value={directory.id} />
               <input name="intent" type="hidden" value="run-backfill" />
               <Button
                 disabled={mode !== "dualwrite-native-first" || backfilling}
@@ -607,7 +607,7 @@ export default function PanelLive() {
               </Button>
             </Form>
             <CleanWorkosButton
-              connectionId={connection.id}
+              directoryId={directory.id}
               disabled={!workosConfigured}
               isMock={data.workosIsMock}
             />
@@ -616,13 +616,13 @@ export default function PanelLive() {
         </Flex>
       </Card>
 
-      <SimulatorControls auto={auto} connectionId={connection.id} />
+      <SimulatorControls auto={auto} directoryId={directory.id} />
 
       {!workosConfigured ? (
         <Callout.Root color="gray">
           <Callout.Text>
-            No WorkOS endpoint is set on this connection, so only the native app and IdP are shown.
-            Set one on the connection page — the mock at{" "}
+            No WorkOS endpoint is set on this directory, so only the native app and IdP are shown.
+            Set one on the directory page — the mock at{" "}
             <Code>http://localhost:8788/mock-workos/scim/v2</Code> for a self-contained run, or a
             real WorkOS directory.
           </Callout.Text>
@@ -631,7 +631,7 @@ export default function PanelLive() {
         <Callout.Root color="red">
           <Callout.Text>
             The WorkOS endpoint didn't respond, so its column is unavailable and convergence can't
-            be computed. Check the endpoint URL and bearer token on the connection page.
+            be computed. Check the endpoint URL and bearer token on the directory page.
           </Callout.Text>
         </Callout.Root>
       ) : converged ? (
@@ -832,10 +832,10 @@ export default function PanelLive() {
 
 function SimulatorControls({
   auto,
-  connectionId,
+  directoryId,
 }: {
   auto: AutoStateRow | null;
-  connectionId: string;
+  directoryId: string;
 }) {
   const navigation = useNavigation();
   const pendingIntent = navigation.formData?.get("intent");
@@ -857,22 +857,22 @@ function SimulatorControls({
 
         <Flex align="center" gap="3" wrap="wrap">
           <Form method="post">
-            <input name="connectionId" type="hidden" value={connectionId} />
+            <input name="directoryId" type="hidden" value={directoryId} />
             <input name="intent" type="hidden" value="idp-seed" />
             <Button loading={pendingIntent === "idp-seed"} type="submit">
               Seed directory
             </Button>
           </Form>
           <SimulatorUserDialog
-            connectionId={connectionId}
+            directoryId={directoryId}
             pending={pendingAction === "create-user"}
           />
           <SimulatorGroupDialog
-            connectionId={connectionId}
+            directoryId={directoryId}
             pending={pendingAction === "create-group"}
           />
           <Box className="grow" />
-          <ResetSimulatorButton connectionId={connectionId} />
+          <ResetSimulatorButton directoryId={directoryId} />
         </Flex>
 
         <Flex
@@ -898,7 +898,7 @@ function SimulatorControls({
           </Flex>
           {running ? (
             <Form method="post">
-              <input name="connectionId" type="hidden" value={connectionId} />
+              <input name="directoryId" type="hidden" value={directoryId} />
               <input name="intent" type="hidden" value="idp-auto-stop" />
               <Button loading={pendingIntent === "idp-auto-stop"} type="submit" variant="soft">
                 Stop auto-run
@@ -906,7 +906,7 @@ function SimulatorControls({
             </Form>
           ) : (
             <Form method="post">
-              <input name="connectionId" type="hidden" value={connectionId} />
+              <input name="directoryId" type="hidden" value={directoryId} />
               <input name="intent" type="hidden" value="idp-auto-start" />
               <Flex align="center" gap="3">
                 <Select.Root defaultValue={String(DEFAULT_INTERVAL_MS)} name="intervalMs">
@@ -931,13 +931,7 @@ function SimulatorControls({
   );
 }
 
-function SimulatorUserDialog({
-  connectionId,
-  pending,
-}: {
-  connectionId: string;
-  pending: boolean;
-}) {
+function SimulatorUserDialog({ directoryId, pending }: { directoryId: string; pending: boolean }) {
   return (
     <Dialog.Root>
       <Dialog.Trigger>
@@ -952,7 +946,7 @@ function SimulatorUserDialog({
               title="Add user"
               description="Provisions a new user in the simulated directory. The IdP immediately sends a SCIM create through the proxy."
             />
-            <input name="connectionId" type="hidden" value={connectionId} />
+            <input name="directoryId" type="hidden" value={directoryId} />
             <input name="intent" type="hidden" value="idp-action" />
             <input name="action" type="hidden" value="create-user" />
             <Flex direction="column" gap="2">
@@ -991,13 +985,7 @@ function SimulatorUserDialog({
   );
 }
 
-function SimulatorGroupDialog({
-  connectionId,
-  pending,
-}: {
-  connectionId: string;
-  pending: boolean;
-}) {
+function SimulatorGroupDialog({ directoryId, pending }: { directoryId: string; pending: boolean }) {
   return (
     <Dialog.Root>
       <Dialog.Trigger>
@@ -1010,7 +998,7 @@ function SimulatorGroupDialog({
               title="Create group"
               description="Creates a new group in the simulated directory and pushes it through the proxy."
             />
-            <input name="connectionId" type="hidden" value={connectionId} />
+            <input name="directoryId" type="hidden" value={directoryId} />
             <input name="intent" type="hidden" value="idp-action" />
             <input name="action" type="hidden" value="create-group" />
             <Flex direction="column" gap="2">
@@ -1038,7 +1026,7 @@ function SimulatorGroupDialog({
   );
 }
 
-function ResetSimulatorButton({ connectionId }: { connectionId: string }) {
+function ResetSimulatorButton({ directoryId }: { directoryId: string }) {
   const navigation = useNavigation();
   const resetting = navigation.formData?.get("intent") === "idp-reset";
   return (
@@ -1055,7 +1043,7 @@ function ResetSimulatorButton({ connectionId }: { connectionId: string }) {
               title="Reset the simulator?"
               description="Wipes the simulated IdP directory and its activity feed and stops auto-run. It does not touch what the proxy already provisioned into WorkOS or the native app."
             />
-            <input name="connectionId" type="hidden" value={connectionId} />
+            <input name="directoryId" type="hidden" value={directoryId} />
             <input name="intent" type="hidden" value="idp-reset" />
             <AlertDialog.Footer>
               <AlertDialog.Cancel>
@@ -1075,11 +1063,11 @@ function ResetSimulatorButton({ connectionId }: { connectionId: string }) {
 }
 
 function CleanWorkosButton({
-  connectionId,
+  directoryId,
   disabled,
   isMock,
 }: {
-  connectionId: string;
+  directoryId: string;
   disabled: boolean;
   isMock: boolean;
 }) {
@@ -1099,11 +1087,11 @@ function CleanWorkosButton({
               title="Clean the WorkOS directory?"
               description={
                 isMock
-                  ? "Sends a SCIM delete for every user and group in the mock WorkOS directory. The connection's endpoint stays configured; the native app and IdP are untouched."
-                  : "Sends a SCIM delete for every user and group in the real WorkOS directory this connection points at — this removes real data from that directory. The connection's endpoint stays configured; the native app and IdP are untouched."
+                  ? "Sends a SCIM delete for every user and group in the mock WorkOS directory. The directory's endpoint stays configured; the native app and IdP are untouched."
+                  : "Sends a SCIM delete for every user and group in the real WorkOS directory this directory points at — this removes real data from that directory. The directory's endpoint stays configured; the native app and IdP are untouched."
               }
             />
-            <input name="connectionId" type="hidden" value={connectionId} />
+            <input name="directoryId" type="hidden" value={directoryId} />
             <input name="intent" type="hidden" value="clean-workos" />
             <AlertDialog.Footer>
               <AlertDialog.Cancel>
@@ -1137,7 +1125,7 @@ function ResetNativeButton() {
           <Flex direction="column" gap="5">
             <AlertDialog.Header
               title="Reset the native app?"
-              description="Deletes every user and group from the customer app's directory and its DSync listener log. The proxy connection, id mappings, and WorkOS are left untouched."
+              description="Deletes every user and group from the customer app's directory and its DSync listener log. The proxy directory, id mappings, and WorkOS are left untouched."
             />
             <input name="intent" type="hidden" value="reset-native" />
             <AlertDialog.Footer>

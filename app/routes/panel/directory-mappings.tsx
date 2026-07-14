@@ -1,7 +1,7 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { useLoaderData, useRevalidator } from "react-router";
 import type { IdMapping } from "../../../workers/shared/types";
-import { getConnectionById, withD1Retry } from "../../../workers/shared/db";
+import { getDirectoryById, withD1Retry } from "../../../workers/shared/db";
 import { Badge } from "../../vendor/design-system/components/badge";
 import { Button } from "../../vendor/design-system/components/button";
 import { Callout } from "../../vendor/design-system/components/callout";
@@ -50,24 +50,24 @@ async function fetchWorkosIndex(
 
 export async function loader({ context, params }: LoaderFunctionArgs) {
   const { env } = context.cloudflare;
-  const connectionId = params.id ?? "";
-  const [{ results }, connection] = await Promise.all([
+  const directoryId = params.id ?? "";
+  const [{ results }, directory] = await Promise.all([
     withD1Retry(() =>
       env.DB.prepare(
-        "SELECT * FROM id_mappings WHERE connection_id = ? ORDER BY updated_at DESC, native_id",
+        "SELECT * FROM id_mappings WHERE directory_id = ? ORDER BY updated_at DESC, native_id",
       )
-        .bind(connectionId)
+        .bind(directoryId)
         .all<IdMapping>(),
     ),
-    getConnectionById(env.DB, connectionId),
+    getDirectoryById(env.DB, directoryId),
   ]);
-  const workos = connection
-    ? await fetchWorkosIndex(connection.workos_url, connection.workos_token)
+  const workos = directory
+    ? await fetchWorkosIndex(directory.workos_url, directory.workos_token)
     : { reachable: false, byId: {} };
   return { mappings: results, workos } as const;
 }
 
-export default function ConnectionMappings() {
+export default function DirectoryMappings() {
   const { mappings, workos } = useLoaderData<typeof loader>();
   const revalidator = useRevalidator();
 

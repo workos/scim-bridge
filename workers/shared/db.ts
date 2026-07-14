@@ -1,4 +1,4 @@
-import type { Connection, IdMapping, Mode, ProxyLogEntry, ResourceType } from "./types";
+import type { Directory, IdMapping, Mode, ProxyLogEntry, ResourceType } from "./types";
 
 /** Retry transient local-dev D1 errors (miniflare surfaces these when several
  *  wrangler dev processes hit one SQLite file concurrently). Not needed against
@@ -41,36 +41,36 @@ export async function setConfig(db: D1Database, key: string, value: string): Pro
   );
 }
 
-export async function getConnectionByToken(
+export async function getDirectoryByToken(
   db: D1Database,
   token: string,
-): Promise<Connection | null> {
+): Promise<Directory | null> {
   if (!token) return null;
   return withD1Retry(() =>
     db
-      .prepare("SELECT * FROM scim_connections WHERE proxy_token = ?")
+      .prepare("SELECT * FROM scim_directories WHERE proxy_token = ?")
       .bind(token)
-      .first<Connection>(),
+      .first<Directory>(),
   );
 }
 
-export async function getConnectionById(db: D1Database, id: string): Promise<Connection | null> {
+export async function getDirectoryById(db: D1Database, id: string): Promise<Directory | null> {
   return withD1Retry(() =>
-    db.prepare("SELECT * FROM scim_connections WHERE id = ?").bind(id).first<Connection>(),
+    db.prepare("SELECT * FROM scim_directories WHERE id = ?").bind(id).first<Directory>(),
   );
 }
 
-export async function listConnections(db: D1Database): Promise<Connection[]> {
+export async function listDirectories(db: D1Database): Promise<Directory[]> {
   const { results } = await withD1Retry(() =>
-    db.prepare("SELECT * FROM scim_connections ORDER BY created_at").all<Connection>(),
+    db.prepare("SELECT * FROM scim_directories ORDER BY created_at").all<Directory>(),
   );
   return results;
 }
 
-export async function setConnectionMode(db: D1Database, id: string, mode: Mode): Promise<void> {
+export async function setDirectoryMode(db: D1Database, id: string, mode: Mode): Promise<void> {
   await withD1Retry(() =>
     db
-      .prepare("UPDATE scim_connections SET mode = ?, updated_at = datetime('now') WHERE id = ?")
+      .prepare("UPDATE scim_directories SET mode = ?, updated_at = datetime('now') WHERE id = ?")
       .bind(mode, id)
       .run(),
   );
@@ -78,32 +78,32 @@ export async function setConnectionMode(db: D1Database, id: string, mode: Mode):
 
 export async function getMapping(
   db: D1Database,
-  connectionId: string,
+  directoryId: string,
   resourceType: ResourceType,
   nativeId: string,
 ): Promise<IdMapping | null> {
   return withD1Retry(() =>
     db
       .prepare(
-        "SELECT * FROM id_mappings WHERE connection_id = ? AND resource_type = ? AND native_id = ?",
+        "SELECT * FROM id_mappings WHERE directory_id = ? AND resource_type = ? AND native_id = ?",
       )
-      .bind(connectionId, resourceType, nativeId)
+      .bind(directoryId, resourceType, nativeId)
       .first<IdMapping>(),
   );
 }
 
 export async function getMappingByWorkosId(
   db: D1Database,
-  connectionId: string,
+  directoryId: string,
   resourceType: ResourceType,
   workosId: string,
 ): Promise<IdMapping | null> {
   return withD1Retry(() =>
     db
       .prepare(
-        "SELECT * FROM id_mappings WHERE connection_id = ? AND resource_type = ? AND workos_id = ?",
+        "SELECT * FROM id_mappings WHERE directory_id = ? AND resource_type = ? AND workos_id = ?",
       )
-      .bind(connectionId, resourceType, workosId)
+      .bind(directoryId, resourceType, workosId)
       .first<IdMapping>(),
   );
 }
@@ -112,19 +112,19 @@ export async function upsertMapping(
   db: D1Database,
   mapping: Pick<
     IdMapping,
-    "connection_id" | "resource_type" | "native_id" | "workos_id" | "strategy"
+    "directory_id" | "resource_type" | "native_id" | "workos_id" | "strategy"
   >,
 ): Promise<void> {
   await withD1Retry(() =>
     db
       .prepare(
-        "INSERT INTO id_mappings (connection_id, resource_type, native_id, workos_id, strategy) " +
+        "INSERT INTO id_mappings (directory_id, resource_type, native_id, workos_id, strategy) " +
           "VALUES (?, ?, ?, ?, ?) " +
-          "ON CONFLICT (connection_id, resource_type, native_id) DO UPDATE SET " +
+          "ON CONFLICT (directory_id, resource_type, native_id) DO UPDATE SET " +
           "workos_id = excluded.workos_id, strategy = excluded.strategy, updated_at = datetime('now')",
       )
       .bind(
-        mapping.connection_id,
+        mapping.directory_id,
         mapping.resource_type,
         mapping.native_id,
         mapping.workos_id,
@@ -136,22 +136,22 @@ export async function upsertMapping(
 
 export async function deleteMapping(
   db: D1Database,
-  connectionId: string,
+  directoryId: string,
   resourceType: ResourceType,
   nativeId: string,
 ): Promise<void> {
   await withD1Retry(() =>
     db
       .prepare(
-        "DELETE FROM id_mappings WHERE connection_id = ? AND resource_type = ? AND native_id = ?",
+        "DELETE FROM id_mappings WHERE directory_id = ? AND resource_type = ? AND native_id = ?",
       )
-      .bind(connectionId, resourceType, nativeId)
+      .bind(directoryId, resourceType, nativeId)
       .run(),
   );
 }
 
 /** Wipe the native app's directory and its DSync listener log — the customer
- *  app's own state. Leaves connections, mappings, and the WorkOS side alone. */
+ *  app's own state. Leaves directories, mappings, and the WorkOS side alone. */
 export async function clearNativeDirectory(db: D1Database): Promise<void> {
   await withD1Retry(() =>
     db.batch([
@@ -178,12 +178,12 @@ export async function insertProxyLog(db: D1Database, entry: ProxyLogInsert): Pro
   await withD1Retry(() =>
     db
       .prepare(
-        "INSERT INTO proxy_log (connection_id, source, mode, method, path, request_body, " +
+        "INSERT INTO proxy_log (directory_id, source, mode, method, path, request_body, " +
           "native_status, native_ms, native_body, workos_request, workos_status, workos_ms, " +
           "workos_body, response_status, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(
-        entry.connection_id ?? null,
+        entry.directory_id ?? null,
         entry.source ?? "idp",
         entry.mode,
         entry.method,

@@ -9,7 +9,7 @@ import proxyWorker from "../workers/proxy/index";
 import nativeWorker from "../workers/native/index";
 import idpWorker from "../workers/idp/index";
 import type { PocEnv } from "../workers/shared/types";
-import { loadConfig, seedConfig } from "./config";
+import { loadConfig, seedConfig, seedDemoDirectory } from "./config";
 import { openDatabase, SqliteD1 } from "./db/d1-sqlite";
 import { runMigrations } from "./db/migrate";
 
@@ -28,6 +28,7 @@ if (applied.length) console.log(`Applied ${applied.length} migration(s): ${appli
 const DB = new SqliteD1(sqlite) as unknown as PocEnv["DB"];
 const env: PocEnv = { DB };
 await seedConfig(env, config);
+await seedDemoDirectory(env, config);
 
 // `ctx.waitUntil` on Workers keeps async work alive after the response; on Node
 // we just run it fire-and-forget and swallow rejections (the callers already

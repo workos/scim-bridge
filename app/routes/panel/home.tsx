@@ -1,7 +1,8 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, Link, redirect, useActionData, useLoaderData, useNavigation } from "react-router";
-import { getConfig, listConnections, setConfig, withD1Retry } from "../../../workers/shared/db";
+import { getConfig, listDirectories, setConfig, withD1Retry } from "../../../workers/shared/db";
 import { Button } from "../../vendor/design-system/components/button";
+import { Callout } from "../../vendor/design-system/components/callout";
 import { Card } from "../../vendor/design-system/components/card";
 import { Code } from "../../vendor/design-system/components/code";
 import * as Dialog from "../../vendor/design-system/components/dialog";
@@ -11,19 +12,53 @@ import { Grid } from "../../vendor/design-system/components/grid";
 import { Heading } from "../../vendor/design-system/components/heading";
 import { Separator } from "../../vendor/design-system/components/separator";
 import { Text } from "../../vendor/design-system/components/text";
+import { TextArea } from "../../vendor/design-system/components/text-area";
 import * as TextField from "../../vendor/design-system/components/text-field";
 import { CardHeader, CopyButton, FieldLabel, ModeBadge, trimTrailingSlash } from "./ui";
 
 interface HomeActionData {
   error?: string;
   settingsSaved?: boolean;
+  imported?: number;
+  importErrors?: string[];
+}
+
+const INSERT_DIRECTORY =
+  "INSERT INTO scim_directories (name, native_url, native_token, workos_url, workos_token) " +
+  "VALUES (?, ?, ?, ?, ?)";
+
+interface CsvRow {
+  name: string;
+  native_url: string;
+  native_token: string;
+  workos_url: string;
+  workos_token: string;
+}
+
+/** Parse the bulk-import CSV: one directory per line, columns in header order.
+ *  A leading `name,...` header row is optional. Values must not contain commas
+ *  (URLs and bearer tokens don't), so a simple split is sufficient. */
+function parseCsv(text: string): CsvRow[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l !== "");
+  const rows: CsvRow[] = [];
+  lines.forEach((line, i) => {
+    const cells = line.split(",").map((c) => c.trim());
+    if (i === 0 && cells[0]?.toLowerCase() === "name") return; // header
+    const [name = "", native_url = "", native_token = "", workos_url = "", workos_token = ""] =
+      cells;
+    rows.push({ name, native_url, native_token, workos_url, workos_token });
+  });
+  return rows;
 }
 
 export async function loader({ context }: LoaderFunctionArgs) {
   const { env } = context.cloudflare;
-  const [connections, proxyPublicUrl, nativePublicUrl, nativeScimToken, mockWorkosToken] =
+  const [directories, proxyPublicUrl, nativePublicUrl, nativeScimToken, mockWorkosToken] =
     await Promise.all([
-      listConnections(env.DB),
+      listDirectories(env.DB),
       getConfig(env.DB, "proxy.public_url"),
       getConfig(env.DB, "native.public_url"),
       getConfig(env.DB, "native.scim_token"),
@@ -31,7 +66,7 @@ export async function loader({ context }: LoaderFunctionArgs) {
     ]);
 
   return {
-    connections,
+    directories,
     proxyPublicUrl: proxyPublicUrl ?? "",
     nativePublicUrl: nativePublicUrl ?? "",
     nativeScimToken: nativeScimToken ?? "",
@@ -43,28 +78,61 @@ export async function action({ context, request }: ActionFunctionArgs) {
   const { env } = context.cloudflare;
   const form = await request.formData();
   const intent = form.get("intent");
+  const field = (key: string) => String(form.get(key) ?? "").trim();
 
-  if (intent === "create-connection") {
-    const name = String(form.get("name") ?? "").trim();
+  if (intent === "create-directory") {
+    const name = field("name");
     if (!name) {
-      return { error: "The connection needs a name before it can be created." };
+      return { error: "The directory needs a name before it can be created." };
     }
     const row = await withD1Retry(() =>
-      env.DB.prepare("INSERT INTO scim_connections (name) VALUES (?) RETURNING id")
-        .bind(name)
+      env.DB.prepare(`${INSERT_DIRECTORY} RETURNING id`)
+        .bind(
+          name,
+          field("native_url"),
+          field("native_token"),
+          field("workos_url"),
+          field("workos_token"),
+        )
         .first<{ id: string }>(),
     );
     if (!row) {
-      return {
-        error: "The connection could not be created. Check the D1 database and retry.",
-      };
+      return { error: "The directory could not be created. Check the database and retry." };
     }
-    return redirect(`/panel/connections/${row.id}`);
+    return redirect(`/panel/directories/${row.id}`);
+  }
+
+  if (intent === "bulk-import") {
+    const rows = parseCsv(field("csv"));
+    if (rows.length === 0) {
+      return { error: "No directories found in the CSV. Add one directory per line." };
+    }
+    let imported = 0;
+    const importErrors: string[] = [];
+    for (const [i, r] of rows.entries()) {
+      if (!r.name) {
+        importErrors.push(`Row ${i + 1}: missing a name in the first column.`);
+        continue;
+      }
+      try {
+        await withD1Retry(() =>
+          env.DB.prepare(INSERT_DIRECTORY)
+            .bind(r.name, r.native_url, r.native_token, r.workos_url, r.workos_token)
+            .run(),
+        );
+        imported++;
+      } catch (error) {
+        importErrors.push(
+          `Row ${i + 1} (${r.name}): ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    return { imported, importErrors };
   }
 
   if (intent === "save-settings") {
-    const proxyPublicUrl = String(form.get("proxy_public_url") ?? "").trim();
-    const nativePublicUrl = String(form.get("native_public_url") ?? "").trim();
+    const proxyPublicUrl = field("proxy_public_url");
+    const nativePublicUrl = field("native_public_url");
     if (!proxyPublicUrl || !nativePublicUrl) {
       return {
         error:
@@ -77,6 +145,39 @@ export async function action({ context, request }: ActionFunctionArgs) {
   }
 
   return { error: "That form action is not recognized." };
+}
+
+function CredentialFields() {
+  return (
+    <Flex direction="column" gap="4">
+      <Text color="gray" size="1">
+        SCIM credentials — optional now, and editable later on the directory page. The directory
+        starts in passthrough, so it stays inert until you advance the mode.
+      </Text>
+      <Grid columns={{ initial: "1", sm: "2" }} gap="3">
+        <Flex direction="column" gap="2">
+          <FieldLabel htmlFor="native-url">Native SCIM base URL</FieldLabel>
+          <TextField.Root id="native-url" name="native_url" placeholder="https://.../scim/v2" />
+        </Flex>
+        <Flex direction="column" gap="2">
+          <FieldLabel htmlFor="native-token">Native SCIM token</FieldLabel>
+          <TextField.Root id="native-token" name="native_token" placeholder="Bearer token" />
+        </Flex>
+        <Flex direction="column" gap="2">
+          <FieldLabel htmlFor="workos-url">WorkOS directory endpoint</FieldLabel>
+          <TextField.Root
+            id="workos-url"
+            name="workos_url"
+            placeholder="https://api.workos.com/scim/v2.0/..."
+          />
+        </Flex>
+        <Flex direction="column" gap="2">
+          <FieldLabel htmlFor="workos-token">WorkOS bearer token</FieldLabel>
+          <TextField.Root id="workos-token" name="workos_token" placeholder="Bearer token" />
+        </Flex>
+      </Grid>
+    </Flex>
+  );
 }
 
 function TokenRow({ label, value, hint }: { label: string; value: string; hint?: string }) {
@@ -101,7 +202,7 @@ function TokenRow({ label, value, hint }: { label: string; value: string; hint?:
 }
 
 export default function PanelHome() {
-  const { connections, proxyPublicUrl, nativePublicUrl, nativeScimToken, mockWorkosToken } =
+  const { directories, proxyPublicUrl, nativePublicUrl, nativeScimToken, mockWorkosToken } =
     useLoaderData<typeof loader>();
   const actionData = useActionData() as HomeActionData | undefined;
   const navigation = useNavigation();
@@ -112,74 +213,132 @@ export default function PanelHome() {
     <Flex direction="column" gap="5">
       <Flex align="center" justify="between">
         <Heading as="h2" size="5">
-          Connections
+          Directories
         </Heading>
-        <Dialog.Root>
-          <Dialog.Trigger>
-            <Button color="purple">Create connection</Button>
-          </Dialog.Trigger>
-          <Dialog.Content size="2">
-            <Form method="post">
-              <Flex direction="column" gap="5">
-                <Dialog.Header
-                  title="Create connection"
-                  description="A new connection starts in passthrough mode with a freshly minted proxy token."
-                  error={actionData?.error}
-                />
-                <input type="hidden" name="intent" value="create-connection" />
-                <Flex direction="column" gap="2">
-                  <FieldLabel htmlFor="connection-name">Name</FieldLabel>
-                  <TextField.Root
-                    autoFocus
-                    id="connection-name"
-                    name="name"
-                    placeholder="Acme Corp — Okta"
-                    required
+        <Flex gap="3">
+          <Dialog.Root>
+            <Dialog.Trigger>
+              <Button variant="outline">Bulk import</Button>
+            </Dialog.Trigger>
+            <Dialog.Content size="2">
+              <Form method="post">
+                <Flex direction="column" gap="5">
+                  <Dialog.Header
+                    title="Bulk import directories"
+                    description="One directory per line. Columns: name, native SCIM URL, native token, WorkOS endpoint, WorkOS token. Only the name is required; the rest can be filled per directory later."
+                    error={actionData?.error}
                   />
+                  <input type="hidden" name="intent" value="bulk-import" />
+                  <Flex direction="column" gap="2">
+                    <FieldLabel htmlFor="csv">CSV</FieldLabel>
+                    <TextArea
+                      id="csv"
+                      name="csv"
+                      resize="vertical"
+                      rows={8}
+                      placeholder={
+                        "name,native_url,native_token,workos_url,workos_token\n" +
+                        "Acme — Okta,https://acme.com/scim/v2,tok_native,https://api.workos.com/scim/v2.0/xxx,tok_workos"
+                      }
+                    />
+                    <Text color="gray" size="1">
+                      A leading header row is optional. Values must not contain commas.
+                    </Text>
+                  </Flex>
+                  <Dialog.Footer>
+                    <Dialog.Close>
+                      <Button>Cancel</Button>
+                    </Dialog.Close>
+                    <Button color="purple" loading={pendingIntent === "bulk-import"} type="submit">
+                      Import directories
+                    </Button>
+                  </Dialog.Footer>
                 </Flex>
-                <Dialog.Footer>
-                  <Dialog.Close>
-                    <Button>Cancel</Button>
-                  </Dialog.Close>
-                  <Button
-                    color="purple"
-                    loading={pendingIntent === "create-connection"}
-                    type="submit"
-                  >
-                    Create connection
-                  </Button>
-                </Dialog.Footer>
-              </Flex>
-            </Form>
-          </Dialog.Content>
-        </Dialog.Root>
+              </Form>
+            </Dialog.Content>
+          </Dialog.Root>
+
+          <Dialog.Root>
+            <Dialog.Trigger>
+              <Button color="purple">Import directory</Button>
+            </Dialog.Trigger>
+            <Dialog.Content size="3">
+              <Form method="post">
+                <Flex direction="column" gap="5">
+                  <Dialog.Header
+                    title="Import directory"
+                    description="A new directory starts in passthrough mode with a freshly minted proxy token."
+                    error={actionData?.error}
+                  />
+                  <input type="hidden" name="intent" value="create-directory" />
+                  <Flex direction="column" gap="2">
+                    <FieldLabel htmlFor="directory-name">Name</FieldLabel>
+                    <TextField.Root
+                      autoFocus
+                      id="directory-name"
+                      name="name"
+                      placeholder="Acme Corp — Okta"
+                      required
+                    />
+                  </Flex>
+                  <Separator size="4" />
+                  <CredentialFields />
+                  <Dialog.Footer>
+                    <Dialog.Close>
+                      <Button>Cancel</Button>
+                    </Dialog.Close>
+                    <Button
+                      color="purple"
+                      loading={pendingIntent === "create-directory"}
+                      type="submit"
+                    >
+                      Import directory
+                    </Button>
+                  </Dialog.Footer>
+                </Flex>
+              </Form>
+            </Dialog.Content>
+          </Dialog.Root>
+        </Flex>
       </Flex>
 
-      {connections.length === 0 ? (
+      {actionData?.imported !== undefined && (
+        <Callout.Root color={actionData.importErrors?.length ? "yellow" : "green"}>
+          <Callout.Text>
+            Imported {actionData.imported} {actionData.imported === 1 ? "directory" : "directories"}
+            .
+            {actionData.importErrors?.length
+              ? ` ${actionData.importErrors.length} row(s) failed: ${actionData.importErrors.join("; ")}`
+              : ""}
+          </Callout.Text>
+        </Callout.Root>
+      )}
+
+      {directories.length === 0 ? (
         <Card size="3">
           <EmptyState.Root
-            title="No connections yet"
-            subtitle="Create a connection to mint the proxy token the IdP will authenticate with."
+            title="No directories yet"
+            subtitle="Import a directory to mint the proxy token the IdP will authenticate with."
           />
         </Card>
       ) : (
         <Flex direction="column" gap="3">
-          {connections.map((connection) => (
-            <Card key={connection.id} size="3">
+          {directories.map((directory) => (
+            <Card key={directory.id} size="3">
               <Flex align="center" gap="4" justify="between">
                 <Flex direction="column" gap="1">
                   <Flex align="center" gap="2">
                     <Heading as="h3" size="4">
-                      {connection.name}
+                      {directory.name}
                     </Heading>
-                    <ModeBadge mode={connection.mode} />
+                    <ModeBadge mode={directory.mode} />
                   </Flex>
                   <Text color="gray" size="2">
-                    <Code size="1">{connection.id}</Code> · created {connection.created_at}
+                    <Code size="1">{directory.id}</Code> · created {directory.created_at}
                   </Text>
                 </Flex>
                 <Button asChild type={null}>
-                  <Link to={`/panel/connections/${connection.id}`}>Open</Link>
+                  <Link to={`/panel/directories/${directory.id}`}>Open</Link>
                 </Button>
               </Flex>
             </Card>
@@ -191,7 +350,7 @@ export default function PanelHome() {
         <Flex direction="column" gap="5">
           <CardHeader
             title="Global settings"
-            description="Public base URLs feed the copy-paste values below and on each connection page. Tokens are minted by the migration and read-only here."
+            description="Public base URLs feed the copy-paste values below and on each directory page. Tokens are minted by the migration and read-only here."
           />
           <Form method="post">
             <input type="hidden" name="intent" value="save-settings" />

@@ -4,7 +4,7 @@ export interface IdpEnv {
 
 export interface IdpUser {
   id: string;
-  connection_id: string;
+  directory_id: string;
   user_name: string;
   external_id: string;
   given_name: string | null;
@@ -18,7 +18,7 @@ export interface IdpUser {
 
 export interface IdpGroup {
   id: string;
-  connection_id: string;
+  directory_id: string;
   display_name: string;
   external_id: string;
   scim_id: string | null;
@@ -29,7 +29,7 @@ export interface IdpGroup {
 
 export interface IdpActivity {
   id: number;
-  connection_id: string;
+  directory_id: string;
   ts: string;
   origin: "manual" | "auto" | "seed";
   action: string;
@@ -42,7 +42,7 @@ export interface IdpActivity {
 }
 
 export interface IdpAutoState {
-  connection_id: string;
+  directory_id: string;
   running: number;
   interval_ms: number;
   tick_count: number;

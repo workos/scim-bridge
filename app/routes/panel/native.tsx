@@ -98,7 +98,7 @@ function ResetNativeDialog() {
           <Flex direction="column" gap="5">
             <AlertDialog.Header
               title="Reset the native app?"
-              description="Deletes every user and group from the customer app's directory, plus its DSync listener log. The proxy connection, id mappings, and the WorkOS side are left untouched — this only clears what the customer app itself holds."
+              description="Deletes every user and group from the customer app's directory, plus its DSync listener log. The proxy directory, id mappings, and the WorkOS side are left untouched — this only clears what the customer app itself holds."
             />
             <input name="intent" type="hidden" value="reset-native" />
             <AlertDialog.Footer>

@@ -16,7 +16,7 @@ export const meta: MetaFunction = () => [
 
 export default function PanelLayout() {
   const { pathname } = useLocation();
-  const connectionsActive = pathname === "/panel" || pathname.startsWith("/panel/connections");
+  const directoriesActive = pathname === "/panel" || pathname.startsWith("/panel/directories");
 
   return (
     <Box className="min-h-screen">
@@ -26,14 +26,14 @@ export default function PanelLayout() {
             SCIM migration
           </Heading>
           <Text color="gray" size="2">
-            Reversible cutover — proxy connections, dual-write, backfill, and the customer's native
+            Reversible cutover — proxy directories, dual-write, backfill, and the customer's native
             app, side by side.
           </Text>
         </Flex>
 
         <TabNav.Root>
-          <TabNav.Link asChild active={connectionsActive}>
-            <Link to="/panel">Connections</Link>
+          <TabNav.Link asChild active={directoriesActive}>
+            <Link to="/panel">Directories</Link>
           </TabNav.Link>
           <TabNav.Link asChild active={pathname === "/panel/live"}>
             <Link to="/panel/live">Live state</Link>

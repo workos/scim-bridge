@@ -11,8 +11,8 @@ import {
 import { runBackfill } from "../../../workers/shared/backfill";
 import {
   getConfig,
-  getConnectionById,
-  setConnectionMode,
+  getDirectoryById,
+  setDirectoryMode,
   withD1Retry,
 } from "../../../workers/shared/db";
 import type { BackfillSummary, Mode } from "../../../workers/shared/types";
@@ -63,16 +63,16 @@ const MODE_DETAILS: { value: Mode; description: string }[] = [
 
 export async function loader({ context, params }: LoaderFunctionArgs) {
   const { env } = context.cloudflare;
-  const connection = await getConnectionById(env.DB, params.id ?? "");
-  if (!connection) {
-    throw new Response("Connection not found", { status: 404 });
+  const directory = await getDirectoryById(env.DB, params.id ?? "");
+  if (!directory) {
+    throw new Response("Directory not found", { status: 404 });
   }
   const [proxyPublicUrl, nativePublicUrl] = await Promise.all([
     getConfig(env.DB, "proxy.public_url"),
     getConfig(env.DB, "native.public_url"),
   ]);
   return {
-    connection,
+    directory,
     proxyPublicUrl: proxyPublicUrl ?? "",
     nativePublicUrl: nativePublicUrl ?? "",
   };
@@ -112,9 +112,9 @@ export async function action({
   request,
 }: ActionFunctionArgs): Promise<Response | OverviewActionData> {
   const { env } = context.cloudflare;
-  const connection = await getConnectionById(env.DB, params.id ?? "");
-  if (!connection) {
-    throw new Response("Connection not found", { status: 404 });
+  const directory = await getDirectoryById(env.DB, params.id ?? "");
+  if (!directory) {
+    throw new Response("Directory not found", { status: 404 });
   }
 
   const form = await request.formData();
@@ -127,19 +127,19 @@ export async function action({
         error: "That mode is not one of passthrough, dualwrite-native-first, or workos-only.",
       };
     }
-    await setConnectionMode(env.DB, connection.id, mode as Mode);
+    await setDirectoryMode(env.DB, directory.id, mode as Mode);
     return {};
   }
 
   if (intent === "save-native") {
     await withD1Retry(() =>
       env.DB.prepare(
-        "UPDATE scim_connections SET native_url = ?, native_token = ?, updated_at = datetime('now') WHERE id = ?",
+        "UPDATE scim_directories SET native_url = ?, native_token = ?, updated_at = datetime('now') WHERE id = ?",
       )
         .bind(
           String(form.get("native_url") ?? "").trim(),
           String(form.get("native_token") ?? "").trim(),
-          connection.id,
+          directory.id,
         )
         .run(),
     );
@@ -149,12 +149,12 @@ export async function action({
   if (intent === "save-workos") {
     await withD1Retry(() =>
       env.DB.prepare(
-        "UPDATE scim_connections SET workos_url = ?, workos_token = ?, updated_at = datetime('now') WHERE id = ?",
+        "UPDATE scim_directories SET workos_url = ?, workos_token = ?, updated_at = datetime('now') WHERE id = ?",
       )
         .bind(
           String(form.get("workos_url") ?? "").trim(),
           String(form.get("workos_token") ?? "").trim(),
-          connection.id,
+          directory.id,
         )
         .run(),
     );
@@ -162,34 +162,34 @@ export async function action({
   }
 
   if (intent === "run-backfill") {
-    if (connection.mode !== "dualwrite-native-first") {
+    if (directory.mode !== "dualwrite-native-first") {
       return {
         error:
           "Backfill only runs in dualwrite-native-first mode, so live writes keep flowing while the snapshot replays.",
       };
     }
-    const backfill = await runBackfill(env.DB, connection);
+    const backfill = await runBackfill(env.DB, directory);
     return { backfill };
   }
 
   if (intent === "test-native") {
     return {
-      health: await checkEndpoint("native", connection.native_url, connection.native_token),
+      health: await checkEndpoint("native", directory.native_url, directory.native_token),
     };
   }
 
   if (intent === "test-workos") {
     return {
-      health: await checkEndpoint("workos", connection.workos_url, connection.workos_token),
+      health: await checkEndpoint("workos", directory.workos_url, directory.workos_token),
     };
   }
 
-  if (intent === "delete-connection") {
+  if (intent === "delete-directory") {
     await withD1Retry(() =>
       env.DB.batch([
-        env.DB.prepare("DELETE FROM id_mappings WHERE connection_id = ?").bind(connection.id),
-        env.DB.prepare("DELETE FROM proxy_log WHERE connection_id = ?").bind(connection.id),
-        env.DB.prepare("DELETE FROM scim_connections WHERE id = ?").bind(connection.id),
+        env.DB.prepare("DELETE FROM id_mappings WHERE directory_id = ?").bind(directory.id),
+        env.DB.prepare("DELETE FROM proxy_log WHERE directory_id = ?").bind(directory.id),
+        env.DB.prepare("DELETE FROM scim_directories WHERE id = ?").bind(directory.id),
       ]),
     );
     return redirect("/panel");
@@ -365,8 +365,8 @@ function BackfillResult({ summary }: { summary: BackfillSummary }) {
   );
 }
 
-export default function ConnectionOverview() {
-  const { connection, proxyPublicUrl, nativePublicUrl } = useLoaderData<typeof loader>();
+export default function DirectoryOverview() {
+  const { directory, proxyPublicUrl, nativePublicUrl } = useLoaderData<typeof loader>();
   const actionData = useActionData() as OverviewActionData | undefined;
   const navigation = useNavigation();
   const pendingIntent = navigation.formData?.get("intent");
@@ -406,9 +406,9 @@ export default function ConnectionOverview() {
               </Text>
               <Flex align="center" gap="2">
                 <Code size="2" className="break-all">
-                  {connection.proxy_token}
+                  {directory.proxy_token}
                 </Code>
-                <CopyButton value={connection.proxy_token} />
+                <CopyButton value={directory.proxy_token} />
               </Flex>
             </Flex>
           </Grid>
@@ -416,8 +416,8 @@ export default function ConnectionOverview() {
       </Card>
 
       <ModeCard
-        key={connection.mode}
-        currentMode={connection.mode}
+        key={directory.mode}
+        currentMode={directory.mode}
         pending={pendingIntent === "set-mode"}
       />
 
@@ -427,8 +427,8 @@ export default function ConnectionOverview() {
         intent="save-native"
         urlField="native_url"
         tokenField="native_token"
-        urlValue={connection.native_url}
-        tokenValue={connection.native_token}
+        urlValue={directory.native_url}
+        tokenValue={directory.native_token}
         buttonLabel="Save native endpoint"
         pending={pendingIntent === "save-native"}
       />
@@ -439,8 +439,8 @@ export default function ConnectionOverview() {
         intent="save-workos"
         urlField="workos_url"
         tokenField="workos_token"
-        urlValue={connection.workos_url}
-        tokenValue={connection.workos_token}
+        urlValue={directory.workos_url}
+        tokenValue={directory.workos_token}
         buttonLabel="Save WorkOS endpoint"
         pending={pendingIntent === "save-workos"}
       />
@@ -451,7 +451,7 @@ export default function ConnectionOverview() {
             title="Backfill"
             description="Snapshot the native directory and replay every user and group into WorkOS as migrated-id upserts."
           />
-          {connection.mode !== "dualwrite-native-first" ? (
+          {directory.mode !== "dualwrite-native-first" ? (
             <Flex align="center" gap="3" justify="between">
               <Text color="gray" size="2">
                 Backfill is only available in dualwrite-native-first mode, so live dual-writes keep
@@ -513,29 +513,29 @@ export default function ConnectionOverview() {
               Danger zone
             </Text>
             <Text color="gray" size="2">
-              Deleting this connection removes its id mappings and invalidates its proxy token
+              Deleting this directory removes its id mappings and invalidates its proxy token
               immediately.
             </Text>
           </Flex>
           <AlertDialog.Root>
             <AlertDialog.Trigger>
-              <Button color="red">Delete connection</Button>
+              <Button color="red">Delete directory</Button>
             </AlertDialog.Trigger>
             <AlertDialog.Content size="2">
               <Form method="post">
                 <Flex direction="column" gap="5">
                   <AlertDialog.Header
-                    title="Delete this connection?"
-                    description={`This permanently deletes "${connection.name}" and its id mappings. The IdP will start receiving 401 responses from the proxy as soon as the token is gone.`}
+                    title="Delete this directory?"
+                    description={`This permanently deletes "${directory.name}" and its id mappings. The IdP will start receiving 401 responses from the proxy as soon as the token is gone.`}
                   />
-                  <input type="hidden" name="intent" value="delete-connection" />
+                  <input type="hidden" name="intent" value="delete-directory" />
                   <AlertDialog.Footer>
                     <AlertDialog.Cancel>
                       <Button>Cancel</Button>
                     </AlertDialog.Cancel>
                     <AlertDialog.Action>
                       <Button color="red" type="submit">
-                        Delete connection
+                        Delete directory
                       </Button>
                     </AlertDialog.Action>
                   </AlertDialog.Footer>

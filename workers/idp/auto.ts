@@ -1,4 +1,4 @@
-import type { Connection } from "../shared/types";
+import type { Directory } from "../shared/types";
 import * as client from "./client";
 import type { ActionContext } from "./client";
 import * as store from "./store";
@@ -65,8 +65,8 @@ function slug(s: string): string {
 /** One realistic IdP mutation, chosen with weights that keep the directory in
  *  a sane size band. Every branch drives a real SCIM call through the proxy. */
 export async function performTick(ctx: ActionContext): Promise<string> {
-  const users = await store.listUsers(ctx.env.DB, ctx.connection.id);
-  const groups = await store.listGroups(ctx.env.DB, ctx.connection.id);
+  const users = await store.listUsers(ctx.env.DB, ctx.directory.id);
+  const groups = await store.listGroups(ctx.env.DB, ctx.directory.id);
   const active = users.filter((u) => u.active === 1);
   const inactive = users.filter((u) => u.active === 0);
 
@@ -150,9 +150,9 @@ export async function performTick(ctx: ActionContext): Promise<string> {
  *  reuses resources that already exist rather than colliding on them. */
 export async function seedDirectory(
   env: IdpEnv,
-  connection: Connection,
+  directory: Directory,
 ): Promise<{ users: number; groups: number }> {
-  const ctx: ActionContext = { env, connection, origin: "seed" };
+  const ctx: ActionContext = { env, directory, origin: "seed" };
   const people = [
     ["Alice", "Anderson"],
     ["Bob", "Baker"],
@@ -163,7 +163,7 @@ export async function seedDirectory(
   const created = [];
   for (const [first, last] of people) {
     const userName = `${slug(first)}.${slug(last)}@${DOMAIN}`;
-    const existing = await store.userByUserName(env.DB, connection.id, userName);
+    const existing = await store.userByUserName(env.DB, directory.id, userName);
     created.push(
       existing ??
         (await client.createUser(ctx, {
@@ -175,13 +175,13 @@ export async function seedDirectory(
     );
   }
   const eng =
-    (await store.groupByDisplayName(env.DB, connection.id, "Engineering")) ??
+    (await store.groupByDisplayName(env.DB, directory.id, "Engineering")) ??
     (await client.createGroup(ctx, {
       displayName: "Engineering",
       externalId: "okta-grp-engineering",
     }));
   const sales =
-    (await store.groupByDisplayName(env.DB, connection.id, "Sales")) ??
+    (await store.groupByDisplayName(env.DB, directory.id, "Sales")) ??
     (await client.createGroup(ctx, { displayName: "Sales", externalId: "okta-grp-sales" }));
   await client.addMember(ctx, eng.id, created[0].id);
   await client.addMember(ctx, eng.id, created[1].id);

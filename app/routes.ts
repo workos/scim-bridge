@@ -9,10 +9,10 @@ export default [
       route("native", "routes/panel/native.tsx"),
       route("listener", "routes/panel/listener.tsx"),
       route("idp", "routes/panel/idp.tsx"),
-      route("connections/:id", "routes/panel/connection.tsx", [
-        index("routes/panel/connection-overview.tsx"),
-        route("activity", "routes/panel/connection-activity.tsx"),
-        route("mappings", "routes/panel/connection-mappings.tsx"),
+      route("directories/:id", "routes/panel/directory.tsx", [
+        index("routes/panel/directory-overview.tsx"),
+        route("activity", "routes/panel/directory-activity.tsx"),
+        route("mappings", "routes/panel/directory-mappings.tsx"),
       ]),
     ]),
   ]),

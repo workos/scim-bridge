@@ -1,4 +1,4 @@
-import type { BackfillSummary, Connection, ResourceType } from "./types";
+import type { BackfillSummary, Directory, ResourceType } from "./types";
 import { insertProxyLog } from "./db";
 import {
   errorMessage,
@@ -25,31 +25,20 @@ interface ResourceCounts {
  * Snapshot-then-replay: intentionally no guard against deletes that land
  * mid-backfill (the resurrection race the explainer documents).
  */
-export async function runBackfill(
-  db: D1Database,
-  connection: Connection,
-): Promise<BackfillSummary> {
+export async function runBackfill(db: D1Database, directory: Directory): Promise<BackfillSummary> {
   const summary: BackfillSummary = {
     users: { total: 0, mirrored: 0, failed: 0 },
     groups: { total: 0, mirrored: 0, failed: 0 },
     errors: [],
   };
 
-  const users = await snapshot(connection, "Users", summary.errors);
+  const users = await snapshot(directory, "Users", summary.errors);
   for (const resource of users) {
-    await mirrorResource(
-      db,
-      connection,
-      "Users",
-      resource,
-      resource,
-      summary.users,
-      summary.errors,
-    );
+    await mirrorResource(db, directory, "Users", resource, resource, summary.users, summary.errors);
   }
 
-  const groups = await snapshot(connection, "Groups", summary.errors);
-  const maps = await loadIdMaps(db, connection.id);
+  const groups = await snapshot(directory, "Groups", summary.errors);
+  const maps = await loadIdMaps(db, directory.id);
   const translate = makeTranslator(maps.nativeToWorkos);
   for (const resource of groups) {
     const body = { ...resource };
@@ -60,14 +49,14 @@ export async function runBackfill(
           : member,
       );
     }
-    await mirrorResource(db, connection, "Groups", resource, body, summary.groups, summary.errors);
+    await mirrorResource(db, directory, "Groups", resource, body, summary.groups, summary.errors);
   }
 
   return summary;
 }
 
 async function snapshot(
-  connection: Connection,
+  directory: Directory,
   kind: ResourceType,
   errors: string[],
 ): Promise<Record<string, unknown>[]> {
@@ -77,8 +66,8 @@ async function snapshot(
     let page;
     try {
       page = await scimFetch(
-        `${joinScimUrl(connection.native_url, `/${kind}`)}?startIndex=${startIndex}&count=${PAGE_SIZE}`,
-        { method: "GET", token: connection.native_token },
+        `${joinScimUrl(directory.native_url, `/${kind}`)}?startIndex=${startIndex}&count=${PAGE_SIZE}`,
+        { method: "GET", token: directory.native_token },
       );
     } catch (error) {
       pushError(errors, `${kind} snapshot: ${errorMessage(error)}`);
@@ -99,7 +88,7 @@ async function snapshot(
 
 async function mirrorResource(
   db: D1Database,
-  connection: Connection,
+  directory: Directory,
   kind: ResourceType,
   original: Record<string, unknown>,
   body: Record<string, unknown>,
@@ -113,12 +102,12 @@ async function mirrorResource(
     pushError(errors, `${kind}: snapshot resource is missing an id`);
     return;
   }
-  const result = await mirrorUpsert(db, connection, kind, nativeId, body);
+  const result = await mirrorUpsert(db, directory, kind, nativeId, body);
   try {
     await insertProxyLog(db, {
-      connection_id: connection.id,
+      directory_id: directory.id,
       source: "backfill",
-      mode: connection.mode,
+      mode: directory.mode,
       method: "PUT",
       path: `/${kind}/${nativeId}`,
       request_body: JSON.stringify(body),
