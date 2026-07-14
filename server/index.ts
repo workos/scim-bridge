@@ -25,7 +25,13 @@ const config = loadConfig();
 const sqlite = openDatabase(config.databasePath);
 const applied = runMigrations(sqlite, MIGRATIONS_DIR);
 if (applied.length) console.log(`Applied ${applied.length} migration(s): ${applied.join(", ")}`);
-const DB = new SqliteD1(sqlite) as unknown as PocEnv["DB"];
+const sqliteD1 = new SqliteD1(sqlite);
+// Encrypt per-directory tokens at rest when a key is provided (else plaintext).
+// The key rides on the shared DB handle so both the workers and the bundled
+// panel (separate module graphs) encrypt/decrypt consistently.
+sqliteD1.encryptionKey = config.encryptionKey;
+if (config.encryptionKey) console.log("Per-directory token encryption: enabled");
+const DB = sqliteD1 as unknown as PocEnv["DB"];
 const env: PocEnv = { DB };
 await seedConfig(env, config);
 await seedDemoDirectory(env, config);

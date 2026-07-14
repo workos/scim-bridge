@@ -1,4 +1,4 @@
-import { getConfig, listDirectories, setConfig } from "../workers/shared/db";
+import { getConfig, insertDirectory, listDirectories, setConfig } from "../workers/shared/db";
 import type { PocEnv } from "../workers/shared/types";
 
 /**
@@ -82,18 +82,11 @@ export async function seedDemoDirectory(env: PocEnv, config: AppConfig): Promise
   const existing = await listDirectories(env.DB);
   if (existing.length > 0) return;
   const base = loopbackBase(config);
-  const nativeToken = (await getConfig(env.DB, "native.scim_token")) ?? "";
-  const workosToken = (await getConfig(env.DB, "mock_workos.scim_token")) ?? "";
-  await env.DB.prepare(
-    "INSERT INTO scim_directories (name, native_url, native_token, workos_url, workos_token) " +
-      "VALUES (?, ?, ?, ?, ?)",
-  )
-    .bind(
-      "Demo directory",
-      `${base}/__demo/native/scim/v2`,
-      nativeToken,
-      `${base}/__demo/native/mock-workos/scim/v2`,
-      workosToken,
-    )
-    .run();
+  await insertDirectory(env.DB, {
+    name: "Demo directory",
+    native_url: `${base}/__demo/native/scim/v2`,
+    native_token: (await getConfig(env.DB, "native.scim_token")) ?? "",
+    workos_url: `${base}/__demo/native/mock-workos/scim/v2`,
+    workos_token: (await getConfig(env.DB, "mock_workos.scim_token")) ?? "",
+  });
 }

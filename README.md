@@ -45,7 +45,7 @@ imported through the control panel.
 | `PORT` | no | `8080` | HTTP port the server listens on. |
 | `DATABASE_PATH` | no | `/data/scim-bridge.db` | SQLite file path. Mount a volume here to persist. |
 | `PANEL_AUTH_USER` / `PANEL_AUTH_PASSWORD` | no | — | HTTP Basic credentials guarding the control panel. Both blank = unauthenticated (front it with your own proxy/SSO). |
-| `APP_ENCRYPTION_KEY` | no | — | Reserved for encrypting per-directory tokens at rest. |
+| `APP_ENCRYPTION_KEY` | no | — | When set, encrypts each directory's native + WorkOS bearer tokens at rest (AES-256-GCM). Keep it stable; leave unset to store them in plaintext. |
 | `DEMO_MODE` | no | `false` | Mount the bundled IdP + native-app simulators under `/__demo` for a self-contained end-to-end demo. |
 
 The `/scim/v2` data-plane is always authenticated by the per-directory proxy

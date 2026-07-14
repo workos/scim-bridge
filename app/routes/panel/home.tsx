@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, Link, redirect, useActionData, useLoaderData, useNavigation } from "react-router";
-import { getConfig, listDirectories, setConfig, withD1Retry } from "../../../workers/shared/db";
+import { getConfig, insertDirectory, listDirectories, setConfig } from "../../../workers/shared/db";
 import { Button } from "../../vendor/design-system/components/button";
 import { Callout } from "../../vendor/design-system/components/callout";
 import { Card } from "../../vendor/design-system/components/card";
@@ -22,10 +22,6 @@ interface HomeActionData {
   imported?: number;
   importErrors?: string[];
 }
-
-const INSERT_DIRECTORY =
-  "INSERT INTO scim_directories (name, native_url, native_token, workos_url, workos_token) " +
-  "VALUES (?, ?, ?, ?, ?)";
 
 interface CsvRow {
   name: string;
@@ -85,17 +81,13 @@ export async function action({ context, request }: ActionFunctionArgs) {
     if (!name) {
       return { error: "The directory needs a name before it can be created." };
     }
-    const row = await withD1Retry(() =>
-      env.DB.prepare(`${INSERT_DIRECTORY} RETURNING id`)
-        .bind(
-          name,
-          field("native_url"),
-          field("native_token"),
-          field("workos_url"),
-          field("workos_token"),
-        )
-        .first<{ id: string }>(),
-    );
+    const row = await insertDirectory(env.DB, {
+      name,
+      native_url: field("native_url"),
+      native_token: field("native_token"),
+      workos_url: field("workos_url"),
+      workos_token: field("workos_token"),
+    });
     if (!row) {
       return { error: "The directory could not be created. Check the database and retry." };
     }
@@ -115,11 +107,7 @@ export async function action({ context, request }: ActionFunctionArgs) {
         continue;
       }
       try {
-        await withD1Retry(() =>
-          env.DB.prepare(INSERT_DIRECTORY)
-            .bind(r.name, r.native_url, r.native_token, r.workos_url, r.workos_token)
-            .run(),
-        );
+        await insertDirectory(env.DB, r);
         imported++;
       } catch (error) {
         importErrors.push(

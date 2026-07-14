@@ -74,6 +74,10 @@ function runOne(stmt: Database.Statement, params: unknown[]): D1RunResult {
 }
 
 export class SqliteD1 {
+  /** Raw key for at-rest secret encryption, read by workers/shared/crypto off
+   *  the shared DB handle. Null (or unset, as on Cloudflare D1) = plaintext. */
+  encryptionKey: string | null = null;
+
   private readonly cache = new Map<string, Database.Statement>();
   private readonly getStmt = (sql: string): Database.Statement => {
     let stmt = this.cache.get(sql);

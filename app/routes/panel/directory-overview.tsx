@@ -13,6 +13,8 @@ import {
   getConfig,
   getDirectoryById,
   setDirectoryMode,
+  setDirectoryNative,
+  setDirectoryWorkos,
   withD1Retry,
 } from "../../../workers/shared/db";
 import type { BackfillSummary, Mode } from "../../../workers/shared/types";
@@ -132,31 +134,21 @@ export async function action({
   }
 
   if (intent === "save-native") {
-    await withD1Retry(() =>
-      env.DB.prepare(
-        "UPDATE scim_directories SET native_url = ?, native_token = ?, updated_at = datetime('now') WHERE id = ?",
-      )
-        .bind(
-          String(form.get("native_url") ?? "").trim(),
-          String(form.get("native_token") ?? "").trim(),
-          directory.id,
-        )
-        .run(),
+    await setDirectoryNative(
+      env.DB,
+      directory.id,
+      String(form.get("native_url") ?? "").trim(),
+      String(form.get("native_token") ?? "").trim(),
     );
     return {};
   }
 
   if (intent === "save-workos") {
-    await withD1Retry(() =>
-      env.DB.prepare(
-        "UPDATE scim_directories SET workos_url = ?, workos_token = ?, updated_at = datetime('now') WHERE id = ?",
-      )
-        .bind(
-          String(form.get("workos_url") ?? "").trim(),
-          String(form.get("workos_token") ?? "").trim(),
-          directory.id,
-        )
-        .run(),
+    await setDirectoryWorkos(
+      env.DB,
+      directory.id,
+      String(form.get("workos_url") ?? "").trim(),
+      String(form.get("workos_token") ?? "").trim(),
     );
     return {};
   }

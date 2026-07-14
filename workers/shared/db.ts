@@ -1,3 +1,4 @@
+import { decryptSecret, encryptSecret } from "./crypto";
 import type { Directory, IdMapping, Mode, ProxyLogEntry, ResourceType } from "./types";
 
 /** Retry transient local-dev D1 errors (miniflare surfaces these when several
@@ -41,22 +42,40 @@ export async function setConfig(db: D1Database, key: string, value: string): Pro
   );
 }
 
+/** Decrypt the at-rest secrets on a directory row (native/WorkOS tokens). No-op
+ *  when encryption is off or the value is plaintext. */
+async function decryptDirectory(
+  db: D1Database,
+  directory: Directory | null,
+): Promise<Directory | null> {
+  if (!directory) return null;
+  directory.native_token = await decryptSecret(db, directory.native_token);
+  directory.workos_token = await decryptSecret(db, directory.workos_token);
+  return directory;
+}
+
 export async function getDirectoryByToken(
   db: D1Database,
   token: string,
 ): Promise<Directory | null> {
   if (!token) return null;
-  return withD1Retry(() =>
-    db
-      .prepare("SELECT * FROM scim_directories WHERE proxy_token = ?")
-      .bind(token)
-      .first<Directory>(),
+  return decryptDirectory(
+    db,
+    await withD1Retry(() =>
+      db
+        .prepare("SELECT * FROM scim_directories WHERE proxy_token = ?")
+        .bind(token)
+        .first<Directory>(),
+    ),
   );
 }
 
 export async function getDirectoryById(db: D1Database, id: string): Promise<Directory | null> {
-  return withD1Retry(() =>
-    db.prepare("SELECT * FROM scim_directories WHERE id = ?").bind(id).first<Directory>(),
+  return decryptDirectory(
+    db,
+    await withD1Retry(() =>
+      db.prepare("SELECT * FROM scim_directories WHERE id = ?").bind(id).first<Directory>(),
+    ),
   );
 }
 
@@ -64,7 +83,73 @@ export async function listDirectories(db: D1Database): Promise<Directory[]> {
   const { results } = await withD1Retry(() =>
     db.prepare("SELECT * FROM scim_directories ORDER BY created_at").all<Directory>(),
   );
-  return results;
+  return Promise.all(results.map((d) => decryptDirectory(db, d) as Promise<Directory>));
+}
+
+export interface NewDirectory {
+  name: string;
+  native_url?: string;
+  native_token?: string;
+  workos_url?: string;
+  workos_token?: string;
+}
+
+/** Create a directory, encrypting the native/WorkOS tokens at rest. */
+export async function insertDirectory(
+  db: D1Database,
+  directory: NewDirectory,
+): Promise<{ id: string } | null> {
+  const nativeToken = await encryptSecret(db, directory.native_token ?? "");
+  const workosToken = await encryptSecret(db, directory.workos_token ?? "");
+  return withD1Retry(() =>
+    db
+      .prepare(
+        "INSERT INTO scim_directories (name, native_url, native_token, workos_url, workos_token) " +
+          "VALUES (?, ?, ?, ?, ?) RETURNING id",
+      )
+      .bind(
+        directory.name,
+        directory.native_url ?? "",
+        nativeToken,
+        directory.workos_url ?? "",
+        workosToken,
+      )
+      .first<{ id: string }>(),
+  );
+}
+
+export async function setDirectoryNative(
+  db: D1Database,
+  id: string,
+  url: string,
+  token: string,
+): Promise<void> {
+  const encrypted = await encryptSecret(db, token);
+  await withD1Retry(() =>
+    db
+      .prepare(
+        "UPDATE scim_directories SET native_url = ?, native_token = ?, updated_at = datetime('now') WHERE id = ?",
+      )
+      .bind(url, encrypted, id)
+      .run(),
+  );
+}
+
+export async function setDirectoryWorkos(
+  db: D1Database,
+  id: string,
+  url: string,
+  token: string,
+): Promise<void> {
+  const encrypted = await encryptSecret(db, token);
+  await withD1Retry(() =>
+    db
+      .prepare(
+        "UPDATE scim_directories SET workos_url = ?, workos_token = ?, updated_at = datetime('now') WHERE id = ?",
+      )
+      .bind(url, encrypted, id)
+      .run(),
+  );
 }
 
 export async function setDirectoryMode(db: D1Database, id: string, mode: Mode): Promise<void> {
