@@ -35,7 +35,10 @@ export default {
       if (denied) return denied;
       return handleScim(request, pathname.slice(SCIM_BASE.length), {
         store: new ScimStore(env.DB, NATIVE_TABLES),
-        migratedIdContract: false,
+        // Honor migrated-id create-if-absent PUT so the reverse reconcile
+        // (WorkOS → native) can restore resources with their shared id. Inert
+        // for normal IdP traffic, which never sends the migrated-id header.
+        migratedIdContract: true,
       });
     }
 

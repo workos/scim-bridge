@@ -1,14 +1,15 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import {
   Form,
   redirect,
   useActionData,
+  useFetcher,
   useLoaderData,
   useNavigation,
   useSubmit,
 } from "react-router";
-import { runBackfill } from "../../../workers/shared/backfill";
+import { runBackfill, runReconcileFromWorkos } from "../../../workers/shared/backfill";
 import {
   getConfig,
   getDirectoryById,
@@ -30,6 +31,7 @@ import { Grid } from "../../vendor/design-system/components/grid";
 import { RadioCards } from "../../vendor/design-system/components/radio-cards";
 import { Text } from "../../vendor/design-system/components/text";
 import * as TextField from "../../vendor/design-system/components/text-field";
+import { FlowRail } from "./flow-rail";
 import { CardHeader, CopyButton, FieldLabel, trimTrailingSlash } from "./ui";
 
 interface HealthResult {
@@ -39,10 +41,22 @@ interface HealthResult {
   detail?: string;
 }
 
+interface EndpointCount {
+  reachable: boolean;
+  count: number | null;
+}
+
+interface TopologyResult {
+  native: EndpointCount;
+  workos: EndpointCount;
+}
+
 interface OverviewActionData {
   error?: string;
   backfill?: BackfillSummary;
+  reconcile?: BackfillSummary;
   health?: HealthResult;
+  topology?: TopologyResult;
 }
 
 const MODE_DETAILS: { value: Mode; description: string }[] = [
@@ -108,6 +122,28 @@ async function checkEndpoint(
   }
 }
 
+/** Live user count from an endpoint over SCIM, with a short timeout so an
+ *  unreachable or not-yet-configured endpoint fails fast instead of hanging. */
+async function countUsers(url: string, token: string): Promise<EndpointCount> {
+  if (!url) return { reachable: false, count: null };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(`${trimTrailingSlash(url)}/Users?count=1`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    });
+    if (!response.ok) return { reachable: false, count: null };
+    const body = (await response.json()) as { totalResults?: unknown };
+    const count = typeof body.totalResults === "number" ? body.totalResults : null;
+    return { reachable: true, count };
+  } catch {
+    return { reachable: false, count: null };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function action({
   context,
   params,
@@ -164,6 +200,17 @@ export async function action({
     return { backfill };
   }
 
+  if (intent === "reconcile-from-workos") {
+    if (directory.mode !== "workos-only") {
+      return {
+        error:
+          "Reconcile from WorkOS runs in workos-only mode, to bring the native app fully current before a rollback.",
+      };
+    }
+    const reconcile = await runReconcileFromWorkos(env.DB, directory);
+    return { reconcile };
+  }
+
   if (intent === "test-native") {
     return {
       health: await checkEndpoint("native", directory.native_url, directory.native_token),
@@ -174,6 +221,14 @@ export async function action({
     return {
       health: await checkEndpoint("workos", directory.workos_url, directory.workos_token),
     };
+  }
+
+  if (intent === "topology") {
+    const [native, workos] = await Promise.all([
+      countUsers(directory.native_url, directory.native_token),
+      countUsers(directory.workos_url, directory.workos_token),
+    ]);
+    return { topology: { native, workos } };
   }
 
   if (intent === "delete-directory") {
@@ -357,6 +412,55 @@ function BackfillResult({ summary }: { summary: BackfillSummary }) {
   );
 }
 
+function LiveStateCard({ mode }: { mode: Mode }) {
+  const fetcher = useFetcher<OverviewActionData>();
+  const loaded = useRef(false);
+  useEffect(() => {
+    if (!loaded.current) {
+      loaded.current = true;
+      fetcher.submit({ intent: "topology" }, { method: "post" });
+    }
+  }, [fetcher]);
+
+  const topo = fetcher.data?.topology;
+  const counts = { native: topo?.native.count ?? null, workos: topo?.workos.count ?? null };
+
+  let sync: { color: "green" | "yellow" | "gray"; label: string } | null = null;
+  if (topo) {
+    if (!topo.native.reachable || !topo.workos.reachable) {
+      sync = { color: "gray", label: "endpoint unreachable" };
+    } else if (topo.native.count === topo.workos.count) {
+      sync = { color: "green", label: "in sync" };
+    } else {
+      sync = { color: "yellow", label: "drift" };
+    }
+  }
+
+  return (
+    <Card size="3">
+      <Flex direction="column" gap="4">
+        <Flex align="center" gap="3" justify="between">
+          <CardHeader
+            title="Live state"
+            description="The native app and WorkOS for this directory, read live over SCIM. Counts are users."
+          />
+          <Flex align="center" gap="2">
+            {sync && <Badge color={sync.color}>{sync.label}</Badge>}
+            <Button
+              loading={fetcher.state !== "idle"}
+              onClick={() => fetcher.submit({ intent: "topology" }, { method: "post" })}
+              variant="soft"
+            >
+              Refresh
+            </Button>
+          </Flex>
+        </Flex>
+        <FlowRail counts={counts} mode={mode} />
+      </Flex>
+    </Card>
+  );
+}
+
 export default function DirectoryOverview() {
   const { directory, proxyPublicUrl, nativePublicUrl } = useLoaderData<typeof loader>();
   const actionData = useActionData() as OverviewActionData | undefined;
@@ -413,6 +517,8 @@ export default function DirectoryOverview() {
         pending={pendingIntent === "set-mode"}
       />
 
+      <LiveStateCard mode={directory.mode} />
+
       <EndpointCard
         title="Native SCIM endpoint"
         description="The customer's own SCIM server — authoritative until cutover. The proxy presents this bearer token."
@@ -462,6 +568,38 @@ export default function DirectoryOverview() {
             </Form>
           )}
           {actionData?.backfill && <BackfillResult summary={actionData.backfill} />}
+        </Flex>
+      </Card>
+
+      <Card size="3">
+        <Flex direction="column" gap="4">
+          <CardHeader
+            title="Reconcile from WorkOS"
+            description="Snapshot the live WorkOS directory and replay every user and group back into the native app as migrated-id upserts — a safety net before rolling back, in case the DSync listener lagged."
+          />
+          {directory.mode !== "workos-only" ? (
+            <Flex align="center" gap="3" justify="between">
+              <Text color="gray" size="2">
+                Reconcile is available in workos-only mode, to bring the native app fully current
+                before you roll back. Switch modes above to enable it.
+              </Text>
+              <Button disabled>Reconcile from WorkOS</Button>
+            </Flex>
+          ) : (
+            <Form method="post">
+              <input type="hidden" name="intent" value="reconcile-from-workos" />
+              <Flex justify="end">
+                <Button
+                  color="purple"
+                  loading={pendingIntent === "reconcile-from-workos"}
+                  type="submit"
+                >
+                  Reconcile from WorkOS
+                </Button>
+              </Flex>
+            </Form>
+          )}
+          {actionData?.reconcile && <BackfillResult summary={actionData.reconcile} />}
         </Flex>
       </Card>
 

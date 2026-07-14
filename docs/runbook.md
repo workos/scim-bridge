@@ -44,7 +44,11 @@ Advance the directory's mode from its page, verifying convergence in the
    listener in `workers/native/listener.ts` is a reference implementation).
 
 **Rollback:** before cutover, move the mode back toward passthrough — the native
-system stayed current, so no data is lost.
+system stayed current, so no data is lost. After cutover (`workos-only`), native
+is kept current by the DSync listener; if you're unsure it stayed caught up, run
+**Reconcile from WorkOS** on the directory page first — it snapshots the live
+WorkOS directory and replays every resource back into native (id-preserving),
+guaranteeing parity before you flip the mode back.
 
 ## Self-contained demo
 

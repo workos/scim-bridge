@@ -32,12 +32,22 @@ export async function runBackfill(db: D1Database, directory: Directory): Promise
     errors: [],
   };
 
-  const users = await snapshot(directory, "Users", summary.errors);
+  const users = await snapshot(
+    directory.native_url,
+    directory.native_token,
+    "Users",
+    summary.errors,
+  );
   for (const resource of users) {
     await mirrorResource(db, directory, "Users", resource, resource, summary.users, summary.errors);
   }
 
-  const groups = await snapshot(directory, "Groups", summary.errors);
+  const groups = await snapshot(
+    directory.native_url,
+    directory.native_token,
+    "Groups",
+    summary.errors,
+  );
   const maps = await loadIdMaps(db, directory.id);
   const translate = makeTranslator(maps.nativeToWorkos);
   for (const resource of groups) {
@@ -56,7 +66,8 @@ export async function runBackfill(db: D1Database, directory: Directory): Promise
 }
 
 async function snapshot(
-  directory: Directory,
+  url: string,
+  token: string,
   kind: ResourceType,
   errors: string[],
 ): Promise<Record<string, unknown>[]> {
@@ -66,8 +77,8 @@ async function snapshot(
     let page;
     try {
       page = await scimFetch(
-        `${joinScimUrl(directory.native_url, `/${kind}`)}?startIndex=${startIndex}&count=${PAGE_SIZE}`,
-        { method: "GET", token: directory.native_token },
+        `${joinScimUrl(url, `/${kind}`)}?startIndex=${startIndex}&count=${PAGE_SIZE}`,
+        { method: "GET", token },
       );
     } catch (error) {
       pushError(errors, `${kind} snapshot: ${errorMessage(error)}`);
@@ -126,6 +137,115 @@ async function mirrorResource(
   } else {
     counts.failed += 1;
     pushError(errors, `${kind}/${nativeId}: ${result.error ?? `WorkOS returned ${result.status}`}`);
+  }
+}
+
+/**
+ * Reverse of runBackfill: snapshot the live WorkOS directory over SCIM and
+ * replay every user and group into the native app as migrated-id upserts,
+ * preserving the shared id. A belt-and-suspenders reconcile before rollback — it
+ * brings native current even if its DSync listener lagged or never ran. Requires
+ * the native endpoint to honor the migrated-id create-if-absent PUT contract
+ * (the same contract WorkOS honors for the forward direction).
+ */
+export async function runReconcileFromWorkos(
+  db: D1Database,
+  directory: Directory,
+): Promise<BackfillSummary> {
+  const summary: BackfillSummary = {
+    users: { total: 0, mirrored: 0, failed: 0 },
+    groups: { total: 0, mirrored: 0, failed: 0 },
+    errors: [],
+  };
+  const maps = await loadIdMaps(db, directory.id);
+  const toNative = makeTranslator(maps.workosToNative);
+
+  const users = await snapshot(
+    directory.workos_url,
+    directory.workos_token,
+    "Users",
+    summary.errors,
+  );
+  for (const resource of users) {
+    await pushToNative(db, directory, "Users", resource, toNative, summary.users, summary.errors);
+  }
+
+  const groups = await snapshot(
+    directory.workos_url,
+    directory.workos_token,
+    "Groups",
+    summary.errors,
+  );
+  for (const resource of groups) {
+    const body = { ...resource };
+    if (Array.isArray(body.members)) {
+      body.members = body.members.map((member) =>
+        isRecord(member) && typeof member.value === "string"
+          ? { ...member, value: toNative("Users", member.value) }
+          : member,
+      );
+    }
+    await pushToNative(db, directory, "Groups", body, toNative, summary.groups, summary.errors);
+  }
+
+  return summary;
+}
+
+async function pushToNative(
+  db: D1Database,
+  directory: Directory,
+  kind: ResourceType,
+  resource: Record<string, unknown>,
+  toNative: (kind: ResourceType, id: string) => string,
+  counts: ResourceCounts,
+  errors: string[],
+): Promise<void> {
+  counts.total += 1;
+  const workosId = typeof resource.id === "string" ? resource.id : null;
+  if (!workosId) {
+    counts.failed += 1;
+    pushError(errors, `${kind}: WorkOS resource is missing an id`);
+    return;
+  }
+  const nativeId = toNative(kind, workosId);
+  let result;
+  try {
+    result = await scimFetch(
+      joinScimUrl(directory.native_url, `/${kind}/${encodeURIComponent(nativeId)}`),
+      {
+        method: "PUT",
+        token: directory.native_token,
+        body: JSON.stringify({ ...resource, id: nativeId }),
+        migratedId: nativeId,
+      },
+    );
+  } catch (error) {
+    counts.failed += 1;
+    pushError(errors, `${kind}/${nativeId}: ${errorMessage(error)}`);
+    return;
+  }
+  try {
+    await insertProxyLog(db, {
+      directory_id: directory.id,
+      source: "backfill",
+      mode: directory.mode,
+      method: "PUT",
+      path: `/${kind}/${nativeId}`,
+      request_body: JSON.stringify(resource),
+      native_status: result.status,
+      native_ms: result.ms,
+      native_body: result.bodyText,
+      response_status: result.status,
+      error: isSuccess(result.status) ? null : `native returned ${result.status}`,
+    });
+  } catch {
+    // logging must never abort the reconcile
+  }
+  if (isSuccess(result.status)) {
+    counts.mirrored += 1;
+  } else {
+    counts.failed += 1;
+    pushError(errors, `${kind}/${nativeId}: native returned ${result.status}`);
   }
 }
 

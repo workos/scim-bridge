@@ -1,12 +1,18 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, Link, redirect, useActionData, useLoaderData, useNavigation } from "react-router";
-import { getConfig, insertDirectory, listDirectories, setConfig } from "../../../workers/shared/db";
+import { Form, redirect, useActionData, useLoaderData, useNavigation } from "react-router";
+import {
+  getConfig,
+  insertDirectory,
+  listDirectories,
+  setConfig,
+  setDirectoryMode,
+} from "../../../workers/shared/db";
+import { MODES, type Mode } from "../../../workers/shared/types";
 import { Button } from "../../vendor/design-system/components/button";
 import { Callout } from "../../vendor/design-system/components/callout";
 import { Card } from "../../vendor/design-system/components/card";
 import { Code } from "../../vendor/design-system/components/code";
 import * as Dialog from "../../vendor/design-system/components/dialog";
-import * as EmptyState from "../../vendor/design-system/components/empty-state";
 import { Flex } from "../../vendor/design-system/components/flex";
 import { Grid } from "../../vendor/design-system/components/grid";
 import { Heading } from "../../vendor/design-system/components/heading";
@@ -14,7 +20,8 @@ import { Separator } from "../../vendor/design-system/components/separator";
 import { Text } from "../../vendor/design-system/components/text";
 import { TextArea } from "../../vendor/design-system/components/text-area";
 import * as TextField from "../../vendor/design-system/components/text-field";
-import { CardHeader, CopyButton, FieldLabel, ModeBadge, trimTrailingSlash } from "./ui";
+import { DirectoryTable } from "./directory-table";
+import { CardHeader, CopyButton, FieldLabel, trimTrailingSlash } from "./ui";
 
 interface HomeActionData {
   error?: string;
@@ -116,6 +123,21 @@ export async function action({ context, request }: ActionFunctionArgs) {
       }
     }
     return { imported, importErrors };
+  }
+
+  if (intent === "bulk-set-mode") {
+    const mode = field("mode");
+    if (!MODES.includes(mode as Mode)) {
+      return { error: "Choose a valid target mode." };
+    }
+    const ids = field("ids")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const id of ids) {
+      await setDirectoryMode(env.DB, id, mode as Mode);
+    }
+    return { bulkUpdated: ids.length, bulkMode: mode };
   }
 
   if (intent === "save-settings") {
@@ -302,37 +324,7 @@ export default function PanelHome() {
         </Callout.Root>
       )}
 
-      {directories.length === 0 ? (
-        <Card size="3">
-          <EmptyState.Root
-            title="No directories yet"
-            subtitle="Import a directory to mint the proxy token the IdP will authenticate with."
-          />
-        </Card>
-      ) : (
-        <Flex direction="column" gap="3">
-          {directories.map((directory) => (
-            <Card key={directory.id} size="3">
-              <Flex align="center" gap="4" justify="between">
-                <Flex direction="column" gap="1">
-                  <Flex align="center" gap="2">
-                    <Heading as="h3" size="4">
-                      {directory.name}
-                    </Heading>
-                    <ModeBadge mode={directory.mode} />
-                  </Flex>
-                  <Text color="gray" size="2">
-                    <Code size="1">{directory.id}</Code> · created {directory.created_at}
-                  </Text>
-                </Flex>
-                <Button asChild type={null}>
-                  <Link to={`/panel/directories/${directory.id}`}>Open</Link>
-                </Button>
-              </Flex>
-            </Card>
-          ))}
-        </Flex>
-      )}
+      <DirectoryTable directories={directories} />
 
       <Card size="3">
         <Flex direction="column" gap="5">
