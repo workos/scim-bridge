@@ -1,7 +1,0 @@
-
-> scim-bridge@0.1.0 start
-> cross-env NODE_ENV=production tsx server/index.ts
-
-scim-bridge listening on http://0.0.0.0:8080
-  control panel: http://localhost:8080/panel
-  SCIM base URL: http://localhost:8080/scim/v2
