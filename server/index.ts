@@ -110,7 +110,9 @@ app.use("*", (c, next) => {
 });
 
 // Everything else → the React Router control panel (SSR).
-app.all("*", (c) => requestHandler(c.req.raw, { cloudflare: { env, ctx } }));
+app.all("*", (c) =>
+  requestHandler(c.req.raw, { cloudflare: { env, ctx, demoMode: config.demoMode } }),
+);
 
 serve({ fetch: app.fetch, port: config.port, hostname: "0.0.0.0" }, (info) => {
   console.log(`scim-bridge listening on http://0.0.0.0:${info.port}`);

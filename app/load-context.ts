@@ -11,6 +11,9 @@ declare module "react-router" {
     cloudflare: {
       env: PocEnv;
       ctx: ExecutionContext;
+      /** Whether the bundled demo simulators are enabled (DEMO_MODE). The panel
+       *  only surfaces the demo tabs when this is on. */
+      demoMode: boolean;
     };
   }
 }
