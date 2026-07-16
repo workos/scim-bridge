@@ -574,16 +574,17 @@ export default function DirectoryOverview() {
       <Card size="3">
         <Flex direction="column" gap="4">
           <CardHeader
-            title="Reconcile from WorkOS"
-            description="Snapshot the live WorkOS directory and replay every user and group back into the native app as migrated-id upserts — a safety net before rolling back, in case the DSync listener lagged."
+            title="Backfill from WorkOS → native (rollback)"
+            description="The reverse of the forward backfill: snapshot the live WorkOS directory and replay every user and group back into the native app as migrated-id upserts. Run it before rolling back, to bring the native app fully current in case its DSync listener lagged."
           />
           {directory.mode !== "workos-only" ? (
             <Flex align="center" gap="3" justify="between">
               <Text color="gray" size="2">
-                Reconcile is available in workos-only mode, to bring the native app fully current
-                before you roll back. Switch modes above to enable it.
+                Available in workos-only mode — that's when WorkOS is authoritative and the native
+                app may be behind. Run it here to make native current, then roll back safely. Switch
+                modes above to enable it.
               </Text>
-              <Button disabled>Reconcile from WorkOS</Button>
+              <Button disabled>Backfill from WorkOS</Button>
             </Flex>
           ) : (
             <Form method="post">
@@ -594,7 +595,7 @@ export default function DirectoryOverview() {
                   loading={pendingIntent === "reconcile-from-workos"}
                   type="submit"
                 >
-                  Reconcile from WorkOS
+                  Backfill from WorkOS
                 </Button>
               </Flex>
             </Form>
