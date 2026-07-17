@@ -14,6 +14,8 @@ export interface Directory {
   native_token: string;
   workos_url: string;
   workos_token: string;
+  /** 1 = persist this directory's requests to proxy_log; 0 = don't (default). */
+  log_persistence: number;
   created_at: string;
   updated_at: string;
 }

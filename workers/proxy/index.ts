@@ -5,6 +5,7 @@ import {
   getDirectoryByToken,
   insertProxyLog,
   type ProxyLogInsert,
+  shouldPersistLogs,
 } from "../shared/db";
 import {
   SCIM_CONTENT_TYPE,
@@ -65,7 +66,7 @@ async function handleScim(
   };
   const finish = (response: Response): Response => {
     log.response_status = response.status;
-    ctx.waitUntil(insertProxyLog(env.DB, log).catch(() => {}));
+    if (shouldPersistLogs(directory)) ctx.waitUntil(insertProxyLog(env.DB, log).catch(() => {}));
     return response;
   };
 
@@ -164,7 +165,7 @@ async function dualWrite(
   } catch (error) {
     log.error = errorMessage(error);
     log.response_status = 502;
-    ctx.waitUntil(insertProxyLog(env.DB, log).catch(() => {}));
+    if (shouldPersistLogs(directory)) ctx.waitUntil(insertProxyLog(env.DB, log).catch(() => {}));
     return scimError(502, "The native SCIM endpoint could not be reached.");
   }
   log.native_status = native.status;
@@ -182,7 +183,7 @@ async function dualWrite(
           log.error = `mirror failed: ${errorMessage(error)}`;
         }
       }
-      await insertProxyLog(env.DB, log).catch(() => {});
+      if (shouldPersistLogs(directory)) await insertProxyLog(env.DB, log).catch(() => {});
     })(),
   );
   return response;

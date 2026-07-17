@@ -1,4 +1,10 @@
-import { getConfig, insertDirectory, listDirectories, setConfig } from "../workers/shared/db";
+import {
+  getConfig,
+  insertDirectory,
+  listDirectories,
+  setConfig,
+  setDirectoryLogPersistence,
+} from "../workers/shared/db";
 import type { PocEnv } from "../workers/shared/types";
 
 /**
@@ -82,11 +88,13 @@ export async function seedDemoDirectory(env: PocEnv, config: AppConfig): Promise
   const existing = await listDirectories(env.DB);
   if (existing.length > 0) return;
   const base = loopbackBase(config);
-  await insertDirectory(env.DB, {
+  const demo = await insertDirectory(env.DB, {
     name: "Demo directory",
     native_url: `${base}/__demo/native/scim/v2`,
     native_token: (await getConfig(env.DB, "native.scim_token")) ?? "",
     workos_url: `${base}/__demo/native/mock-workos/scim/v2`,
     workos_token: (await getConfig(env.DB, "mock_workos.scim_token")) ?? "",
   });
+  // The demo runs one directory you actively watch, so persist its logs.
+  if (demo) await setDirectoryLogPersistence(env.DB, demo.id, true);
 }

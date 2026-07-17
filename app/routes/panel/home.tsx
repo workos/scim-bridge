@@ -5,6 +5,7 @@ import {
   insertDirectory,
   listDirectories,
   setConfig,
+  setDirectoriesLogPersistence,
   setDirectoryMode,
 } from "../../../workers/shared/db";
 import { MODES, type Mode } from "../../../workers/shared/types";
@@ -138,6 +139,15 @@ export async function action({ context, request }: ActionFunctionArgs) {
       await setDirectoryMode(env.DB, id, mode as Mode);
     }
     return { bulkUpdated: ids.length, bulkMode: mode };
+  }
+
+  if (intent === "bulk-set-log-persistence") {
+    const ids = field("ids")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    await setDirectoriesLogPersistence(env.DB, ids, field("on") === "true");
+    return { bulkUpdated: ids.length };
   }
 
   if (intent === "save-settings") {

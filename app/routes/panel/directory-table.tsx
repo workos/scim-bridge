@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useFetcher } from "react-router";
 import type { Directory, Mode } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
+import { Badge } from "../../vendor/design-system/components/badge";
 import { Button } from "../../vendor/design-system/components/button";
 import { Card } from "../../vendor/design-system/components/card";
 import { Checkbox } from "../../vendor/design-system/components/checkbox";
@@ -112,6 +113,14 @@ export function DirectoryTable({ directories }: { directories: Directory[] }) {
     );
   }
 
+  function applyBulkLog(on: boolean) {
+    if (selected.size === 0) return;
+    fetcher.submit(
+      { intent: "bulk-set-log-persistence", on: String(on), ids: [...selected].join(",") },
+      { method: "post" },
+    );
+  }
+
   const arrow = (key: SortKey) => (sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "");
 
   if (directories.length === 0) {
@@ -202,6 +211,12 @@ export function DirectoryTable({ directories }: { directories: Directory[] }) {
             >
               Apply
             </Button>
+            <Button color="green" onClick={() => applyBulkLog(true)} variant="soft">
+              Monitor
+            </Button>
+            <Button onClick={() => applyBulkLog(false)} variant="soft">
+              Stop monitoring
+            </Button>
             <Button onClick={() => setSelected(new Set())} variant="soft">
               Clear
             </Button>
@@ -246,6 +261,7 @@ export function DirectoryTable({ directories }: { directories: Directory[] }) {
                     onClick={() => toggleSort("created_at")}
                   />
                 </Table.ColumnHeader>
+                <Table.ColumnHeader>Logs</Table.ColumnHeader>
                 <Table.ColumnHeader />
               </Table.Row>
             </Table.Header>
@@ -272,6 +288,15 @@ export function DirectoryTable({ directories }: { directories: Directory[] }) {
                     <Text color="gray" size="1" style={{ whiteSpace: "nowrap" }}>
                       {d.created_at}
                     </Text>
+                  </Table.Cell>
+                  <Table.Cell>
+                    {d.log_persistence ? (
+                      <Badge color="green">Monitored</Badge>
+                    ) : (
+                      <Badge color="gray" variant="soft">
+                        Off
+                      </Badge>
+                    )}
                   </Table.Cell>
                   <Table.Cell>
                     <Button asChild size="1" type={null} variant="soft">

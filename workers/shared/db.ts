@@ -161,6 +161,46 @@ export async function setDirectoryMode(db: D1Database, id: string, mode: Mode): 
   );
 }
 
+/** Whether this directory's proxy requests should be written to proxy_log. Off
+ *  by default (migration 0006) so a large fleet of directories doesn't fill the
+ *  log; the request still proxies and mirrors identically when off. */
+export function shouldPersistLogs(directory: Directory | null | undefined): boolean {
+  return Boolean(directory && directory.log_persistence);
+}
+
+export async function setDirectoryLogPersistence(
+  db: D1Database,
+  id: string,
+  on: boolean,
+): Promise<void> {
+  await withD1Retry(() =>
+    db
+      .prepare(
+        "UPDATE scim_directories SET log_persistence = ?, updated_at = datetime('now') WHERE id = ?",
+      )
+      .bind(on ? 1 : 0, id)
+      .run(),
+  );
+}
+
+/** Bulk toggle for the control panel's multi-select. */
+export async function setDirectoriesLogPersistence(
+  db: D1Database,
+  ids: string[],
+  on: boolean,
+): Promise<void> {
+  if (ids.length === 0) return;
+  const placeholders = ids.map(() => "?").join(", ");
+  await withD1Retry(() =>
+    db
+      .prepare(
+        `UPDATE scim_directories SET log_persistence = ?, updated_at = datetime('now') WHERE id IN (${placeholders})`,
+      )
+      .bind(on ? 1 : 0, ...ids)
+      .run(),
+  );
+}
+
 export async function getMapping(
   db: D1Database,
   directoryId: string,

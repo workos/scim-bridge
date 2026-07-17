@@ -13,6 +13,7 @@ import { runBackfill, runReconcileFromWorkos } from "../../../workers/shared/bac
 import {
   getConfig,
   getDirectoryById,
+  setDirectoryLogPersistence,
   setDirectoryMode,
   setDirectoryNative,
   setDirectoryWorkos,
@@ -169,6 +170,11 @@ export async function action({
     return {};
   }
 
+  if (intent === "set-log-persistence") {
+    await setDirectoryLogPersistence(env.DB, directory.id, form.get("on") === "true");
+    return {};
+  }
+
   if (intent === "save-native") {
     await setDirectoryNative(
       env.DB,
@@ -243,6 +249,31 @@ export async function action({
   }
 
   return { error: "That form action is not recognized." };
+}
+
+function LogPersistenceCard({ on, pending }: { on: boolean; pending: boolean }) {
+  return (
+    <Card size="3">
+      <Flex direction="column" gap="4">
+        <CardHeader
+          title="Log persistence"
+          description="Persist this directory's proxy requests to the activity log and id mappings. Enable it only for directories you're actively monitoring — a large fleet logging every request adds up. When off, requests still proxy and mirror exactly the same."
+        />
+        <Flex align="center" gap="3" wrap="wrap">
+          <Badge color={on ? "green" : "gray"} variant={on ? undefined : "soft"}>
+            {on ? "Monitored" : "Not persisted"}
+          </Badge>
+          <Form method="post">
+            <input type="hidden" name="intent" value="set-log-persistence" />
+            <input type="hidden" name="on" value={on ? "false" : "true"} />
+            <Button loading={pending} type="submit" variant="soft">
+              {on ? "Disable logging" : "Enable logging"}
+            </Button>
+          </Form>
+        </Flex>
+      </Flex>
+    </Card>
+  );
 }
 
 function ModeCard({ currentMode, pending }: { currentMode: Mode; pending: boolean }) {
@@ -515,6 +546,11 @@ export default function DirectoryOverview() {
         key={directory.mode}
         currentMode={directory.mode}
         pending={pendingIntent === "set-mode"}
+      />
+
+      <LogPersistenceCard
+        on={Boolean(directory.log_persistence)}
+        pending={pendingIntent === "set-log-persistence"}
       />
 
       <LiveStateCard mode={directory.mode} />

@@ -1,5 +1,5 @@
 import type { BackfillSummary, Directory, ResourceType } from "./types";
-import { insertProxyLog } from "./db";
+import { insertProxyLog, shouldPersistLogs } from "./db";
 import {
   errorMessage,
   isRecord,
@@ -115,20 +115,21 @@ async function mirrorResource(
   }
   const result = await mirrorUpsert(db, directory, kind, nativeId, body);
   try {
-    await insertProxyLog(db, {
-      directory_id: directory.id,
-      source: "backfill",
-      mode: directory.mode,
-      method: "PUT",
-      path: `/${kind}/${nativeId}`,
-      request_body: JSON.stringify(body),
-      workos_request: result.workosRequest,
-      workos_status: result.status,
-      workos_ms: result.ms,
-      workos_body: result.body,
-      response_status: result.status,
-      error: result.error,
-    });
+    if (shouldPersistLogs(directory))
+      await insertProxyLog(db, {
+        directory_id: directory.id,
+        source: "backfill",
+        mode: directory.mode,
+        method: "PUT",
+        path: `/${kind}/${nativeId}`,
+        request_body: JSON.stringify(body),
+        workos_request: result.workosRequest,
+        workos_status: result.status,
+        workos_ms: result.ms,
+        workos_body: result.body,
+        response_status: result.status,
+        error: result.error,
+      });
   } catch {
     // logging must never abort the backfill
   }
@@ -225,19 +226,20 @@ async function pushToNative(
     return;
   }
   try {
-    await insertProxyLog(db, {
-      directory_id: directory.id,
-      source: "backfill",
-      mode: directory.mode,
-      method: "PUT",
-      path: `/${kind}/${nativeId}`,
-      request_body: JSON.stringify(resource),
-      native_status: result.status,
-      native_ms: result.ms,
-      native_body: result.bodyText,
-      response_status: result.status,
-      error: isSuccess(result.status) ? null : `native returned ${result.status}`,
-    });
+    if (shouldPersistLogs(directory))
+      await insertProxyLog(db, {
+        directory_id: directory.id,
+        source: "backfill",
+        mode: directory.mode,
+        method: "PUT",
+        path: `/${kind}/${nativeId}`,
+        request_body: JSON.stringify(resource),
+        native_status: result.status,
+        native_ms: result.ms,
+        native_body: result.bodyText,
+        response_status: result.status,
+        error: isSuccess(result.status) ? null : `native returned ${result.status}`,
+      });
   } catch {
     // logging must never abort the reconcile
   }
