@@ -69,7 +69,11 @@ const app = new Hono();
 // open for load-balancer probes, so neither is gated here.
 app.use("*", async (c, next) => {
   const { panelAuthUser, panelAuthPassword } = config;
-  if (!panelAuthUser || !panelAuthPassword) return next();
+  // Both credentials blank: the panel runs unauthenticated by design (operators
+  // front it with their own reverse proxy / SSO, as documented). If either is
+  // set the panel is guarded — a partial configuration must fail closed, never
+  // open, so a lone PANEL_AUTH_USER can't leave the panel wide open.
+  if (!panelAuthUser && !panelAuthPassword) return next();
   const path = new URL(c.req.url).pathname;
   if (path === "/healthz" || path === "/scim/v2" || path.startsWith("/scim/v2/")) return next();
 
@@ -78,7 +82,15 @@ app.use("*", async (c, next) => {
   const [user, pass] = Buffer.from(encoded ?? "", "base64")
     .toString()
     .split(":");
-  if (scheme === "Basic" && user === panelAuthUser && pass === panelAuthPassword) return next();
+  if (
+    scheme === "Basic" &&
+    Boolean(panelAuthUser) &&
+    Boolean(panelAuthPassword) &&
+    user === panelAuthUser &&
+    pass === panelAuthPassword
+  ) {
+    return next();
+  }
   return c.body("Authentication required.", 401, {
     "WWW-Authenticate": 'Basic realm="scim-bridge", charset="UTF-8"',
   });
