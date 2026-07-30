@@ -35,10 +35,10 @@ export default {
       if (denied) return denied;
       return handleScim(request, pathname.slice(SCIM_BASE.length), {
         store: new ScimStore(env.DB, NATIVE_TABLES),
-        // Honor migrated-id create-if-absent PUT so the reverse reconcile
+        // The native app keeps create-if-absent PUT so the reverse reconcile
         // (WorkOS → native) can restore resources with their shared id. Inert
         // for normal IdP traffic, which never sends the migrated-id header.
-        migratedIdContract: true,
+        migratedIdMode: "put-upsert",
       });
     }
 
@@ -52,7 +52,11 @@ export default {
       const mutating = mockPath.kind !== null && MUTATING_METHODS.has(method);
       const before = mutating ? await captureMockBefore(store, method, mockPath) : {};
 
-      const response = await handleScim(request, subpath, { store, migratedIdContract: true });
+      // The mock stands in for a migrated WorkOS directory, which post-decoupling
+      // creates only via POST (adopting the migrated id) and 404s a PUT on a
+      // missing id — the contract the bridge now runs its PUT → 404 → POST dance
+      // against.
+      const response = await handleScim(request, subpath, { store, migratedIdMode: "post-create" });
 
       if (
         mutating &&

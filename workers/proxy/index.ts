@@ -1,5 +1,4 @@
 import type { Directory, PocEnv, ResourceType } from "../shared/types";
-import { MIGRATED_ID_HEADER } from "../shared/types";
 import {
   deleteMapping,
   getDirectoryByToken,
@@ -268,7 +267,6 @@ async function workosOnly(
   let outPath = scimPath.rest;
   let outBody = requestBody;
   let toNative: ((kind: ResourceType, id: string) => string) | null = null;
-  let migratedId: string | undefined;
 
   if (kind) {
     const maps = await loadIdMaps(env.DB, directory.id);
@@ -282,28 +280,33 @@ async function workosOnly(
         await createWithMigratedId(env.DB, directory, kind, requestBody, toWorkos, log),
       );
     }
+    // A replace runs the same PUT → 404 → POST dance as the mirror leg: WorkOS
+    // no longer creates on PUT, so a first-touch replace self-heals into a POST
+    // create instead of surfacing a 404 to the IdP.
+    if (method === "PUT" && scimPath.id) {
+      return finish(
+        await replaceWithMigratedId(
+          env.DB,
+          directory,
+          kind,
+          scimPath.id,
+          requestBody,
+          toWorkos,
+          log,
+        ),
+      );
+    }
     if (scimPath.id) {
       const targetId = toWorkos(kind, scimPath.id);
       outPath = `/${kind}/${encodeURIComponent(targetId)}`;
-      // The migrated-id contract holds after cutover too: a replace must stay
-      // create-if-absent so resources that missed their mirror leg self-heal.
-      if (method === "PUT") migratedId = targetId;
     }
-    if (outBody != null && (method === "PUT" || method === "POST")) {
-      const parsed = parseJson(outBody);
-      if (parsed) {
-        const translated = translateResourceIds(parsed, kind, toWorkos);
-        if (method === "POST") delete translated.id;
-        outBody = JSON.stringify(translated);
-      }
-    } else if (outBody != null && method === "PATCH") {
+    if (outBody != null && method === "PATCH") {
       const translated = translatePatchIds(parseJson(outBody), kind, toWorkos);
       if (translated) outBody = JSON.stringify(translated);
     }
   }
 
-  log.workos_request =
-    `${method} ${outPath}${url.search}` + (migratedId != null ? ` +${MIGRATED_ID_HEADER}` : "");
+  log.workos_request = `${method} ${outPath}${url.search}`;
   let workos: UpstreamResult;
   try {
     workos = await scimFetch(joinScimUrl(directory.workos_url, outPath) + url.search, {
@@ -311,7 +314,6 @@ async function workosOnly(
       token: directory.workos_token,
       body: outBody,
       contentType,
-      migratedId,
     });
   } catch (error) {
     log.error = errorMessage(error);
@@ -339,9 +341,10 @@ async function workosOnly(
 
 /**
  * Create a resource after cutover using the migrated-id contract: mint a stable
- * id, translate any group members to WorkOS ids, and PUT create-if-absent so the
- * new resource joins the same id scheme as everything backfill mirrored. The
- * minted id is echoed back so the caller (IdP) records it for later references.
+ * id, translate any group members to WorkOS ids, and run the mirror dance
+ * (POST + X-WorkOS-Migrated-Id) so the new resource joins the same id scheme as
+ * everything backfill mirrored. The minted id is echoed back so the caller (IdP)
+ * records it for later references.
  */
 async function createWithMigratedId(
   db: D1Database,
@@ -375,6 +378,47 @@ async function createWithMigratedId(
   created.id = mintedId;
   return new Response(JSON.stringify(created), {
     status: result.status ?? 201,
+    headers: { "Content-Type": SCIM_CONTENT_TYPE },
+  });
+}
+
+/**
+ * Replace a resource the IdP addresses by its migrated id. Runs the same
+ * PUT → 404 → POST dance as the mirror leg (via mirrorUpsert), then echoes the
+ * result back in native-id space so the IdP only ever sees its own id.
+ */
+async function replaceWithMigratedId(
+  db: D1Database,
+  directory: Directory,
+  kind: ResourceType,
+  nativeId: string,
+  requestBody: string | null,
+  toWorkos: (kind: ResourceType, id: string) => string,
+  log: ProxyLogInsert,
+): Promise<Response> {
+  const parsed = parseJson(requestBody) ?? {};
+  // Group member values are written in WorkOS-id space; the top-level id is
+  // keyed off the path (nativeId), so mirrorUpsert owns it.
+  const body = kind === "Groups" ? translateResourceIds(parsed, kind, toWorkos) : parsed;
+  const result = await mirrorUpsert(db, directory, kind, nativeId, body);
+  applyMirrorResult(log, result);
+  if (!result.ok) {
+    return scimError(
+      result.status && result.status >= 400 ? result.status : 502,
+      `The WorkOS endpoint rejected the migrated-id replace: ${result.error ?? "unknown error"}.`,
+    );
+  }
+  // Reload after the write so a freshly created resource's mapping is visible,
+  // then translate the response back to native ids for the IdP.
+  const maps = await loadIdMaps(db, directory.id);
+  const toNative = makeTranslator(maps.workosToNative);
+  const workosResponse = parseJson(result.body) ?? { ...body, id: nativeId };
+  const rewritten = translateResourceIds(workosResponse, kind, toNative);
+  rewritten.id = nativeId;
+  // A replace always answers the IdP with 200, even when it self-healed via a
+  // POST create (201) — the IdP issued a PUT and SCIM replies to it with 200.
+  return new Response(JSON.stringify(rewritten), {
+    status: 200,
     headers: { "Content-Type": SCIM_CONTENT_TYPE },
   });
 }

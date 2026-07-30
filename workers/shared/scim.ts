@@ -226,10 +226,72 @@ export interface MirrorResult {
   error: string | null;
 }
 
+/** Accumulates the WorkOS-leg timings across the steps of a single mirror. */
+interface Elapsed {
+  ms: number;
+}
+
+function mirrorOk(workosRequest: string, result: UpstreamResult, acc: Elapsed): MirrorResult {
+  return {
+    ok: true,
+    workosRequest,
+    status: result.status,
+    ms: acc.ms,
+    body: result.bodyText,
+    error: null,
+  };
+}
+
+function mirrorFail(
+  workosRequest: string,
+  result: UpstreamResult,
+  acc: Elapsed,
+  error: string,
+): MirrorResult {
+  return {
+    ok: false,
+    workosRequest,
+    status: result.status,
+    ms: acc.ms,
+    body: result.bodyText,
+    error,
+  };
+}
+
+async function putWorkos(
+  directory: Directory,
+  kind: ResourceType,
+  id: string,
+  resource: Record<string, unknown>,
+  acc: Elapsed,
+  migratedId?: string,
+): Promise<UpstreamResult> {
+  const result = await scimFetch(
+    joinScimUrl(directory.workos_url, `/${kind}/${encodeURIComponent(id)}`),
+    {
+      method: "PUT",
+      token: directory.workos_token,
+      body: JSON.stringify({ ...resource, id }),
+      migratedId,
+    },
+  );
+  acc.ms += result.ms;
+  return result;
+}
+
 /**
- * The migrated-id contract: PUT /{kind}/{nativeId} + X-WorkOS-Migrated-Id.
- * On 404/501 the endpoint does not honor the contract; fall back to a plain
- * PUT on a previously mapped workos id, or POST and record the minted id.
+ * The migrated-id contract (post-decoupling): only POST creates a WorkOS scim
+ * row — PUT/PATCH/DELETE resolve strictly by id and 404 on a miss. So the
+ * bridge runs the standard SCIM dance instead of relying on a create-if-absent
+ * PUT:
+ *   1. PUT /{kind}/{id} + X-WorkOS-Migrated-Id — updates in place when present.
+ *   2. On 404 (expected first touch, not an error): POST /{kind} + the same
+ *      header, which WorkOS adopts and echoes back as the resource id.
+ *   3. On POST 409 (a concurrent create won the race): retry the PUT, which now
+ *      resolves the winner's row — the bridge owns that race now.
+ * When WorkOS does not honor the header (e.g. the external_id gate is off) the
+ * POST mints its own id; the diverging echoed id is detected and recorded as a
+ * `fallback-post` mapping so ids still translate in both directions.
  */
 export async function mirrorUpsert(
   db: D1Database,
@@ -238,185 +300,177 @@ export async function mirrorUpsert(
   nativeId: string,
   resource: Record<string, unknown>,
 ): Promise<MirrorResult> {
-  let workosRequest = `PUT /${kind}/${nativeId} +${MIGRATED_ID_HEADER}`;
-  let ms = 0;
+  const acc: Elapsed = { ms: 0 };
   try {
-    const contract = await scimFetch(
-      joinScimUrl(directory.workos_url, `/${kind}/${encodeURIComponent(nativeId)}`),
-      {
-        method: "PUT",
-        token: directory.workos_token,
-        body: JSON.stringify({ ...resource, id: nativeId }),
-        migratedId: nativeId,
-      },
-    );
-    ms += contract.ms;
-    if (isSuccess(contract.status)) {
-      await upsertMapping(db, {
-        directory_id: directory.id,
-        resource_type: kind,
-        native_id: nativeId,
-        workos_id: nativeId,
-        strategy: "migrated-id",
-      });
-      return {
-        ok: true,
-        workosRequest,
-        status: contract.status,
-        ms,
-        body: contract.bodyText,
-        error: null,
-      };
-    }
-    if (contract.status !== 404 && contract.status !== 501) {
-      return {
-        ok: false,
-        workosRequest,
-        status: contract.status,
-        ms,
-        body: contract.bodyText,
-        error: `WorkOS migrated-id PUT returned ${contract.status}`,
-      };
-    }
-
+    // A resource WorkOS already knows: update it in place by the id it stored
+    // (the shared migrated id, or a minted one for a fallback-post mapping).
     const existing = await getMapping(db, directory.id, kind, nativeId);
     if (existing) {
-      workosRequest = `PUT /${kind}/${existing.workos_id} (fallback)`;
-      const replace = await scimFetch(
-        joinScimUrl(directory.workos_url, `/${kind}/${encodeURIComponent(existing.workos_id)}`),
-        {
-          method: "PUT",
-          token: directory.workos_token,
-          body: JSON.stringify({ ...resource, id: existing.workos_id }),
-        },
+      const useHeader = existing.strategy === "migrated-id";
+      const label = `PUT /${kind}/${existing.workos_id}${useHeader ? ` +${MIGRATED_ID_HEADER}` : " (fallback)"}`;
+      const put = await putWorkos(
+        directory,
+        kind,
+        existing.workos_id,
+        resource,
+        acc,
+        useHeader ? nativeId : undefined,
       );
-      ms += replace.ms;
-      if (isSuccess(replace.status)) {
-        await upsertMapping(db, {
-          directory_id: directory.id,
-          resource_type: kind,
-          native_id: nativeId,
-          workos_id: existing.workos_id,
-          strategy: "fallback-post",
-        });
-        return {
-          ok: true,
-          workosRequest,
-          status: replace.status,
-          ms,
-          body: replace.bodyText,
-          error: null,
-        };
+      if (isSuccess(put.status)) {
+        await upsertMapping(
+          db,
+          mappingRow(directory, kind, nativeId, existing.workos_id, existing.strategy),
+        );
+        return mirrorOk(label, put, acc);
       }
-      if (replace.status !== 404) {
-        return {
-          ok: false,
-          workosRequest,
-          status: replace.status,
-          ms,
-          body: replace.bodyText,
-          error: `WorkOS fallback PUT returned ${replace.status}`,
-        };
+      if (put.status !== 404) {
+        return mirrorFail(label, put, acc, `WorkOS PUT returned ${put.status}`);
       }
-      // The mapped resource no longer exists on WorkOS (e.g. the directory was
-      // cleaned) — fall through to POST to recreate it. The POST's upsertMapping
-      // overwrites the stale mapping keyed on the same native id.
+      // The mapped resource is gone on WorkOS (e.g. the directory was cleaned) —
+      // recreate it below. createViaPost's upsertMapping overwrites the stale row.
+    } else {
+      // First touch: try the migrated-id PUT. It 404s when absent (only POST
+      // creates now) but succeeds if the row already exists under the shared id.
+      const label = `PUT /${kind}/${nativeId} +${MIGRATED_ID_HEADER}`;
+      const put = await putWorkos(directory, kind, nativeId, resource, acc, nativeId);
+      if (isSuccess(put.status)) {
+        await upsertMapping(db, mappingRow(directory, kind, nativeId, nativeId, "migrated-id"));
+        return mirrorOk(label, put, acc);
+      }
+      if (put.status !== 404) {
+        return mirrorFail(label, put, acc, `WorkOS migrated-id PUT returned ${put.status}`);
+      }
     }
 
-    workosRequest = `POST /${kind} (fallback)`;
-    const { id: _omitted, ...stripped } = resource;
-    const create = await scimFetch(joinScimUrl(directory.workos_url, `/${kind}`), {
-      method: "POST",
-      token: directory.workos_token,
-      body: JSON.stringify(stripped),
-    });
-    ms += create.ms;
-    if (isSuccess(create.status)) {
-      const created = parseJson(create.bodyText);
-      const workosId = created && typeof created.id === "string" ? created.id : null;
-      if (!workosId) {
-        return {
-          ok: false,
-          workosRequest,
-          status: create.status,
-          ms,
-          body: create.bodyText,
-          error: "WorkOS fallback POST succeeded but the response had no id",
-        };
-      }
-      await upsertMapping(db, {
-        directory_id: directory.id,
-        resource_type: kind,
-        native_id: nativeId,
-        workos_id: workosId,
-        strategy: "fallback-post",
-      });
-      return {
-        ok: true,
-        workosRequest,
-        status: create.status,
-        ms,
-        body: create.bodyText,
-        error: null,
-      };
-    }
-    if (create.status === 409) {
-      const attribute = kind === "Users" ? "userName" : "displayName";
-      const value = resource[attribute];
-      if (typeof value === "string" && value !== "") {
-        const filter = `${attribute} eq "${value.replaceAll('"', '\\"')}"`;
-        const lookup = await scimFetch(
-          `${joinScimUrl(directory.workos_url, `/${kind}`)}?filter=${encodeURIComponent(filter)}`,
-          { method: "GET", token: directory.workos_token },
-        );
-        ms += lookup.ms;
-        const listing = parseJson(lookup.bodyText);
-        const resources = listing && Array.isArray(listing.Resources) ? listing.Resources : [];
-        const first = resources.find(isRecord);
-        const workosId = first && typeof first.id === "string" ? first.id : null;
-        if (isSuccess(lookup.status) && workosId) {
-          await upsertMapping(db, {
-            directory_id: directory.id,
-            resource_type: kind,
-            native_id: nativeId,
-            workos_id: workosId,
-            strategy: "fallback-post",
-          });
-          return {
-            ok: true,
-            workosRequest,
-            status: create.status,
-            ms,
-            body: create.bodyText,
-            error: null,
-          };
-        }
-      }
-      return {
-        ok: false,
-        workosRequest,
-        status: create.status,
-        ms,
-        body: create.bodyText,
-        error: `WorkOS fallback POST hit 409 and the ${attribute} lookup did not recover an id`,
-      };
-    }
-    return {
-      ok: false,
-      workosRequest,
-      status: create.status,
-      ms,
-      body: create.bodyText,
-      error: `WorkOS fallback POST returned ${create.status}`,
-    };
+    return createViaPost(db, directory, kind, nativeId, resource, acc);
   } catch (error) {
     return {
       ok: false,
-      workosRequest,
+      workosRequest: `PUT /${kind}/${nativeId} +${MIGRATED_ID_HEADER}`,
       status: null,
-      ms: ms || null,
+      ms: acc.ms || null,
       body: null,
       error: errorMessage(error),
     };
   }
+}
+
+/**
+ * The 404 leg of the dance: create the resource with POST + the migrated-id
+ * header. WorkOS echoes the id back — equal to nativeId when it honored the
+ * contract (`migrated-id`), or a freshly minted one otherwise (`fallback-post`).
+ * A 409 means a concurrent create won the race, so re-PUT to resolve the winner.
+ */
+async function createViaPost(
+  db: D1Database,
+  directory: Directory,
+  kind: ResourceType,
+  nativeId: string,
+  resource: Record<string, unknown>,
+  acc: Elapsed,
+): Promise<MirrorResult> {
+  const label = `POST /${kind} +${MIGRATED_ID_HEADER}`;
+  const { id: _omitted, ...stripped } = resource;
+  const create = await scimFetch(joinScimUrl(directory.workos_url, `/${kind}`), {
+    method: "POST",
+    token: directory.workos_token,
+    body: JSON.stringify(stripped),
+    migratedId: nativeId,
+  });
+  acc.ms += create.ms;
+
+  if (isSuccess(create.status)) {
+    const created = parseJson(create.bodyText);
+    const workosId = created && typeof created.id === "string" ? created.id : null;
+    if (!workosId) {
+      return mirrorFail(label, create, acc, "WorkOS POST succeeded but the response had no id");
+    }
+    // The echoed id decides the contract outcome: identical id ⇒ WorkOS adopted
+    // the migrated id; a different id ⇒ it minted its own (contract not honored).
+    const strategy = workosId === nativeId ? "migrated-id" : "fallback-post";
+    await upsertMapping(db, mappingRow(directory, kind, nativeId, workosId, strategy));
+    return mirrorOk(label, create, acc);
+  }
+
+  if (create.status === 409) {
+    return resolveCreateRace(db, directory, kind, nativeId, resource, create, acc);
+  }
+
+  return mirrorFail(label, create, acc, `WorkOS POST returned ${create.status}`);
+}
+
+/**
+ * POST 409: either a concurrent create won the race under the same migrated id
+ * (re-PUT now resolves it → `migrated-id`), or the contract is off and a row
+ * with the same userName/displayName already exists under a minted id we don't
+ * know (the re-PUT 404s, so look it up by filter and map it → `fallback-post`).
+ */
+async function resolveCreateRace(
+  db: D1Database,
+  directory: Directory,
+  kind: ResourceType,
+  nativeId: string,
+  resource: Record<string, unknown>,
+  create: UpstreamResult,
+  acc: Elapsed,
+): Promise<MirrorResult> {
+  const reputLabel = `PUT /${kind}/${nativeId} +${MIGRATED_ID_HEADER} (409 retry)`;
+  const reput = await putWorkos(directory, kind, nativeId, resource, acc, nativeId);
+  if (isSuccess(reput.status)) {
+    await upsertMapping(db, mappingRow(directory, kind, nativeId, nativeId, "migrated-id"));
+    return mirrorOk(reputLabel, reput, acc);
+  }
+  if (reput.status !== 404) {
+    return mirrorFail(reputLabel, reput, acc, `WorkOS 409-retry PUT returned ${reput.status}`);
+  }
+
+  const attribute = kind === "Users" ? "userName" : "displayName";
+  const value = resource[attribute];
+  const lookupLabel = `GET /${kind}?filter=${attribute} (409 recovery)`;
+  if (typeof value === "string" && value !== "") {
+    const filter = `${attribute} eq "${value.replaceAll('"', '\\"')}"`;
+    const lookup = await scimFetch(
+      `${joinScimUrl(directory.workos_url, `/${kind}`)}?filter=${encodeURIComponent(filter)}`,
+      { method: "GET", token: directory.workos_token },
+    );
+    acc.ms += lookup.ms;
+    const listing = parseJson(lookup.bodyText);
+    const resources = listing && Array.isArray(listing.Resources) ? listing.Resources : [];
+    const first = resources.find(isRecord);
+    const workosId = first && typeof first.id === "string" ? first.id : null;
+    if (isSuccess(lookup.status) && workosId) {
+      // Write the resource content onto the existing row (a plain replace by its
+      // minted id) so it actually syncs, and so the returned body is the resource
+      // rather than the search page. Then record the diverging-id mapping.
+      const syncLabel = `PUT /${kind}/${workosId} (409 recovery)`;
+      const sync = await putWorkos(directory, kind, workosId, resource, acc);
+      if (isSuccess(sync.status)) {
+        await upsertMapping(db, mappingRow(directory, kind, nativeId, workosId, "fallback-post"));
+        return mirrorOk(syncLabel, sync, acc);
+      }
+      return mirrorFail(syncLabel, sync, acc, `WorkOS 409-recovery PUT returned ${sync.status}`);
+    }
+  }
+  return mirrorFail(
+    lookupLabel,
+    create,
+    acc,
+    `WorkOS POST hit 409 and the ${attribute} lookup did not recover an id`,
+  );
+}
+
+function mappingRow(
+  directory: Directory,
+  kind: ResourceType,
+  nativeId: string,
+  workosId: string,
+  strategy: IdMapping["strategy"],
+): Pick<IdMapping, "directory_id" | "resource_type" | "native_id" | "workos_id" | "strategy"> {
+  return {
+    directory_id: directory.id,
+    resource_type: kind,
+    native_id: nativeId,
+    workos_id: workosId,
+    strategy,
+  };
 }
