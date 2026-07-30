@@ -439,8 +439,16 @@ async function resolveCreateRace(
     const first = resources.find(isRecord);
     const workosId = first && typeof first.id === "string" ? first.id : null;
     if (isSuccess(lookup.status) && workosId) {
-      await upsertMapping(db, mappingRow(directory, kind, nativeId, workosId, "fallback-post"));
-      return mirrorOk(lookupLabel, lookup, acc);
+      // Write the resource content onto the existing row (a plain replace by its
+      // minted id) so it actually syncs, and so the returned body is the resource
+      // rather than the search page. Then record the diverging-id mapping.
+      const syncLabel = `PUT /${kind}/${workosId} (409 recovery)`;
+      const sync = await putWorkos(directory, kind, workosId, resource, acc);
+      if (isSuccess(sync.status)) {
+        await upsertMapping(db, mappingRow(directory, kind, nativeId, workosId, "fallback-post"));
+        return mirrorOk(syncLabel, sync, acc);
+      }
+      return mirrorFail(syncLabel, sync, acc, `WorkOS 409-recovery PUT returned ${sync.status}`);
     }
   }
   return mirrorFail(

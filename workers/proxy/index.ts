@@ -314,7 +314,6 @@ async function workosOnly(
       token: directory.workos_token,
       body: outBody,
       contentType,
-      migratedId,
     });
   } catch (error) {
     log.error = errorMessage(error);
@@ -416,8 +415,10 @@ async function replaceWithMigratedId(
   const workosResponse = parseJson(result.body) ?? { ...body, id: nativeId };
   const rewritten = translateResourceIds(workosResponse, kind, toNative);
   rewritten.id = nativeId;
+  // A replace always answers the IdP with 200, even when it self-healed via a
+  // POST create (201) — the IdP issued a PUT and SCIM replies to it with 200.
   return new Response(JSON.stringify(rewritten), {
-    status: result.status ?? 200,
+    status: 200,
     headers: { "Content-Type": SCIM_CONTENT_TYPE },
   });
 }
