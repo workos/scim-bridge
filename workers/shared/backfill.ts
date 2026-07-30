@@ -146,8 +146,9 @@ async function mirrorResource(
  * replay every user and group into the native app as migrated-id upserts,
  * preserving the shared id. A belt-and-suspenders reconcile before rollback — it
  * brings native current even if its DSync listener lagged or never ran. Requires
- * the native endpoint to honor the migrated-id create-if-absent PUT contract
- * (the same contract WorkOS honors for the forward direction).
+ * the native endpoint to honor the migrated-id create-if-absent PUT contract, so
+ * a resource missing on the native side is restored under its shared id. (The
+ * forward direction no longer relies on this: WorkOS creates only via POST.)
  */
 export async function runReconcileFromWorkos(
   db: D1Database,

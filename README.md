@@ -66,14 +66,17 @@ token the panel mints — panel auth does not gate it.
 
 The proxy translates every request from your IdP into a WorkOS SCIM call under
 the **migrated-id contract**: WorkOS addresses each resource by the id your own
-system minted (sent as `PUT /{kind}/{id}` with an `X-WorkOS-Migrated-Id: {id}`
-header, create-if-absent) and echoes that id back — so your IdP never sees a
-WorkOS-internal id.
+system minted, carried in an `X-WorkOS-Migrated-Id: {id}` header, and echoes that
+id back — so your IdP never sees a WorkOS-internal id. Post-decoupling only
+`POST` creates a resource; `PUT`/`PATCH`/`DELETE` resolve by id and `404` on a
+miss. So a first-touch write runs the dance `PUT /{kind}/{id}` → `404` →
+`POST /{kind}` (both with the header), and a `POST 409` (create race) retries the
+`PUT` to resolve the winner.
 
 | Your IdP sends (→ proxy) | Proxy sends to WorkOS | How WorkOS handles it |
 | --- | --- | --- |
-| `POST /Users` (create) | `PUT /Users/{id}` + `X-WorkOS-Migrated-Id` | Creates the user and adopts `{id}` as its id. In dual-write, `{id}` is the id your native app minted (learned from its `201`); after cutover it is derived from the IdP `externalId`. |
-| `PUT /Users/{id}` (replace) | `PUT /Users/{id}` + `X-WorkOS-Migrated-Id` | Full replace; **creates if absent**, so a resource that missed an earlier mirror self-heals. |
+| `POST /Users` (create) | `PUT /Users/{id}` + header → `404` → `POST /Users` + header | Creates the user and adopts `{id}` as its id. In dual-write, `{id}` is the id your native app minted (learned from its `201`); after cutover it is derived from the IdP `externalId`. |
+| `PUT /Users/{id}` (replace) | `PUT /Users/{id}` + header (→ `404` → `POST /Users` + header) | Full replace; a missing first-touch resource `404`s the `PUT` and **self-heals via `POST`**. |
 | `PATCH /Users/{id}` (update) | `PATCH /Users/{id}` | Applied verbatim (no header). Any ids inside the body are translated to the WorkOS side first. |
 | `DELETE /Users/{id}` | `DELETE /Users/{id}` | Removes the resource; the proxy drops its id mapping. |
 | `POST/PUT/PATCH/DELETE /Groups...` | Same shape as Users | Group `members[].value` ids are translated between your ids and WorkOS's in both directions. |

@@ -57,12 +57,22 @@ serving from the native system, which stayed current.
 
 The IdP keys later operations by the id the customer's system minted
 (`PATCH /Users/{id}`). So for a migrated WorkOS directory the canonical id flips
-to that id: the proxy sends `PUT /{kind}/{id}` with an `X-WorkOS-Migrated-Id`
-header, and WorkOS adopts it (create-if-absent) and echoes it back — the IdP
-never sees a WorkOS-internal id. When the contract isn't available WorkOS mints
-its own id and the proxy records a `fallback-post` mapping instead. Resources
-born after cutover mint their id from the IdP `externalId`, so one shared id
-spans all three systems (rollback-safe).
+to that id, and the `X-WorkOS-Migrated-Id` header carries it. Post-decoupling
+only **POST** creates a WorkOS scim row — `PUT`/`PATCH`/`DELETE` resolve strictly
+by id and `404` on a miss. So the proxy runs the standard SCIM dance:
+
+1. `PUT /{kind}/{id}` + the header — updates in place when the resource exists.
+2. On `404` (an expected first touch, not an error): `POST /{kind}` + the same
+   header, which WorkOS adopts and echoes back as the resource id.
+3. On `POST 409` (a concurrent create won the race): retry the `PUT`, which now
+   resolves the winner's row — the bridge owns that race.
+
+The IdP never sees a WorkOS-internal id. When WorkOS doesn't honor the header
+(e.g. the `external_id` gate is off) the POST mints its own id; the proxy detects
+the diverging echoed id and records a `fallback-post` mapping instead so ids
+still translate in both directions. Resources born after cutover mint their id
+from the IdP `externalId`, so one shared id spans all three systems
+(rollback-safe).
 
 ## Multi-directory
 

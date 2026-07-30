@@ -9,13 +9,20 @@ const GROUP_SCHEMA = "urn:ietf:params:scim:core:2.0:Group";
 
 type Kind = "Users" | "Groups";
 
+export type MigratedIdMode = "off" | "put-upsert" | "post-create";
+
 export interface ScimServerConfig {
   store: ScimStore;
   /**
-   * When enabled, PUT /{kind}/{id} with X-WorkOS-Migrated-Id equal to the path
-   * id is create-if-absent keyed on that id (the migrated-id contract).
+   * How this endpoint honors X-WorkOS-Migrated-Id:
+   * - "off": ignore the header; plain SCIM (POST mints an id, PUT 404s on miss).
+   * - "put-upsert": PUT /{kind}/{id} with the header equal to the path id is
+   *   create-if-absent keyed on that id — the native side, so the reverse
+   *   reconcile (WorkOS → native) can restore resources under their shared id.
+   * - "post-create": post-decoupling WorkOS contract — only POST creates, and it
+   *   adopts the header id; PUT/PATCH/DELETE resolve by id and 404 on a miss.
    */
-  migratedIdContract: boolean;
+  migratedIdMode: MigratedIdMode;
 }
 
 export function scimJson(body: unknown, status = 200): Response {
@@ -59,7 +66,7 @@ export async function handleScim(
   const id = segments[1];
   if (!id) {
     if (method === "GET") return handleList(request, kind, config.store);
-    if (method === "POST") return handleCreate(request, kind, config.store);
+    if (method === "POST") return handleCreate(request, kind, config);
     return scimError(405, `${method} is not supported on /${kind}.`);
   }
 
@@ -144,9 +151,20 @@ async function handleList(request: Request, kind: Kind, store: ScimStore): Promi
   });
 }
 
-async function handleCreate(request: Request, kind: Kind, store: ScimStore): Promise<Response> {
+async function handleCreate(
+  request: Request,
+  kind: Kind,
+  config: ScimServerConfig,
+): Promise<Response> {
+  const { store } = config;
   const body = await readJson(request);
   if (!body) return scimError(400, "Request body must be a JSON object.", "invalidValue");
+
+  // Under the post-decoupling contract POST is the only create verb and it
+  // adopts the migrated id from the header. A row already under that id means a
+  // concurrent create won the race → 409, which the bridge resolves by re-PUT.
+  const migratedId = request.headers.get(MIGRATED_ID_HEADER);
+  const adoptId = config.migratedIdMode === "post-create" && migratedId ? migratedId : null;
 
   if (kind === "Users") {
     const userName = stringAttr(body, "userName");
@@ -154,7 +172,10 @@ async function handleCreate(request: Request, kind: Kind, store: ScimStore): Pro
     if (await store.userByUserName(userName)) {
       return scimError(409, `A user with userName "${userName}" already exists.`, "uniqueness");
     }
-    const id = crypto.randomUUID();
+    if (adoptId && (await store.userById(adoptId))) {
+      return scimError(409, `A user with id "${adoptId}" already exists.`, "uniqueness");
+    }
+    const id = adoptId ?? crypto.randomUUID();
     const resource = normalizeUser(body, id);
     await store.upsertUser(userRecord(id, resource));
     return scimJson(resource, 201);
@@ -165,7 +186,10 @@ async function handleCreate(request: Request, kind: Kind, store: ScimStore): Pro
   if (await store.groupByDisplayName(displayName)) {
     return scimError(409, `A group named "${displayName}" already exists.`, "uniqueness");
   }
-  const id = crypto.randomUUID();
+  if (adoptId && (await store.groupById(adoptId))) {
+    return scimError(409, `A group with id "${adoptId}" already exists.`, "uniqueness");
+  }
+  const id = adoptId ?? crypto.randomUUID();
   const resource = normalizeGroup(body, id);
   await store.upsertGroup(groupRecord(id, resource));
   await store.setMembers(id, memberValues(body.members));
@@ -194,14 +218,16 @@ async function handlePut(
   if (!body) return scimError(400, "Request body must be a JSON object.", "invalidValue");
 
   const migratedId = request.headers.get(MIGRATED_ID_HEADER);
-  if (config.migratedIdContract && migratedId !== null && migratedId !== id) {
+  if (config.migratedIdMode !== "off" && migratedId !== null && migratedId !== id) {
     return scimError(
       400,
       `${MIGRATED_ID_HEADER} must equal the resource id in the path.`,
       "invalidValue",
     );
   }
-  const createIfAbsent = config.migratedIdContract && migratedId === id;
+  // Only the native "put-upsert" role creates on PUT; the post-decoupling WorkOS
+  // contract 404s on a missing id (creation is POST-only).
+  const createIfAbsent = config.migratedIdMode === "put-upsert" && migratedId === id;
 
   if (kind === "Users") {
     const existing = await store.userById(id);
