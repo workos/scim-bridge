@@ -586,10 +586,17 @@ async function directoryModeForEvent(db: D1Database, data: Json): Promise<string
 }
 
 async function isDuplicate(db: D1Database, eventId: string): Promise<boolean> {
+  // Only a delivery we actually processed (applied or skipped) counts as a
+  // duplicate. An event merely logged as `ignored` — e.g. one that arrived while
+  // the listener was inert pre-cutover — must be free to re-evaluate under the
+  // current mode when WorkOS redelivers it, or an event straddling the cutover
+  // could never be applied via webhook. A stale redelivery is still guarded by
+  // the version ledger, which the inert path advances.
   const row = await withD1Retry(() =>
     db
       .prepare(
-        "SELECT 1 AS one FROM listener_events WHERE event_id IS NOT NULL AND event_id = ? LIMIT 1",
+        "SELECT 1 AS one FROM listener_events " +
+          "WHERE event_id IS NOT NULL AND event_id = ? AND action <> 'ignored' LIMIT 1",
       )
       .bind(eventId)
       .first<{ one: number }>(),
