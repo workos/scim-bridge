@@ -92,12 +92,37 @@ export interface UpstreamResult {
   headers: Record<string, string>;
 }
 
+/**
+ * Conditional request headers carried through to the upstream that issued the
+ * validator the IdP is quoting. Forwarding an ETag without them would turn a
+ * conditional update into an unconditional one, so the IdP would believe a
+ * precondition ran that never reached the authoritative endpoint.
+ */
+export const CONDITIONAL_REQUEST_HEADERS = [
+  "If-Match",
+  "If-None-Match",
+  "If-Modified-Since",
+  "If-Unmodified-Since",
+] as const;
+
+/** Pick the conditional headers out of an incoming IdP request. */
+export function conditionalRequestHeaders(headers: Headers): Record<string, string> {
+  const conditional: Record<string, string> = {};
+  for (const name of CONDITIONAL_REQUEST_HEADERS) {
+    const value = headers.get(name);
+    if (value != null) conditional[name] = value;
+  }
+  return conditional;
+}
+
 export interface ScimFetchOptions {
   method: string;
   token: string;
   body?: string | null;
   contentType?: string | null;
   migratedId?: string;
+  /** Extra request headers, e.g. the caller's conditional headers. */
+  requestHeaders?: Record<string, string>;
 }
 
 export async function scimFetch(url: string, options: ScimFetchOptions): Promise<UpstreamResult> {
@@ -107,6 +132,9 @@ export async function scimFetch(url: string, options: ScimFetchOptions): Promise
   }
   if (options.migratedId != null) {
     headers.set(MIGRATED_ID_HEADER, options.migratedId);
+  }
+  for (const [name, value] of Object.entries(options.requestHeaders ?? {})) {
+    headers.set(name, value);
   }
   const started = Date.now();
   const response = await fetch(url, {

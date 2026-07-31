@@ -1042,6 +1042,19 @@ describe("proxy routing (regression pins)", () => {
       expect(res.headers.get("Location")).toBe("https://bridge.test/scim/v2/Users/u1");
     });
 
+    it("resolves a path-relative upstream Location under the SCIM base", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "passthrough" });
+      fake.route("native", "POST", "/Users", upstreamResponseWithHeaders({ Location: "Users/u1" }));
+
+      const res = await proxyWorker.fetch(
+        proxyRequest(directory, "POST", "/scim/v2/Users", { userName: "a@b.c" }),
+        env,
+        createCtx(),
+      );
+
+      expect(res.headers.get("Location")).toBe("https://bridge.test/scim/v2/Users/u1");
+    });
+
     it("drops a Location that does not sit under the upstream SCIM base", async () => {
       const directory = await seedDirectory(env.DB, { mode: "passthrough" });
       fake.route(
@@ -1133,6 +1146,48 @@ describe("proxy routing (regression pins)", () => {
       expect(res.headers.get("ETag")).toBeNull();
       expect(res.headers.get("Location")).toBe("https://bridge.test/scim/v2/Users/n1");
       expect(await res.json()).toEqual({ id: "n1" });
+    });
+
+    it("keeps the ETag on a bodyless workos-only response", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "workos-only" });
+      await seedMapping(env, directory, "n1", "w1");
+      fake.route(
+        "workos",
+        "GET",
+        "/Users/w1",
+        new Response(null, { status: 304, headers: { ETag: 'W/"v1"' } }),
+      );
+
+      const res = await proxyWorker.fetch(
+        proxyRequest(directory, "GET", "/scim/v2/Users/n1"),
+        env,
+        createCtx(),
+      );
+
+      // Nothing was re-serialized, so the upstream validator still describes
+      // exactly what the IdP receives.
+      expect(res.status).toBe(304);
+      expect(res.headers.get("ETag")).toBe('W/"v1"');
+    });
+
+    it("forwards the IdP's conditional headers to the native upstream", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "passthrough" });
+      fake.route("native", "PUT", "/Users/u1", scimJson(412, { detail: "stale" }));
+
+      const res = await proxyWorker.fetch(
+        proxyRequest(
+          directory,
+          "PUT",
+          "/scim/v2/Users/u1",
+          { userName: "a@b.c" },
+          { "If-Match": 'W/"v1"' },
+        ),
+        env,
+        createCtx(),
+      );
+
+      expect(res.status).toBe(412);
+      expect(fake.callsTo("native")[0].headers.get("If-Match")).toBe('W/"v1"');
     });
   });
 

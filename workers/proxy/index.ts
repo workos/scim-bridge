@@ -9,6 +9,7 @@ import {
 import {
   SCIM_CONTENT_TYPE,
   SCIM_PREFIX,
+  conditionalRequestHeaders,
   errorMessage,
   isSuccess,
   joinScimUrl,
@@ -104,6 +105,9 @@ async function handleScim(
   }
 
   const contentType = request.headers.get("Content-Type");
+  // Only the native legs carry the IdP's preconditions: the ETag the IdP quotes
+  // was minted by the native app, so it is meaningless to WorkOS.
+  const conditional = conditionalRequestHeaders(request.headers);
   const isWrite = WRITE_METHODS.has(method) && scimPath.kind !== null;
 
   if (directory.mode === "passthrough" || (directory.mode === "dual-write" && !isWrite)) {
@@ -114,6 +118,7 @@ async function handleScim(
         token: directory.native_token,
         body: requestBody,
         contentType,
+        requestHeaders: conditional,
       });
     } catch (error) {
       log.error = errorMessage(error);
@@ -131,7 +136,18 @@ async function handleScim(
   }
 
   if (directory.mode === "dual-write") {
-    return dualWrite(env, ctx, directory, scimPath, method, requestBody, contentType, url, log);
+    return dualWrite(
+      env,
+      ctx,
+      directory,
+      scimPath,
+      method,
+      requestBody,
+      contentType,
+      conditional,
+      url,
+      log,
+    );
   }
 
   return workosOnly(
@@ -156,6 +172,7 @@ async function dualWrite(
   method: string,
   requestBody: string | null,
   contentType: string | null,
+  conditional: Record<string, string>,
   url: URL,
   log: ProxyLogInsert,
 ): Promise<Response> {
@@ -166,6 +183,7 @@ async function dualWrite(
       token: directory.native_token,
       body: requestBody,
       contentType,
+      requestHeaders: conditional,
     });
   } catch (error) {
     log.error = errorMessage(error);
@@ -358,10 +376,11 @@ async function workosOnly(
   const translateId = toNative;
   const idForward: ForwardOptions = {
     ...forward,
-    bodyRewritten: true,
     toIdpId: (id) => translateId(kind, id),
   };
   const parsed = parseJson(workos.bodyText);
+  // Nothing to translate (304, 204, non-JSON): the IdP gets the upstream bytes,
+  // so the upstream validator still describes them.
   if (!parsed) {
     return finish(upstreamResponse(workos, idForward));
   }
@@ -371,7 +390,7 @@ async function workosOnly(
   return finish(
     new Response(JSON.stringify(rewritten), {
       status: workos.status,
-      headers: proxiedHeaders(workos, idForward),
+      headers: proxiedHeaders(workos, { ...idForward, bodyRewritten: true }),
     }),
   );
 }
@@ -519,7 +538,9 @@ function rewriteLocation(value: string, forward: ForwardOptions): string | null 
   let target: URL;
   try {
     base = new URL(forward.upstreamBase);
-    target = new URL(value, base);
+    // Resolve against the base as a directory, so a path-relative "Users/u1"
+    // lands under the SCIM base instead of replacing its last segment.
+    target = new URL(value, `${base.href.replace(/\/+$/, "")}/`);
   } catch {
     return null;
   }
