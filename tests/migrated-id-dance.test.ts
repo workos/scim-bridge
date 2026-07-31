@@ -759,9 +759,7 @@ describe("migrated-id dance", () => {
       expect(await allMappings(env.DB, directory.id)).toEqual([]);
     });
 
-    // Pins current behavior: when the resource already exists under the minted id,
-    // the dance's PUT succeeds with 200 and the IdP's POST is answered 200, not 201.
-    it("a create whose first-touch PUT succeeds answers the POST with the PUT status", async () => {
+    it("a create whose first-touch PUT succeeds still answers 201", async () => {
       const { env, directory, fake } = await setup({ mode: "workos-only" });
       fake.route("workos", "PUT", "/Users/ext-1", scimJson(200, { id: "ext-1" }));
 
@@ -770,7 +768,8 @@ describe("migrated-id dance", () => {
         userName: "a@b.c",
       });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(201);
+      expect(await res.json()).toEqual({ id: "ext-1" });
       expect(legs(fake.callsTo("workos"))).toEqual(["PUT /Users/ext-1"]);
       expect(await allMappings(env.DB, directory.id)).toEqual([
         {
@@ -780,6 +779,62 @@ describe("migrated-id dance", () => {
           strategy: "migrated-id",
         },
       ]);
+    });
+
+    it("a create resolved by the 409 re-PUT answers 201", async () => {
+      const { env, directory, fake } = await setup({ mode: "workos-only" });
+      fake.route("workos", "PUT", "/Users/ext-1", scimJson(404, { detail: "nope" }), {
+        once: true,
+      });
+      fake.route("workos", "POST", "/Users", scimJson(409, { detail: "exists" }));
+      fake.route(
+        "workos",
+        "PUT",
+        "/Users/ext-1",
+        scimJson(200, { id: "ext-1", userName: "a@b.c" }),
+      );
+
+      const res = await send(env, directory, "POST", "/scim/v2/Users", {
+        externalId: "ext-1",
+        userName: "a@b.c",
+      });
+
+      expect(res.status).toBe(201);
+      expect(await res.json()).toEqual({ id: "ext-1", userName: "a@b.c" });
+      expect(legs(fake.callsTo("workos"))).toEqual([
+        "PUT /Users/ext-1",
+        "POST /Users",
+        "PUT /Users/ext-1",
+      ]);
+      expect(await allMappings(env.DB, directory.id)).toEqual([
+        {
+          resource_type: "Users",
+          native_id: "ext-1",
+          workos_id: "ext-1",
+          strategy: "migrated-id",
+        },
+      ]);
+    });
+
+    it("a create onto an already-mapped id answers 201 after the mapped PUT", async () => {
+      const { env, directory, fake } = await setup({ mode: "workos-only" });
+      await seedMapping(env.DB, directory, "Users", "ext-1", "wos_1", "fallback-post");
+      fake.route(
+        "workos",
+        "PUT",
+        "/Users/wos_1",
+        scimJson(200, { id: "wos_1", userName: "a@b.c" }),
+      );
+
+      const res = await send(env, directory, "POST", "/scim/v2/Users", {
+        externalId: "ext-1",
+        userName: "a@b.c",
+      });
+
+      expect(res.status).toBe(201);
+      // The IdP only ever sees the minted id, never the WorkOS-minted one.
+      expect(await res.json()).toEqual({ id: "ext-1", userName: "a@b.c" });
+      expect(legs(fake.callsTo("workos"))).toEqual(["PUT /Users/wos_1"]);
     });
   });
 
