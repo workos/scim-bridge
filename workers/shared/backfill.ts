@@ -15,6 +15,8 @@ import {
 const PAGE_SIZE = 100;
 const ERROR_CAP = 20;
 
+type UpstreamSide = "native" | "workos";
+
 interface ResourceCounts {
   total: number;
   mirrored: number;
@@ -36,6 +38,7 @@ export async function runBackfill(db: D1Database, directory: Directory): Promise
     directory.native_url,
     directory.native_token,
     "Users",
+    "native",
     summary.errors,
   );
   for (const resource of users) {
@@ -46,6 +49,7 @@ export async function runBackfill(db: D1Database, directory: Directory): Promise
     directory.native_url,
     directory.native_token,
     "Groups",
+    "native",
     summary.errors,
   );
   const maps = await loadIdMaps(db, directory.id);
@@ -65,10 +69,17 @@ export async function runBackfill(db: D1Database, directory: Directory): Promise
   return summary;
 }
 
+/**
+ * Pages an upstream list endpoint. Every way the enumeration can come up short —
+ * a transport failure, an error status, a body that is not a SCIM ListResponse,
+ * or pagination that stops before `totalResults` — records an error, so a
+ * summary with an empty snapshot is never mistaken for an empty directory.
+ */
 async function snapshot(
   url: string,
   token: string,
   kind: ResourceType,
+  side: UpstreamSide,
   errors: string[],
 ): Promise<Record<string, unknown>[]> {
   const out: Record<string, unknown>[] = [];
@@ -85,14 +96,32 @@ async function snapshot(
       return out;
     }
     if (!isSuccess(page.status)) {
-      pushError(errors, `${kind} snapshot: native returned ${page.status}`);
+      pushError(errors, `${kind} snapshot: ${side} returned ${page.status}`);
       return out;
     }
     const body = parseJson(page.bodyText);
-    const resources = body && Array.isArray(body.Resources) ? body.Resources.filter(isRecord) : [];
+    if (!body) {
+      pushError(errors, `${kind} snapshot: ${side} returned a list response that is not JSON`);
+      return out;
+    }
+    if (!Array.isArray(body.Resources)) {
+      pushError(
+        errors,
+        `${kind} snapshot: ${side} returned a list response without a Resources array`,
+      );
+      return out;
+    }
+    const resources = body.Resources.filter(isRecord);
     out.push(...resources);
-    const total = body && typeof body.totalResults === "number" ? body.totalResults : out.length;
-    if (resources.length === 0 || out.length >= total) return out;
+    const total = typeof body.totalResults === "number" ? body.totalResults : out.length;
+    if (out.length >= total) return out;
+    if (resources.length === 0) {
+      pushError(
+        errors,
+        `${kind} snapshot: ${side} returned an empty page at ${out.length} of ${total} resources`,
+      );
+      return out;
+    }
     startIndex += resources.length;
   }
 }
@@ -166,6 +195,7 @@ export async function runReconcileFromWorkos(
     directory.workos_url,
     directory.workos_token,
     "Users",
+    "workos",
     summary.errors,
   );
   for (const resource of users) {
@@ -176,6 +206,7 @@ export async function runReconcileFromWorkos(
     directory.workos_url,
     directory.workos_token,
     "Groups",
+    "workos",
     summary.errors,
   );
   for (const resource of groups) {

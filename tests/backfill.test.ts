@@ -580,7 +580,7 @@ describe("runBackfill snapshot edges", () => {
   let fake: FakeUpstreams | undefined;
   afterEach(() => fake?.restore());
 
-  it("stops on an empty page even when totalResults claims more", async () => {
+  it("records a truncation error when an empty page arrives short of totalResults", async () => {
     const env = createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     fake = installFakeUpstreams();
@@ -601,9 +601,11 @@ describe("runBackfill snapshot edges", () => {
 
     const summary = await runBackfill(env.DB, directory);
 
-    // The overstated total silently truncates: no error entry is recorded.
+    // What was enumerated is still replayed, but the shortfall is reported.
     expect(summary.users).toEqual({ total: 2, mirrored: 2, failed: 0 });
-    expect(summary.errors).toEqual([]);
+    expect(summary.errors).toEqual([
+      "Users snapshot: native returned an empty page at 2 of 10 resources",
+    ]);
     const snapshots = fake.callsTo("native").filter((c) => c.path.startsWith("/Users"));
     expect(snapshots.map((c) => c.path)).toEqual([
       "/Users?startIndex=1&count=100",
@@ -647,9 +649,7 @@ describe("runBackfill snapshot edges", () => {
       "/Users",
       scimJson(200, { Resources: ["junk", { id: "u1", userName: "one@x.test" }] }),
     );
-    // SUSPECTED BUG: a 200 with an unparseable body yields a silent empty
-    // snapshot — zero resources, zero errors — instead of a snapshot error.
-    fake.route("native", "GET", "/Groups", new Response("<html>oops</html>", { status: 200 }));
+    fake.route("native", "GET", "/Groups", listPage([]));
     installWorkosScim(fake);
 
     const summary = await runBackfill(env.DB, directory);
@@ -661,6 +661,93 @@ describe("runBackfill snapshot edges", () => {
     });
     const userSnapshots = fake.callsTo("native").filter((c) => c.path.startsWith("/Users"));
     expect(userSnapshots).toHaveLength(1);
+  });
+
+  it("fails the resource type when a 200 list body is not JSON", async () => {
+    const env = createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+    fake = installFakeUpstreams();
+    fake.route("native", "GET", "/Users", listPage([{ id: "u1", userName: "one@x.test" }]));
+    fake.route("native", "GET", "/Groups", new Response("<html>oops</html>", { status: 200 }));
+    installWorkosScim(fake);
+
+    const summary = await runBackfill(env.DB, directory);
+
+    // Users still mirror; the unusable Groups body is reported rather than read
+    // as an empty directory.
+    expect(summary).toEqual({
+      users: { total: 1, mirrored: 1, failed: 0 },
+      groups: { total: 0, mirrored: 0, failed: 0 },
+      errors: ["Groups snapshot: native returned a list response that is not JSON"],
+    });
+    const groupSnapshots = fake.callsTo("native").filter((c) => c.path.startsWith("/Groups"));
+    expect(groupSnapshots).toHaveLength(1);
+  });
+
+  it("fails the resource type when the list response has an empty body", async () => {
+    const env = createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+    fake = installFakeUpstreams();
+    fake.route("native", "GET", "/Users", new Response(null, { status: 204 }));
+    fake.route("native", "GET", "/Groups", listPage([]));
+    installWorkosScim(fake);
+
+    const summary = await runBackfill(env.DB, directory);
+
+    expect(summary.users).toEqual({ total: 0, mirrored: 0, failed: 0 });
+    expect(summary.errors).toEqual([
+      "Users snapshot: native returned a list response that is not JSON",
+    ]);
+  });
+
+  it("fails the resource type when the list body has no Resources array", async () => {
+    const env = createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+    fake = installFakeUpstreams();
+    fake.route("native", "GET", "/Users", scimJson(200, { totalResults: 3, Resources: "nope" }));
+    fake.route("native", "GET", "/Groups", scimJson(200, { detail: "who knows" }));
+    installWorkosScim(fake);
+
+    const summary = await runBackfill(env.DB, directory);
+
+    expect(summary.errors).toEqual([
+      "Users snapshot: native returned a list response without a Resources array",
+      "Groups snapshot: native returned a list response without a Resources array",
+    ]);
+    expect(summary.users).toEqual({ total: 0, mirrored: 0, failed: 0 });
+    expect(summary.groups).toEqual({ total: 0, mirrored: 0, failed: 0 });
+  });
+
+  it("reports no error for a genuinely empty directory", async () => {
+    const env = createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+    fake = installFakeUpstreams();
+    fake.route("native", "GET", "/Users", listPage([]));
+    fake.route("native", "GET", "/Groups", scimJson(200, { totalResults: 0, Resources: [] }));
+    installWorkosScim(fake);
+
+    const summary = await runBackfill(env.DB, directory);
+
+    expect(summary).toEqual({
+      users: { total: 0, mirrored: 0, failed: 0 },
+      groups: { total: 0, mirrored: 0, failed: 0 },
+      errors: [],
+    });
+  });
+
+  it("names the WorkOS side in reconcile snapshot errors", async () => {
+    const env = createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "workos-only" });
+    fake = installFakeUpstreams();
+    fake.route("workos", "GET", "/Users", new Response("<html>oops</html>", { status: 200 }));
+    fake.route("workos", "GET", "/Groups", scimJson(502, { detail: "bad gateway" }));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    expect(summary.errors).toEqual([
+      "Users snapshot: workos returned a list response that is not JSON",
+      "Groups snapshot: workos returned 502",
+    ]);
   });
 });
 
