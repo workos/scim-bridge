@@ -757,13 +757,15 @@ describe("dsync listener", () => {
       expect(await nativeUsers(env.DB)).toHaveLength(0);
     });
 
-    it("treats a redelivery of an event first seen while inert as a duplicate after cutover", async () => {
-      // Pins current behavior: the inert 'ignored' row records the event_id, so
-      // a post-cutover retry of the same delivery is deduplicated rather than
-      // applied — cutover relies on the backfill, not on webhook retries.
+    it("applies a redelivery of an event first seen while inert after cutover", async () => {
+      // A delivery logged only as 'ignored' while the listener was inert does
+      // not count as a duplicate, so a post-cutover redelivery re-evaluates
+      // under the current mode and applies — an event straddling the cutover is
+      // no longer stranded waiting on the backfill.
       const { env, directory } = await seedListenerEnv({ mode: "passthrough" });
       const event = envelope("dsync.user.created", ada, { id: "event_precut", at: T1 });
       await deliver(env, event);
+      expect((await lastEvent(env.DB)).action).toBe("ignored");
 
       await env.DB.prepare("UPDATE scim_directories SET mode = 'workos-only' WHERE id = ?")
         .bind(directory.id)
@@ -771,8 +773,28 @@ describe("dsync listener", () => {
       await deliver(env, event);
 
       const row = await lastEvent(env.DB);
+      expect(row.action).toBe("applied");
+      expect(row.event_id).toBe("event_precut");
+      expect(await nativeUsers(env.DB)).toHaveLength(1);
+    });
+
+    it("still drops a stale redelivery superseded by a newer inert event after cutover", async () => {
+      // The version ledger advances even while inert, so a redelivery whose own
+      // timeline was overtaken by a newer pre-cutover event is still gated as
+      // out-of-order rather than resurrecting superseded state.
+      const { env, directory } = await seedListenerEnv({ mode: "passthrough" });
+      const stale = envelope("dsync.user.created", ada, { id: "event_stale", at: T1 });
+      await deliver(env, stale);
+      await deliver(env, envelope("dsync.user.updated", ada, { id: "event_newer", at: T3 }));
+
+      await env.DB.prepare("UPDATE scim_directories SET mode = 'workos-only' WHERE id = ?")
+        .bind(directory.id)
+        .run();
+      await deliver(env, stale);
+
+      const row = await lastEvent(env.DB);
       expect(row.action).toBe("skipped");
-      expect(row.detail).toBe("duplicate delivery");
+      expect(row.detail).toBe("superseded by a newer event (out-of-order delivery)");
       expect(await nativeUsers(env.DB)).toHaveLength(0);
     });
   });
