@@ -322,6 +322,24 @@ async function workosOnly(
   }
   applyWorkosLeg(log, workos);
 
+  // Prune the mapping the same way the dual-write mirror does, so the table
+  // never claims a deleted resource is live. A 404 counts: the resource is gone
+  // on the WorkOS side either way.
+  if (method === "DELETE" && kind && scimPath.id) {
+    if (isSuccess(workos.status) || workos.status === 404) {
+      // The WorkOS delete already committed, so a failed prune must not turn a
+      // completed delete into an error for the IdP — log it and let the next
+      // write self-heal the row.
+      try {
+        await deleteMapping(env.DB, directory.id, kind, scimPath.id);
+      } catch (error) {
+        log.error = `id mapping prune failed: ${errorMessage(error)}`;
+      }
+    } else {
+      log.error = `WorkOS DELETE returned ${workos.status}; id mapping kept for repair`;
+    }
+  }
+
   if (!kind || !toNative || method === "POST") {
     return finish(upstreamResponse(workos));
   }
@@ -345,7 +363,8 @@ async function workosOnly(
  * id, translate any group members to WorkOS ids, and run the mirror dance
  * (POST + X-WorkOS-Migrated-Id) so the new resource joins the same id scheme as
  * everything backfill mirrored. The minted id is echoed back so the caller (IdP)
- * records it for later references.
+ * records it for later references, with SCIM create semantics (201) regardless of
+ * which leg of the dance resolved.
  */
 async function createWithMigratedId(
   db: D1Database,
@@ -377,8 +396,13 @@ async function createWithMigratedId(
   }
   const created = parseJson(result.body) ?? { ...body, id: mintedId };
   created.id = mintedId;
+  // A create always answers the IdP with 201, even when the dance resolved on a
+  // PUT leg (200) because the resource already sat under the minted id. That id
+  // is derived from the IdP's externalId, so resolving is an idempotent create of
+  // the same logical resource, not a conflict. Symmetric with the replace path,
+  // which always answers 200 even when it self-heals via a POST create.
   return new Response(JSON.stringify(created), {
-    status: result.status ?? 201,
+    status: 201,
     headers: { "Content-Type": SCIM_CONTENT_TYPE },
   });
 }

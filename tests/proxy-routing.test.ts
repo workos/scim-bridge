@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import proxyWorker from "../workers/proxy/index";
 import { upsertMapping } from "../workers/shared/db";
 import { MIGRATED_ID_HEADER } from "../workers/shared/types";
@@ -928,12 +928,13 @@ describe("proxy routing (regression pins)", () => {
     });
   });
 
-  describe("pinned current behavior", () => {
-    // Suspected bug: unlike dual-write, a successful workos-only DELETE leaves
-    // the id_mappings row behind. It self-heals on the next write (PUT 404 →
-    // POST recreate), but reads of a re-used native id resolve to the deleted
-    // WorkOS id until then. Pinning what the code does today.
-    it("workos-only DELETE targets the mapped id but keeps the mapping row", async () => {
+  describe("workos-only DELETE mapping pruning", () => {
+    const readMapping = (directoryId: string, nativeId: string) =>
+      env.DB.prepare("SELECT * FROM id_mappings WHERE directory_id = ? AND native_id = ?")
+        .bind(directoryId, nativeId)
+        .first();
+
+    it("targets the mapped id and prunes the mapping row", async () => {
       const directory = await seedDirectory(env.DB, { mode: "workos-only" });
       await seedMapping(env, directory, "n1", "w1");
       fake.route("workos", "DELETE", "/Users/w1", new Response(null, { status: 204 }));
@@ -948,14 +949,52 @@ describe("proxy routing (regression pins)", () => {
 
       expect(res.status).toBe(204);
       expect(fake.callsTo("workos")[0].path).toBe("/Users/w1");
-      const mapping = await env.DB.prepare(
-        "SELECT * FROM id_mappings WHERE directory_id = ? AND native_id = ?",
-      )
-        .bind(directory.id, "n1")
-        .first();
-      expect(mapping).not.toBeNull();
+      expect(await readMapping(directory.id, "n1")).toBeNull();
     });
 
+    it("keeps the mapping row when the WorkOS DELETE fails", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "workos-only" });
+      await seedMapping(env, directory, "n1", "w1");
+      fake.route("workos", "DELETE", "/Users/w1", new Response(null, { status: 500 }));
+
+      const ctx = createCtx();
+      const res = await proxyWorker.fetch(
+        proxyRequest(directory, "DELETE", "/scim/v2/Users/n1"),
+        env,
+        ctx,
+      );
+      await ctx.drain();
+
+      expect(res.status).toBe(500);
+      expect(await readMapping(directory.id, "n1")).not.toBeNull();
+    });
+
+    it("still answers the IdP when the prune itself fails", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "workos-only" });
+      await seedMapping(env, directory, "n1", "w1");
+      fake.route("workos", "DELETE", "/Users/w1", new Response(null, { status: 204 }));
+
+      const prepare = env.DB.prepare.bind(env.DB);
+      const spy = vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+        if (sql.startsWith("DELETE FROM id_mappings")) throw new Error("D1 unavailable");
+        return prepare(sql);
+      });
+
+      const ctx = createCtx();
+      const res = await proxyWorker.fetch(
+        proxyRequest(directory, "DELETE", "/scim/v2/Users/n1"),
+        env,
+        ctx,
+      );
+      await ctx.drain();
+      spy.mockRestore();
+
+      expect(res.status).toBe(204);
+      expect(await readMapping(directory.id, "n1")).not.toBeNull();
+    });
+  });
+
+  describe("pinned current behavior", () => {
     // Suspected bug: upstreamResponse rebuilds the response with only the
     // Content-Type header, so ETag/Location from the native server never reach
     // the IdP even in passthrough. Pinning what the code does today.
