@@ -71,6 +71,11 @@ by id and `404` on a miss. So the proxy runs the standard SCIM dance:
 3. On `POST 409` (a concurrent create won the race): retry the `PUT`, which now
    resolves the winner's row — the bridge owns that race.
 
+The dance is invisible at the IdP boundary: a create answers `201` and a replace
+answers `200`, whichever leg resolved — a create whose `PUT` found the resource
+already under the minted id is an idempotent create of the same resource (the id
+comes from the IdP's `externalId`), not a conflict.
+
 The IdP never sees a WorkOS-internal id. When WorkOS doesn't honor the header
 (e.g. the `external_id` gate is off) the POST mints its own id; the proxy detects
 the diverging echoed id and records a `fallback-post` mapping instead so ids
