@@ -53,7 +53,9 @@ export interface ScimPath {
 const DISCOVERY_ROOTS = new Set(["ServiceProviderConfig", "Schemas", "ResourceTypes"]);
 
 export function parseScimPath(pathname: string): ScimPath | null {
-  if (!pathname.startsWith(SCIM_PREFIX)) return null;
+  // The prefix must end on a segment boundary, so "/scim/v2Users" is not a SCIM
+  // path: it would yield a slash-less `rest` that joinScimUrl forwards verbatim.
+  if (pathname !== SCIM_PREFIX && !pathname.startsWith(`${SCIM_PREFIX}/`)) return null;
   const rest = pathname.slice(SCIM_PREFIX.length);
   let segments: string[];
   try {
