@@ -92,6 +92,7 @@ export interface NewDirectory {
   native_token?: string;
   workos_url?: string;
   workos_token?: string;
+  workos_directory_id?: string;
 }
 
 /** Create a directory, encrypting the native/WorkOS tokens at rest. */
@@ -104,8 +105,8 @@ export async function insertDirectory(
   return withD1Retry(() =>
     db
       .prepare(
-        "INSERT INTO scim_directories (name, native_url, native_token, workos_url, workos_token) " +
-          "VALUES (?, ?, ?, ?, ?) RETURNING id",
+        "INSERT INTO scim_directories (name, native_url, native_token, workos_url, workos_token, workos_directory_id) " +
+          "VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
       )
       .bind(
         directory.name,
@@ -113,6 +114,7 @@ export async function insertDirectory(
         nativeToken,
         directory.workos_url ?? "",
         workosToken,
+        directory.workos_directory_id || null,
       )
       .first<{ id: string }>(),
   );
@@ -148,6 +150,21 @@ export async function setDirectoryWorkos(
         "UPDATE scim_directories SET workos_url = ?, workos_token = ?, updated_at = datetime('now') WHERE id = ?",
       )
       .bind(url, encrypted, id)
+      .run(),
+  );
+}
+
+export async function setDirectoryWorkosDirectoryId(
+  db: D1Database,
+  id: string,
+  workosDirectoryId: string,
+): Promise<void> {
+  await withD1Retry(() =>
+    db
+      .prepare(
+        "UPDATE scim_directories SET workos_directory_id = ?, updated_at = datetime('now') WHERE id = ?",
+      )
+      .bind(workosDirectoryId || null, id)
       .run(),
   );
 }

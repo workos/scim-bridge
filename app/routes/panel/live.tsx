@@ -258,7 +258,7 @@ export async function action({ context, request }: ActionFunctionArgs) {
   }
 
   if (intent === "run-backfill") {
-    if (directory.mode !== "dualwrite-native-first") {
+    if (directory.mode !== "dual-write") {
       return {
         error: "Backfill only runs in dual-write, so live writes keep flowing while it replays.",
       };
@@ -382,12 +382,12 @@ function CountCell({ value }: { value: number | null }) {
 
 const MODE_LABEL: Record<Mode, string> = {
   passthrough: "Passthrough",
-  "dualwrite-native-first": "Dual-write",
+  "dual-write": "Dual-write",
   "workos-only": "WorkOS-only",
 };
 const MODE_COLOR: Record<Mode, "gray" | "blue" | "green"> = {
   passthrough: "gray",
-  "dualwrite-native-first": "blue",
+  "dual-write": "blue",
   "workos-only": "green",
 };
 
@@ -498,7 +498,7 @@ export default function PanelLive() {
               <input name="directoryId" type="hidden" value={directory.id} />
               <input name="intent" type="hidden" value="run-backfill" />
               <Button
-                disabled={mode !== "dualwrite-native-first" || backfilling}
+                disabled={mode !== "dual-write" || backfilling}
                 loading={backfilling}
                 type="submit"
                 variant="soft"

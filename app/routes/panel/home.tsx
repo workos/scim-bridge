@@ -37,6 +37,7 @@ interface CsvRow {
   native_token: string;
   workos_url: string;
   workos_token: string;
+  workos_directory_id: string;
 }
 
 /** Parse the bulk-import CSV: one directory per line, columns in header order.
@@ -51,9 +52,15 @@ function parseCsv(text: string): CsvRow[] {
   lines.forEach((line, i) => {
     const cells = line.split(",").map((c) => c.trim());
     if (i === 0 && cells[0]?.toLowerCase() === "name") return; // header
-    const [name = "", native_url = "", native_token = "", workos_url = "", workos_token = ""] =
-      cells;
-    rows.push({ name, native_url, native_token, workos_url, workos_token });
+    const [
+      name = "",
+      native_url = "",
+      native_token = "",
+      workos_url = "",
+      workos_token = "",
+      workos_directory_id = "",
+    ] = cells;
+    rows.push({ name, native_url, native_token, workos_url, workos_token, workos_directory_id });
   });
   return rows;
 }
@@ -95,6 +102,7 @@ export async function action({ context, request }: ActionFunctionArgs) {
       native_token: field("native_token"),
       workos_url: field("workos_url"),
       workos_token: field("workos_token"),
+      workos_directory_id: field("workos_directory_id"),
     });
     if (!row) {
       return { error: "The directory could not be created. Check the database and retry." };
@@ -195,6 +203,14 @@ function CredentialFields() {
           <FieldLabel htmlFor="workos-token">WorkOS bearer token</FieldLabel>
           <TextField.Root id="workos-token" name="workos_token" placeholder="Bearer token" />
         </Flex>
+        <Flex direction="column" gap="2">
+          <FieldLabel htmlFor="workos-directory-id">WorkOS directory id</FieldLabel>
+          <TextField.Root
+            id="workos-directory-id"
+            name="workos_directory_id"
+            placeholder="directory_01…"
+          />
+        </Flex>
       </Grid>
     </Flex>
   );
@@ -245,7 +261,7 @@ export default function PanelHome() {
                 <Flex direction="column" gap="5">
                   <Dialog.Header
                     title="Bulk import directories"
-                    description="One directory per line. Columns: name, native SCIM URL, native token, WorkOS endpoint, WorkOS token. Only the name is required; the rest can be filled per directory later."
+                    description="One directory per line. Columns: name, native SCIM URL, native token, WorkOS endpoint, WorkOS token, WorkOS directory id. Only the name is required; the rest can be filled per directory later."
                     error={actionData?.error}
                   />
                   <input type="hidden" name="intent" value="bulk-import" />
@@ -257,8 +273,8 @@ export default function PanelHome() {
                       resize="vertical"
                       rows={8}
                       placeholder={
-                        "name,native_url,native_token,workos_url,workos_token\n" +
-                        "Acme — Okta,https://acme.com/scim/v2,tok_native,https://api.workos.com/scim/v2.0/xxx,tok_workos"
+                        "name,native_url,native_token,workos_url,workos_token,workos_directory_id\n" +
+                        "Acme — Okta,https://acme.com/scim/v2,tok_native,https://api.workos.com/scim/v2.0/xxx,tok_workos,directory_01XXX"
                       }
                     />
                     <Text color="gray" size="1">

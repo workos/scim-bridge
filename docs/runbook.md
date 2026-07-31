@@ -21,8 +21,9 @@ Open `/panel`.
 
 - **One directory** → *Import directory*: name, your native SCIM base URL + token,
   and the WorkOS directory endpoint + token (from the WorkOS dashboard).
-- **Many** → *Bulk import*: paste CSV `name,native_url,native_token,workos_url,workos_token`
-  (header optional). See [workos-directory-provisioning.md](./workos-directory-provisioning.md)
+- **Many** → *Bulk import*: paste CSV
+  `name,native_url,native_token,workos_url,workos_token,workos_directory_id`
+  (header optional; only the name is required). See [workos-directory-provisioning.md](./workos-directory-provisioning.md)
   for producing the WorkOS side in bulk.
 
 Then copy the directory's **SCIM base URL + proxy token** into your IdP's SCIM
@@ -42,6 +43,9 @@ Advance the directory's mode from its page, verifying convergence in the
 5. **Cut over to workos-only** → confirm the AlertDialog. WorkOS is now
    authoritative; provision your app from WorkOS Directory Sync events (the
    listener in `workers/native/listener.ts` is a reference implementation).
+   Wire your listener's handle-vs-ignore decision to the directory's status
+   endpoint — `GET /status/directories/{id}`, shown on the directory page —
+   see [listener-status.md](./listener-status.md).
 
 **Rollback:** before cutover, move the mode back toward passthrough — the native
 system stayed current, so no data is lost. After cutover (`workos-only`), native

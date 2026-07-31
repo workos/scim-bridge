@@ -17,6 +17,7 @@ import {
   setDirectoryMode,
   setDirectoryNative,
   setDirectoryWorkos,
+  setDirectoryWorkosDirectoryId,
   withD1Retry,
 } from "../../../workers/shared/db";
 import type { BackfillSummary, Mode } from "../../../workers/shared/types";
@@ -67,7 +68,7 @@ const MODE_DETAILS: { value: Mode; description: string }[] = [
       "Every read and write goes to native. WorkOS is untouched. The rollback landing spot.",
   },
   {
-    value: "dualwrite-native-first",
+    value: "dual-write",
     description:
       "Write native first; only on a native 2xx, mirror the write into WorkOS via the migrated-id contract. Reads served from native.",
   },
@@ -163,7 +164,7 @@ export async function action({
     const mode = String(form.get("mode") ?? "");
     if (!MODES.includes(mode as Mode)) {
       return {
-        error: "That mode is not one of passthrough, dualwrite-native-first, or workos-only.",
+        error: "That mode is not one of passthrough, dual-write, or workos-only.",
       };
     }
     await setDirectoryMode(env.DB, directory.id, mode as Mode);
@@ -195,11 +196,20 @@ export async function action({
     return {};
   }
 
+  if (intent === "save-workos-directory-id") {
+    await setDirectoryWorkosDirectoryId(
+      env.DB,
+      directory.id,
+      String(form.get("workos_directory_id") ?? "").trim(),
+    );
+    return {};
+  }
+
   if (intent === "run-backfill") {
-    if (directory.mode !== "dualwrite-native-first") {
+    if (directory.mode !== "dual-write") {
       return {
         error:
-          "Backfill only runs in dualwrite-native-first mode, so live writes keep flowing while the snapshot replays.",
+          "Backfill only runs in dual-write mode, so live writes keep flowing while the snapshot replays.",
       };
     }
     const backfill = await runBackfill(env.DB, directory);
@@ -498,6 +508,7 @@ export default function DirectoryOverview() {
   const navigation = useNavigation();
   const pendingIntent = navigation.formData?.get("intent");
   const scimBaseUrl = `${trimTrailingSlash(proxyPublicUrl)}/scim/v2`;
+  const statusUrl = `${trimTrailingSlash(proxyPublicUrl)}/status/directories/${directory.workos_directory_id || directory.id}`;
   const mockWorkosUrl = `${trimTrailingSlash(nativePublicUrl)}/mock-workos/scim/v2`;
   const health = actionData?.health;
 
@@ -580,16 +591,55 @@ export default function DirectoryOverview() {
       />
 
       <Card size="3">
+        <Form method="post">
+          <input type="hidden" name="intent" value="save-workos-directory-id" />
+          <Flex direction="column" gap="4">
+            <CardHeader
+              title="Listener status endpoint"
+              description="The customer's native app polls this from its DSync event listener to decide whether to handle or ignore an event for this directory (native_authoritative). Authenticate with the directory's proxy bearer token above. Set the WorkOS directory id (directory_...) so the listener can address it by the id DSync events carry."
+            />
+            <Grid columns={{ initial: "1", sm: "2" }} gap="4">
+              <Flex direction="column" gap="2">
+                <Text color="gray" size="2" weight="medium">
+                  Status URL
+                </Text>
+                <Flex align="center" gap="2">
+                  <Code size="2" className="break-all">
+                    {statusUrl}
+                  </Code>
+                  <CopyButton value={statusUrl} />
+                </Flex>
+              </Flex>
+              <Flex direction="column" gap="2">
+                <FieldLabel htmlFor="workos-directory-id">WorkOS directory id</FieldLabel>
+                <TextField.Root
+                  defaultValue={directory.workos_directory_id ?? ""}
+                  id="workos-directory-id"
+                  name="workos_directory_id"
+                  placeholder="directory_01…"
+                />
+              </Flex>
+            </Grid>
+            <Flex justify="end">
+              <Button loading={pendingIntent === "save-workos-directory-id"} type="submit">
+                Save WorkOS directory id
+              </Button>
+            </Flex>
+          </Flex>
+        </Form>
+      </Card>
+
+      <Card size="3">
         <Flex direction="column" gap="4">
           <CardHeader
             title="Backfill"
             description="Snapshot the native directory and replay every user and group into WorkOS as migrated-id upserts."
           />
-          {directory.mode !== "dualwrite-native-first" ? (
+          {directory.mode !== "dual-write" ? (
             <Flex align="center" gap="3" justify="between">
               <Text color="gray" size="2">
-                Backfill is only available in dualwrite-native-first mode, so live dual-writes keep
-                flowing while the snapshot replays. Switch modes above to enable it.
+                Backfill is only available in dual-write mode, so live dual-writes keep flowing
+                while the snapshot replays. Switch modes above to enable it.
               </Text>
               <Button disabled>Run backfill</Button>
             </Flex>

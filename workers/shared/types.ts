@@ -1,4 +1,4 @@
-export const MODES = ["passthrough", "dualwrite-native-first", "workos-only"] as const;
+export const MODES = ["passthrough", "dual-write", "workos-only"] as const;
 export type Mode = (typeof MODES)[number];
 
 export const MIGRATED_ID_HEADER = "X-WorkOS-Migrated-Id";
@@ -14,6 +14,10 @@ export interface Directory {
   native_token: string;
   workos_url: string;
   workos_token: string;
+  /** The WorkOS directory id (directory_...) this row migrates, when known.
+   *  DSync webhook events carry it (`event.data.directory_id`), so it is the
+   *  id a customer's native app keys its status lookups on. */
+  workos_directory_id: string | null;
   /** 1 = persist this directory's requests to proxy_log; 0 = don't (default). */
   log_persistence: number;
   created_at: string;

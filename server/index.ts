@@ -65,13 +65,22 @@ function mounted(
 const app = new Hono();
 
 // Guard the control panel with optional HTTP Basic auth. The SCIM data-plane
-// (/scim) authenticates each request by its own proxy token, and /healthz stays
-// open for load-balancer probes, so neither is gated here.
+// (/scim) and the directory status endpoint (/status) authenticate each
+// request by its own proxy token, and /healthz stays open for load-balancer
+// probes, so none of them are gated here.
 app.use("*", async (c, next) => {
   const { panelAuthUser, panelAuthPassword } = config;
   if (!panelAuthUser || !panelAuthPassword) return next();
   const path = new URL(c.req.url).pathname;
-  if (path === "/healthz" || path === "/scim/v2" || path.startsWith("/scim/v2/")) return next();
+  if (
+    path === "/healthz" ||
+    path === "/scim/v2" ||
+    path.startsWith("/scim/v2/") ||
+    path === "/status/directories" ||
+    path.startsWith("/status/directories/")
+  ) {
+    return next();
+  }
 
   const header = c.req.header("Authorization") ?? "";
   const [scheme, encoded] = header.split(" ");
@@ -89,6 +98,11 @@ app.get("/healthz", (c) => c.json({ ok: true }));
 // SCIM data-plane → the migration proxy.
 app.all("/scim/v2", (c) => proxyWorker.fetch(c.req.raw, env, ctx));
 app.all("/scim/v2/*", (c) => proxyWorker.fetch(c.req.raw, env, ctx));
+
+// Directory migration-mode status, polled by the customer's DSync listener.
+// Token-authenticated by the proxy like the data-plane.
+app.all("/status/directories", (c) => proxyWorker.fetch(c.req.raw, env, ctx));
+app.all("/status/directories/*", (c) => proxyWorker.fetch(c.req.raw, env, ctx));
 
 // Bundled simulators for a self-contained demo (a real customer has their own
 // IdP and native app, so these are off unless DEMO_MODE is set).

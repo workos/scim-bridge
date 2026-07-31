@@ -100,8 +100,29 @@ migration loop with no real IdP or WorkOS account. Leave it off in production.
 > directory (its mock WorkOS and native app share one store), so the demo runs
 > one directory end-to-end. The reference DSync listener resolves each event's
 > directory and migration mode per-directory (`directoryModeForEvent` in
-> `workers/native/listener.ts`); a real customer maps the WorkOS `directory_id`
-> to their own directory record there.
+> `workers/native/listener.ts`) by polling the proxy's status endpoint; a real
+> customer's listener does the same with the WorkOS `directory_id` the event
+> carries — see below.
+
+## Directory status for your DSync listener
+
+Your app's DSync event listener must **ignore** events while your app is still
+authoritative (before cutover) and **handle** them once WorkOS is
+(`workos-only`). The proxy exposes a per-directory status endpoint for exactly
+that decision:
+
+```
+GET {PUBLIC_URL}/status/directories/{directory_id}
+Authorization: Bearer {proxy_token}
+→ { directory_id, workos_directory_id, mode, native_authoritative, updated_at }
+```
+
+It accepts the WorkOS directory id (`directory_...`) DSync events carry — set
+it on the directory in the panel — or the bridge's own id, authenticated by the
+same per-directory proxy token as the `/scim/v2` data-plane. Responses are
+cache-friendly (`ETag`, `Cache-Control: max-age=5`). See
+[`docs/listener-status.md`](./docs/listener-status.md) for the contract and a
+client snippet.
 
 ## Development
 
