@@ -1,4 +1,5 @@
 import { getConfig, listDirectories, truncateBody, withD1Retry } from "../shared/db";
+import { fetchDirectoryStatus } from "./status-client";
 import { NATIVE_TABLES, ScimStore } from "./store";
 import type { GroupRow, ScimResource, UserRow } from "./store";
 
@@ -530,10 +531,14 @@ async function recordEventVersion(
  * only applies events once that directory's mode is `workos-only`; the proxy is
  * multi-directory, so this is resolved per event rather than globally.
  *
- * A real deployment maps the WorkOS directory the event is for
- * (`event.data.directory_id`) to its own directory record and that directory's
- * migration mode — store the WorkOS directory id alongside your directory and
- * look it up right here.
+ * The mode is read from the proxy's `GET /status/directories/{id}` endpoint,
+ * authenticated by the directory's proxy token — the same contract a real
+ * customer's native app (a separate service with no access to this database)
+ * polls from its own listener. A real deployment keys the lookup on the WorkOS
+ * directory id the event carries (`event.data.directory_id`); the panel's
+ * per-directory "WorkOS directory id" field links the two. When the endpoint
+ * is unreachable (e.g. `npm run dev`, which mounts only the panel) the mode
+ * falls back to the directory row this bundled listener already shares.
  *
  * The bundled simulator models a SINGLE directory (its mock WorkOS and native
  * app are one shared store, and its demo events carry no `directory_id`), so
@@ -543,10 +548,16 @@ async function recordEventVersion(
  */
 async function directoryModeForEvent(db: D1Database, data: Json): Promise<string | null> {
   const directories = await listDirectories(db);
-  if (directories.length === 1) return directories[0].mode;
   const directoryId = asString(data.directory_id);
-  const match = directoryId ? directories.find((d) => d.id === directoryId) : undefined;
-  return match?.mode ?? null;
+  const directory =
+    directories.length === 1
+      ? directories[0]
+      : directoryId
+        ? directories.find((d) => d.id === directoryId || d.workos_directory_id === directoryId)
+        : undefined;
+  if (!directory) return null;
+  const status = await fetchDirectoryStatus(db, directory);
+  return status?.mode ?? directory.mode;
 }
 
 async function isDuplicate(db: D1Database, eventId: string): Promise<boolean> {

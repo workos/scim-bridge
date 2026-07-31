@@ -10,14 +10,14 @@ const FLOW: Record<
   { toNative: "live" | "mirror" | "off"; toWorkos: "live" | "mirror" | "off"; listener: boolean }
 > = {
   passthrough: { toNative: "live", toWorkos: "off", listener: false },
-  "dualwrite-native-first": { toNative: "live", toWorkos: "mirror", listener: false },
+  "dual-write": { toNative: "live", toWorkos: "mirror", listener: false },
   "workos-only": { toNative: "off", toWorkos: "live", listener: true },
 };
 
 const FLOW_CAPTION: Record<Mode, string> = {
   passthrough:
     "Writes go to the native app only. WorkOS is untouched — the safe place to land a rollback.",
-  "dualwrite-native-first":
+  "dual-write":
     "Writes hit the native app first, then mirror into WorkOS under the migrated-id contract. Native stays the source of truth.",
   "workos-only":
     "Cutover: writes go to WorkOS only. The native app stays current through its DSync event listener, not the proxy.",
@@ -25,7 +25,7 @@ const FLOW_CAPTION: Record<Mode, string> = {
 
 export const MODE_LABEL: Record<Mode, string> = {
   passthrough: "Passthrough",
-  "dualwrite-native-first": "Dual-write",
+  "dual-write": "Dual-write",
   "workos-only": "WorkOS-only",
 };
 

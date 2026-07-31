@@ -71,6 +71,9 @@ export function loopbackBase(config: AppConfig): string {
 export async function seedConfig(env: PocEnv, config: AppConfig): Promise<void> {
   const db = env.DB;
   await setConfig(db, "proxy.public_url", config.publicUrl);
+  // The in-process reference listener reaches the proxy over loopback, so it
+  // works even when the public URL only resolves outside the container.
+  await setConfig(db, "proxy.loopback_url", loopbackBase(config));
   if (config.demoMode) {
     const base = loopbackBase(config);
     await setConfig(db, "idp.public_url", `${base}/__demo/idp`);

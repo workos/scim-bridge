@@ -11,6 +11,10 @@ A [Hono](https://hono.dev) server (`server/index.ts`) routes by path:
 
 - `POST/GET/... /scim/v2/*` → **the migration proxy** (`workers/proxy`), the
   SCIM data-plane. Authenticated per request by the directory's `proxy_token`.
+- `GET /status/directories/{id}` → the directory's migration-mode status
+  (`native_authoritative`), polled by the customer's DSync listener.
+  Authenticated by the directory's `proxy_token`; `{id}` accepts the bridge's
+  directory id or the directory's WorkOS id (`workos_directory_id`).
 - `/healthz` → liveness probe.
 - `/__demo/*` → the bundled IdP + native-app simulators (`DEMO_MODE` only).
 - everything else → the **control panel** (`app/`, React Router SSR).
@@ -28,7 +32,7 @@ are applied on boot (`server/db/migrate.ts`).
 
 | Table | Holds |
 | --- | --- |
-| `scim_directories` | One row per directory being migrated: `mode`, `proxy_token` (IdP→proxy), native URL + token, WorkOS URL + token. |
+| `scim_directories` | One row per directory being migrated: `mode`, `proxy_token` (IdP→proxy), native URL + token, WorkOS URL + token, `workos_directory_id` (the `directory_...` id DSync events carry). |
 | `id_mappings` | native id ↔ WorkOS id per resource, with the strategy used (`migrated-id` or `fallback-post`). |
 | `proxy_log` | Every proxied request, both legs — the panel's Activity view. |
 | `listener_events` / `listener_versions` | The demo DSync listener's log and last-writer-wins ledger. |
@@ -44,7 +48,7 @@ key. See `workers/shared/crypto.ts`.
 throughout until the deliberate cutover.
 
 1. **`passthrough`** — forward to the native endpoint only. Native authoritative.
-2. **`dualwrite-native-first`** — handle natively, respond to the IdP, then
+2. **`dual-write`** — handle natively, respond to the IdP, then
    mirror the full resource to WorkOS. Native authoritative. **Backfill** runs in
    this mode: idempotently copy live native state into WorkOS via the same upsert.
 3. **`workos-only`** — write WorkOS first; the customer's app now provisions from
@@ -80,4 +84,7 @@ The proxy is **multi-directory**: one instance serves many directories, each
 routed by its own `proxy_token`, each with independent credentials and mode. The
 bundled simulator models a single directory; the reference DSync listener
 (`workers/native/listener.ts`) resolves each event's directory and mode
-per-directory (`directoryModeForEvent`).
+per-directory (`directoryModeForEvent`) by polling
+`GET /status/directories/{id}` through `workers/native/status-client.ts` — the
+same contract a customer's own listener uses (see
+[listener-status.md](./listener-status.md)).

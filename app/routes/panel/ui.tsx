@@ -7,7 +7,7 @@ import { Text } from "../../vendor/design-system/components/text";
 
 export const MODE_BADGE_COLORS = {
   passthrough: "gray",
-  "dualwrite-native-first": "blue",
+  "dual-write": "blue",
   "workos-only": "green",
 } as const satisfies Record<Mode, "gray" | "blue" | "green">;
 

@@ -26,6 +26,7 @@ import {
   type ScimPath,
   type UpstreamResult,
 } from "../shared/scim";
+import { handleStatus, STATUS_PREFIX } from "./status";
 
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const BODYLESS_STATUSES = new Set([204, 205, 304]);
@@ -41,6 +42,9 @@ export default {
     }
     if (url.pathname === SCIM_PREFIX || url.pathname.startsWith(`${SCIM_PREFIX}/`)) {
       return handleScim(request, env, ctx, url);
+    }
+    if (url.pathname === STATUS_PREFIX || url.pathname.startsWith(`${STATUS_PREFIX}/`)) {
+      return handleStatus(request, env, url);
     }
     return scimError(404, `Nothing is served at ${url.pathname}.`);
   },
@@ -102,10 +106,7 @@ async function handleScim(
   const contentType = request.headers.get("Content-Type");
   const isWrite = WRITE_METHODS.has(method) && scimPath.kind !== null;
 
-  if (
-    directory.mode === "passthrough" ||
-    (directory.mode === "dualwrite-native-first" && !isWrite)
-  ) {
+  if (directory.mode === "passthrough" || (directory.mode === "dual-write" && !isWrite)) {
     let native: UpstreamResult;
     try {
       native = await scimFetch(joinScimUrl(directory.native_url, scimPath.rest) + url.search, {
@@ -124,7 +125,7 @@ async function handleScim(
     return finish(upstreamResponse(native));
   }
 
-  if (directory.mode === "dualwrite-native-first") {
+  if (directory.mode === "dual-write") {
     return dualWrite(env, ctx, directory, scimPath, method, requestBody, contentType, url, log);
   }
 
