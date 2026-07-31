@@ -613,6 +613,40 @@ describe("runBackfill snapshot edges", () => {
     ]);
   });
 
+  it("carries totalResults forward when a later page omits it", async () => {
+    const env = createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+    fake = installFakeUpstreams();
+    fake.route("native", "GET", "/Users", (call) => {
+      const start = new URL(call.path, "https://x").searchParams.get("startIndex");
+      if (start === "1") {
+        return scimJson(200, {
+          totalResults: 3,
+          Resources: [{ id: "u1", userName: "one@x.test" }],
+        });
+      }
+      // Page 2 omits the total; the carried 3 keeps paging alive.
+      return start === "2"
+        ? scimJson(200, { Resources: [{ id: "u2", userName: "two@x.test" }] })
+        : scimJson(200, { Resources: [] });
+    });
+    fake.route("native", "GET", "/Groups", listPage([]));
+    installWorkosScim(fake);
+
+    const summary = await runBackfill(env.DB, directory);
+
+    expect(summary.users).toEqual({ total: 2, mirrored: 2, failed: 0 });
+    expect(summary.errors).toEqual([
+      "Users snapshot: native returned an empty page at 2 of 3 resources",
+    ]);
+    const snapshots = fake.callsTo("native").filter((c) => c.path.startsWith("/Users"));
+    expect(snapshots.map((c) => c.path)).toEqual([
+      "/Users?startIndex=1&count=100",
+      "/Users?startIndex=2&count=100",
+      "/Users?startIndex=3&count=100",
+    ]);
+  });
+
   it("keeps resources from earlier pages when a later page fails", async () => {
     const env = createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });

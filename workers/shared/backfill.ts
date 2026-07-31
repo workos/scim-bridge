@@ -83,6 +83,9 @@ async function snapshot(
   errors: string[],
 ): Promise<Record<string, unknown>[]> {
   const out: Record<string, unknown>[] = [];
+  // Carried across pages: an upstream that reports the total once and omits it
+  // from later pages must not look like it ran out of resources.
+  let reportedTotal: number | null = null;
   let startIndex = 1;
   for (;;) {
     let page;
@@ -113,7 +116,8 @@ async function snapshot(
     }
     const resources = body.Resources.filter(isRecord);
     out.push(...resources);
-    const total = typeof body.totalResults === "number" ? body.totalResults : out.length;
+    if (typeof body.totalResults === "number") reportedTotal = body.totalResults;
+    const total = reportedTotal ?? out.length;
     if (out.length >= total) return out;
     if (resources.length === 0) {
       pushError(
