@@ -8,10 +8,11 @@
     "build": "react-router build",
     "start": "cross-env NODE_ENV=production tsx server/index.ts",
     "typecheck": "react-router typegen && tsc --noEmit",
-    "lint": "oxlint app/ workers/ server/ --ignore-pattern app/vendor/design-system",
-    "format": "oxfmt --write app server workers package.json postcss.config.mjs vite.config.ts react-router.config.ts '!app/vendor/design-system/**'",
-    "format:check": "oxfmt --check app server workers package.json postcss.config.mjs vite.config.ts react-router.config.ts '!app/vendor/design-system/**'",
+    "lint": "oxlint app/ workers/ server/ tests/ --ignore-pattern app/vendor/design-system",
+    "format": "oxfmt --write app server workers tests package.json postcss.config.mjs vite.config.ts react-router.config.ts '!app/vendor/design-system/**'",
+    "format:check": "oxfmt --check app server workers tests package.json postcss.config.mjs vite.config.ts react-router.config.ts '!app/vendor/design-system/**'",
     "verify": "npm run typecheck && npm run build",
+    "test": "vitest run",
     "sync-design-system": "node scripts/sync-design-system.mjs"
   },
   "dependencies": {
@@ -65,7 +66,8 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "vite": "^7",
-    "vite-tsconfig-paths": "^5"
+    "vite-tsconfig-paths": "^5",
+    "vitest": "^4.1.10"
   },
   "engines": {
     "node": ">=20"

@@ -1,6 +1,6 @@
 {
   "extends": "./tsconfig.json",
-  "include": [".react-router/types/**/*", "app/**/*", "workers/**/*", "server/**/*"],
+  "include": [".react-router/types/**/*", "app/**/*", "workers/**/*", "server/**/*", "tests/**/*"],
   "compilerOptions": {
     "composite": true,
     "strict": true,
