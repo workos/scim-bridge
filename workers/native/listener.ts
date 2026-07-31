@@ -452,11 +452,36 @@ function userResourceFromEvent(
       ...(familyName ? { familyName } : {}),
     };
   }
-  const email = primaryEmail(data.emails) ?? asString(data.email);
-  if (email && !Array.isArray(base.emails)) {
-    resource.emails = [{ value: email, primary: true }];
-  }
+  const emails = emailsFromEvent(data, base.emails);
+  if (emails) resource.emails = emails;
   return resource;
+}
+
+/** The emails array to store for a user, given a WorkOS event and whatever the
+ *  stored resource already had. An event that carries an `emails` array is
+ *  mirrored wholesale; one that carries only the top-level `email` replaces the
+ *  primary entry and keeps the secondaries. Events with no address at all —
+ *  notably the partial `user` object on a membership event — leave the stored
+ *  emails untouched rather than clearing them. */
+function emailsFromEvent(data: Json, base: unknown): Json[] | null {
+  const fromEvent = emailEntries(data.emails);
+  if (fromEvent.length > 0) return fromEvent;
+  const email = asString(data.email);
+  if (!email) return null;
+  const stored = emailEntries(base);
+  const previousPrimary = stored.find((entry) => entry.primary === true) ?? stored[0];
+  // Promoting an address already stored as a secondary keeps that entry's own
+  // labels (`type`, `display`); a brand-new address inherits the old primary's.
+  const promoted = stored.find((entry) => asString(entry.value) === email);
+  const secondaries = stored.filter(
+    (entry) => entry !== previousPrimary && asString(entry.value) !== email,
+  );
+  return [{ ...(promoted ?? previousPrimary), value: email, primary: true }, ...secondaries];
+}
+
+function emailEntries(emails: unknown): Json[] {
+  if (!Array.isArray(emails)) return [];
+  return emails.map(asObject).filter((entry): entry is Json => entry !== null);
 }
 
 /** Derive a stable user name from a WorkOS directory_user event. WorkOS sends
@@ -631,8 +656,7 @@ export function timingSafeEqual(a: string, b: string): boolean {
 }
 
 function primaryEmail(emails: unknown): string | null {
-  if (!Array.isArray(emails)) return null;
-  const entries = emails.map(asObject).filter((entry): entry is Json => entry !== null);
+  const entries = emailEntries(emails);
   const primary = entries.find((entry) => entry.primary === true) ?? entries[0];
   return primary ? asString(primary.value) : null;
 }

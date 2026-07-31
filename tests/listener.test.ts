@@ -1009,7 +1009,7 @@ describe("dsync listener", () => {
       expect((await nativeUsers(env.DB))[0].active).toBe(1);
     });
 
-    it("applies an attribute-only change as 'attributes updated' and keeps the original emails array", async () => {
+    it("applies an attribute-only change as 'attributes updated' and follows the new primary email", async () => {
       const { env } = await seedListenerEnv();
       await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
 
@@ -1029,11 +1029,128 @@ describe("dsync listener", () => {
       expect(users[0].user_name).toBe("ada.king@example.com");
       const resource = JSON.parse(users[0].resource);
       expect(resource.name).toMatchObject({ givenName: "Ada", familyName: "King" });
-      // Pins current behavior: once the resource has an emails array it is
-      // never overwritten, so the SCIM emails lag a changed primary address
-      // even though userName follows it.
-      expect(resource.emails).toEqual([{ value: "ada@example.com", primary: true }]);
+      expect(resource.emails).toEqual([{ value: "ada.king@example.com", primary: true }]);
       expect(resource.userName).toBe("ada.king@example.com");
+    });
+
+    it("keeps upserting by idp_id once the email change breaks the userName match", async () => {
+      const { env } = await seedListenerEnv();
+      await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
+
+      await deliver(
+        env,
+        envelope("dsync.user.updated", { ...ada, email: "ada.king@example.com" }, { at: T2 }),
+      );
+      // Second change: the stored user_name is now the T2 address, so the
+      // userByUserName fallback cannot match either address — only the
+      // external_id lookup keeps this a single row.
+      await deliver(
+        env,
+        envelope("dsync.user.updated", { ...ada, email: "ada.byron@example.com" }, { at: T3 }),
+      );
+
+      const users = await nativeUsers(env.DB);
+      expect(users).toHaveLength(1);
+      expect(users[0].id).toBe("idp-user-1");
+      expect(users[0].user_name).toBe("ada.byron@example.com");
+      expect(JSON.parse(users[0].resource).emails).toEqual([
+        { value: "ada.byron@example.com", primary: true },
+      ]);
+    });
+
+    it("replaces the primary email but keeps the secondaries and their labels", async () => {
+      const { env } = await seedListenerEnv();
+      await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
+      const seeded = (await nativeUsers(env.DB))[0];
+      const resource = JSON.parse(seeded.resource);
+      resource.emails = [
+        { value: "ada@example.com", primary: true, type: "work" },
+        { value: "ada@home.example.com", type: "home" },
+      ];
+      await env.DB.prepare("UPDATE native_users SET resource = ? WHERE id = ?")
+        .bind(JSON.stringify(resource), seeded.id)
+        .run();
+
+      await deliver(
+        env,
+        envelope("dsync.user.updated", { ...ada, email: "ada.king@example.com" }, { at: T2 }),
+      );
+
+      expect(JSON.parse((await nativeUsers(env.DB))[0].resource).emails).toEqual([
+        { value: "ada.king@example.com", primary: true, type: "work" },
+        { value: "ada@home.example.com", type: "home" },
+      ]);
+    });
+
+    it("keeps a promoted secondary's own labels", async () => {
+      const { env } = await seedListenerEnv();
+      await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
+      const seeded = (await nativeUsers(env.DB))[0];
+      const resource = JSON.parse(seeded.resource);
+      resource.emails = [
+        { value: "ada@example.com", primary: true, type: "work" },
+        { value: "ada@home.example.com", type: "home" },
+      ];
+      await env.DB.prepare("UPDATE native_users SET resource = ? WHERE id = ?")
+        .bind(JSON.stringify(resource), seeded.id)
+        .run();
+
+      await deliver(
+        env,
+        envelope("dsync.user.updated", { ...ada, email: "ada@home.example.com" }, { at: T2 }),
+      );
+
+      expect(JSON.parse((await nativeUsers(env.DB))[0].resource).emails).toEqual([
+        { value: "ada@home.example.com", primary: true, type: "home" },
+      ]);
+    });
+
+    it("mirrors an emails array the event carries", async () => {
+      const { env } = await seedListenerEnv();
+      await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
+
+      await deliver(
+        env,
+        envelope(
+          "dsync.user.updated",
+          {
+            ...ada,
+            emails: [
+              { value: "ada@home.example.com" },
+              { value: "ada.king@example.com", primary: true },
+            ],
+          },
+          { at: T2 },
+        ),
+      );
+
+      const users = await nativeUsers(env.DB);
+      expect(users[0].user_name).toBe("ada.king@example.com");
+      expect(JSON.parse(users[0].resource).emails).toEqual([
+        { value: "ada@home.example.com" },
+        { value: "ada.king@example.com", primary: true },
+      ]);
+    });
+
+    it("leaves the stored emails alone for an event carrying no address", async () => {
+      const { env } = await seedListenerEnv();
+      await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
+
+      // A membership event's user object is partial: idp_id and username only.
+      await deliver(
+        env,
+        envelope(
+          "dsync.group.user_added",
+          { user: { idp_id: "idp-user-1", username: "ada@example.com" }, group: engineering },
+          { at: T2 },
+        ),
+      );
+
+      const users = await nativeUsers(env.DB);
+      expect(users).toHaveLength(1);
+      expect(JSON.parse(users[0].resource).emails).toEqual([
+        { value: "ada@example.com", primary: true },
+      ]);
     });
   });
 
