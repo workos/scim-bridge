@@ -144,7 +144,7 @@ describe("cross-cutting seams", () => {
       expect(fake.callsTo("native")).toHaveLength(nativeCallsBefore);
     });
 
-    it("a migrated-id mapping keeps the shared id across the flip; workos-only DELETE keeps the row", async () => {
+    it("a migrated-id mapping keeps the shared id across the flip; workos-only DELETE prunes the row", async () => {
       const directory = await seedDirectory(env.DB, { mode: "dual-write" });
       fake.route("native", "PUT", "/Users/n-2", scimJson(200, { id: "n-2", userName: "alan" }));
       installWorkosScim(fake);
@@ -170,8 +170,7 @@ describe("cross-cutting seams", () => {
       );
       expect(res.status).toBe(204);
       expect(fake.callsTo("workos").at(-1)?.path).toBe("/Users/n-2");
-      // Unlike the dual-write mirror DELETE, workos-only keeps the mapping row.
-      expect(await mappingRows(env, directory.id)).toHaveLength(1);
+      expect(await mappingRows(env, directory.id)).toEqual([]);
     });
 
     it("a dual-write DELETE of an unmapped resource mirrors under the native id with no header", async () => {

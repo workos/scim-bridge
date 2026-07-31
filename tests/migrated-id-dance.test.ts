@@ -894,9 +894,7 @@ describe("migrated-id dance", () => {
       expect(await res.json()).toEqual({ id: "n_g1", members: [{ value: "n_u1" }] });
     });
 
-    // Pins current behavior: unlike the dual-write mirror DELETE, a workos-only
-    // DELETE leaves the id_mappings row behind (a later PUT self-heals it).
-    it("DELETE targets the mapped id but keeps the mapping row", async () => {
+    it("DELETE targets the mapped id and prunes the mapping row", async () => {
       const { env, directory, fake } = await setup({ mode: "workos-only" });
       await seedMapping(env.DB, directory, "Users", "n_u1", "wos_u1", "fallback-post");
       fake.route("workos", "DELETE", "/Users/wos_u1", new Response(null, { status: 204 }));
@@ -905,6 +903,28 @@ describe("migrated-id dance", () => {
 
       expect(res.status).toBe(204);
       expect(legs(fake.callsTo("workos"))).toEqual(["DELETE /Users/wos_u1"]);
+      expect(await allMappings(env.DB, directory.id)).toEqual([]);
+    });
+
+    it("DELETE prunes the mapping row when WorkOS answers 404", async () => {
+      const { env, directory, fake } = await setup({ mode: "workos-only" });
+      await seedMapping(env.DB, directory, "Users", "n_u1", "wos_u1", "fallback-post");
+      fake.route("workos", "DELETE", "/Users/wos_u1", new Response(null, { status: 404 }));
+
+      const res = await send(env, directory, "DELETE", "/scim/v2/Users/n_u1");
+
+      expect(res.status).toBe(404);
+      expect(await allMappings(env.DB, directory.id)).toEqual([]);
+    });
+
+    it("DELETE keeps the mapping row for repair when WorkOS fails", async () => {
+      const { env, directory, fake } = await setup({ mode: "workos-only" });
+      await seedMapping(env.DB, directory, "Users", "n_u1", "wos_u1", "fallback-post");
+      fake.route("workos", "DELETE", "/Users/wos_u1", new Response(null, { status: 500 }));
+
+      const res = await send(env, directory, "DELETE", "/scim/v2/Users/n_u1");
+
+      expect(res.status).toBe(500);
       expect(await allMappings(env.DB, directory.id)).toEqual([
         {
           resource_type: "Users",
