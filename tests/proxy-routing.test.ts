@@ -951,7 +951,6 @@ describe("proxy routing (regression pins)", () => {
       expect(fake.callsTo("workos")[0].path).toBe("/Users/w1");
       expect(await readMapping(directory.id, "n1")).toBeNull();
     });
-
     it("keeps the mapping row when the WorkOS DELETE fails", async () => {
       const directory = await seedDirectory(env.DB, { mode: "workos-only" });
       await seedMapping(env, directory, "n1", "w1");
@@ -994,23 +993,23 @@ describe("proxy routing (regression pins)", () => {
     });
   });
 
-  describe("pinned current behavior", () => {
-    // Suspected bug: upstreamResponse rebuilds the response with only the
-    // Content-Type header, so ETag/Location from the native server never reach
-    // the IdP even in passthrough. Pinning what the code does today.
-    it("passthrough drops upstream headers other than Content-Type", async () => {
+  describe("response header forwarding", () => {
+    function upstreamResponseWithHeaders(headers: Record<string, string>, status = 201): Response {
+      return new Response(JSON.stringify({ id: "u1" }), {
+        status,
+        headers: { "Content-Type": SCIM_CONTENT_TYPE, ...headers },
+      });
+    }
+
+    it("passthrough forwards ETag and re-points Location at the proxy", async () => {
       const directory = await seedDirectory(env.DB, { mode: "passthrough" });
       fake.route(
         "native",
         "POST",
         "/Users",
-        new Response(JSON.stringify({ id: "u1" }), {
-          status: 201,
-          headers: {
-            "Content-Type": SCIM_CONTENT_TYPE,
-            ETag: 'W/"v1"',
-            Location: "https://native.test/scim/v2/Users/u1",
-          },
+        upstreamResponseWithHeaders({
+          ETag: 'W/"v1"',
+          Location: "https://native.test/scim/v2/Users/u1",
         }),
       );
 
@@ -1019,9 +1018,121 @@ describe("proxy routing (regression pins)", () => {
         env,
         createCtx(),
       );
+
       expect(res.status).toBe(201);
-      expect(res.headers.get("ETag")).toBeNull();
+      expect(res.headers.get("ETag")).toBe('W/"v1"');
+      expect(res.headers.get("Location")).toBe("https://bridge.test/scim/v2/Users/u1");
+    });
+
+    it("resolves a relative upstream Location against the upstream base", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "passthrough" });
+      fake.route(
+        "native",
+        "POST",
+        "/Users",
+        upstreamResponseWithHeaders({ Location: "/scim/v2/Users/u1" }),
+      );
+
+      const res = await proxyWorker.fetch(
+        proxyRequest(directory, "POST", "/scim/v2/Users", { userName: "a@b.c" }),
+        env,
+        createCtx(),
+      );
+
+      expect(res.headers.get("Location")).toBe("https://bridge.test/scim/v2/Users/u1");
+    });
+
+    it("drops a Location that does not sit under the upstream SCIM base", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "passthrough" });
+      fake.route(
+        "native",
+        "POST",
+        "/Users",
+        upstreamResponseWithHeaders({ Location: "https://native.test/internal/users/u1" }),
+      );
+
+      const res = await proxyWorker.fetch(
+        proxyRequest(directory, "POST", "/scim/v2/Users", { userName: "a@b.c" }),
+        env,
+        createCtx(),
+      );
+
+      expect(res.status).toBe(201);
       expect(res.headers.get("Location")).toBeNull();
+    });
+
+    it("forwards Retry-After from a throttled upstream", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "passthrough" });
+      fake.route(
+        "native",
+        "GET",
+        "/Users",
+        new Response(null, { status: 429, headers: { "Retry-After": "30" } }),
+      );
+
+      const res = await proxyWorker.fetch(
+        proxyRequest(directory, "GET", "/scim/v2/Users"),
+        env,
+        createCtx(),
+      );
+
+      expect(res.status).toBe(429);
+      expect(res.headers.get("Retry-After")).toBe("30");
+    });
+
+    it("dual-write forwards the native leg's headers", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+      fake.route(
+        "native",
+        "POST",
+        "/Users",
+        upstreamResponseWithHeaders({
+          ETag: 'W/"v1"',
+          Location: "https://native.test/scim/v2/Users/u1",
+        }),
+      );
+      fake.route("workos", "PUT", "/Users/u1", scimJson(200, { id: "u1" }));
+
+      const ctx = createCtx();
+      const res = await proxyWorker.fetch(
+        proxyRequest(directory, "POST", "/scim/v2/Users", { userName: "a@b.c" }),
+        env,
+        ctx,
+      );
+      await ctx.drain();
+
+      expect(res.headers.get("ETag")).toBe('W/"v1"');
+      expect(res.headers.get("Location")).toBe("https://bridge.test/scim/v2/Users/u1");
+    });
+
+    it("drops the ETag and translates Location ids when the body is rewritten", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "workos-only" });
+      await seedMapping(env, directory, "n1", "w1");
+      fake.route(
+        "workos",
+        "GET",
+        "/Users/w1",
+        new Response(JSON.stringify({ id: "w1" }), {
+          status: 200,
+          headers: {
+            "Content-Type": SCIM_CONTENT_TYPE,
+            ETag: 'W/"v1"',
+            Location: "https://workos.test/scim/v2/Users/w1",
+          },
+        }),
+      );
+
+      const res = await proxyWorker.fetch(
+        proxyRequest(directory, "GET", "/scim/v2/Users/n1"),
+        env,
+        createCtx(),
+      );
+
+      // The proxy re-serializes the body in native-id space, so the upstream
+      // validator no longer describes what the IdP receives.
+      expect(res.headers.get("ETag")).toBeNull();
+      expect(res.headers.get("Location")).toBe("https://bridge.test/scim/v2/Users/n1");
+      expect(await res.json()).toEqual({ id: "n1" });
     });
   });
 

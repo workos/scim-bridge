@@ -75,11 +75,21 @@ export function parseScimPath(pathname: string): ScimPath | null {
   return null;
 }
 
+/**
+ * Response headers a proxied response may carry back to the IdP. An allowlist,
+ * never a denylist: the proxy re-serializes bodies, so framing headers
+ * (Content-Length, Transfer-Encoding, Content-Encoding) and hop-by-hop headers
+ * would describe the upstream response rather than the one being sent.
+ */
+export const FORWARDED_RESPONSE_HEADERS = ["Location", "ETag", "Retry-After"] as const;
+
 export interface UpstreamResult {
   status: number;
   ms: number;
   bodyText: string | null;
   contentType: string | null;
+  /** Allowlisted upstream response headers, keyed as in FORWARDED_RESPONSE_HEADERS. */
+  headers: Record<string, string>;
 }
 
 export interface ScimFetchOptions {
@@ -110,7 +120,17 @@ export async function scimFetch(url: string, options: ScimFetchOptions): Promise
     ms: Date.now() - started,
     bodyText: text === "" ? null : text,
     contentType: response.headers.get("Content-Type"),
+    headers: forwardableHeaders(response.headers),
   };
+}
+
+function forwardableHeaders(headers: Headers): Record<string, string> {
+  const forwarded: Record<string, string> = {};
+  for (const name of FORWARDED_RESPONSE_HEADERS) {
+    const value = headers.get(name);
+    if (value != null) forwarded[name] = value;
+  }
+  return forwarded;
 }
 
 export type IdMaps = Record<ResourceType, Map<string, string>>;
