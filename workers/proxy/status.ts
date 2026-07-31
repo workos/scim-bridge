@@ -37,7 +37,12 @@ export async function handleStatus(request: Request, env: PocEnv, url: URL): Pro
   if (segments.length !== 1) {
     return statusError(404, `Nothing is served at ${url.pathname}. Try ${STATUS_PREFIX}/{id}.`);
   }
-  const requestedId = decodeURIComponent(segments[0]);
+  let requestedId: string;
+  try {
+    requestedId = decodeURIComponent(segments[0]);
+  } catch {
+    return statusError(404, `Nothing is served at ${url.pathname}. Try ${STATUS_PREFIX}/{id}.`);
+  }
 
   const auth = request.headers.get("Authorization") ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length).trim() : "";
@@ -66,9 +71,11 @@ export async function handleStatus(request: Request, env: PocEnv, url: URL): Pro
     native_authoritative: directory.mode !== "workos-only",
     updated_at: directory.updated_at,
   };
-  // SQLite's datetime('now') contains a space, which is not a valid ETag
-  // character (RFC 7232), so it is folded to a T.
-  const etag = `"${directory.mode}:${directory.updated_at.replaceAll(" ", "T")}"`;
+  // Covers every field of the representation: mode and workos_directory_id
+  // directly, updated_at for anything else. SQLite's datetime('now') contains
+  // a space, which is not a valid ETag character (RFC 7232), so it is folded
+  // to a T.
+  const etag = `"${directory.mode}:${directory.workos_directory_id ?? ""}:${directory.updated_at.replaceAll(" ", "T")}"`;
   const headers = {
     ETag: etag,
     "Cache-Control": `private, max-age=${CACHE_MAX_AGE_SECONDS}`,
