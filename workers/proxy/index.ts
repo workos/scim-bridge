@@ -327,7 +327,14 @@ async function workosOnly(
   // on the WorkOS side either way.
   if (method === "DELETE" && kind && scimPath.id) {
     if (isSuccess(workos.status) || workos.status === 404) {
-      await deleteMapping(env.DB, directory.id, kind, scimPath.id);
+      // The WorkOS delete already committed, so a failed prune must not turn a
+      // completed delete into an error for the IdP — log it and let the next
+      // write self-heal the row.
+      try {
+        await deleteMapping(env.DB, directory.id, kind, scimPath.id);
+      } catch (error) {
+        log.error = `id mapping prune failed: ${errorMessage(error)}`;
+      }
     } else {
       log.error = `WorkOS DELETE returned ${workos.status}; id mapping kept for repair`;
     }

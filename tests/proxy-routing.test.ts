@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import proxyWorker from "../workers/proxy/index";
 import { upsertMapping } from "../workers/shared/db";
 import { MIGRATED_ID_HEADER } from "../workers/shared/types";
@@ -966,6 +966,30 @@ describe("proxy routing (regression pins)", () => {
       await ctx.drain();
 
       expect(res.status).toBe(500);
+      expect(await readMapping(directory.id, "n1")).not.toBeNull();
+    });
+
+    it("still answers the IdP when the prune itself fails", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "workos-only" });
+      await seedMapping(env, directory, "n1", "w1");
+      fake.route("workos", "DELETE", "/Users/w1", new Response(null, { status: 204 }));
+
+      const prepare = env.DB.prepare.bind(env.DB);
+      const spy = vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+        if (sql.startsWith("DELETE FROM id_mappings")) throw new Error("D1 unavailable");
+        return prepare(sql);
+      });
+
+      const ctx = createCtx();
+      const res = await proxyWorker.fetch(
+        proxyRequest(directory, "DELETE", "/scim/v2/Users/n1"),
+        env,
+        ctx,
+      );
+      await ctx.drain();
+      spy.mockRestore();
+
+      expect(res.status).toBe(204);
       expect(await readMapping(directory.id, "n1")).not.toBeNull();
     });
   });
