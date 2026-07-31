@@ -9,6 +9,7 @@ import {
 import {
   SCIM_CONTENT_TYPE,
   SCIM_PREFIX,
+  conditionalRequestHeaders,
   errorMessage,
   isSuccess,
   joinScimUrl,
@@ -104,6 +105,9 @@ async function handleScim(
   }
 
   const contentType = request.headers.get("Content-Type");
+  // Only the native legs carry the IdP's preconditions: the ETag the IdP quotes
+  // was minted by the native app, so it is meaningless to WorkOS.
+  const conditional = conditionalRequestHeaders(request.headers);
   const isWrite = WRITE_METHODS.has(method) && scimPath.kind !== null;
 
   if (directory.mode === "passthrough" || (directory.mode === "dual-write" && !isWrite)) {
@@ -114,6 +118,7 @@ async function handleScim(
         token: directory.native_token,
         body: requestBody,
         contentType,
+        requestHeaders: conditional,
       });
     } catch (error) {
       log.error = errorMessage(error);
@@ -122,11 +127,27 @@ async function handleScim(
     log.native_status = native.status;
     log.native_ms = native.ms;
     log.native_body = native.bodyText;
-    return finish(upstreamResponse(native));
+    return finish(
+      upstreamResponse(native, {
+        upstreamBase: directory.native_url,
+        proxyBase: proxyBaseUrl(url),
+      }),
+    );
   }
 
   if (directory.mode === "dual-write") {
-    return dualWrite(env, ctx, directory, scimPath, method, requestBody, contentType, url, log);
+    return dualWrite(
+      env,
+      ctx,
+      directory,
+      scimPath,
+      method,
+      requestBody,
+      contentType,
+      conditional,
+      url,
+      log,
+    );
   }
 
   return workosOnly(
@@ -151,6 +172,7 @@ async function dualWrite(
   method: string,
   requestBody: string | null,
   contentType: string | null,
+  conditional: Record<string, string>,
   url: URL,
   log: ProxyLogInsert,
 ): Promise<Response> {
@@ -161,6 +183,7 @@ async function dualWrite(
       token: directory.native_token,
       body: requestBody,
       contentType,
+      requestHeaders: conditional,
     });
   } catch (error) {
     log.error = errorMessage(error);
@@ -173,7 +196,10 @@ async function dualWrite(
   log.native_body = native.bodyText;
   log.response_status = native.status;
 
-  const response = upstreamResponse(native);
+  const response = upstreamResponse(native, {
+    upstreamBase: directory.native_url,
+    proxyBase: proxyBaseUrl(url),
+  });
   ctx.waitUntil(
     (async () => {
       if (isSuccess(native.status)) {
@@ -340,12 +366,23 @@ async function workosOnly(
     }
   }
 
+  const forward: ForwardOptions = {
+    upstreamBase: directory.workos_url,
+    proxyBase: proxyBaseUrl(url),
+  };
   if (!kind || !toNative || method === "POST") {
-    return finish(upstreamResponse(workos));
+    return finish(upstreamResponse(workos, forward));
   }
+  const translateId = toNative;
+  const idForward: ForwardOptions = {
+    ...forward,
+    toIdpId: (id) => translateId(kind, id),
+  };
   const parsed = parseJson(workos.bodyText);
+  // Nothing to translate (304, 204, non-JSON): the IdP gets the upstream bytes,
+  // so the upstream validator still describes them.
   if (!parsed) {
-    return finish(upstreamResponse(workos));
+    return finish(upstreamResponse(workos, idForward));
   }
   const rewritten = Array.isArray(parsed.Resources)
     ? translateListResponse(parsed, kind, toNative)
@@ -353,7 +390,7 @@ async function workosOnly(
   return finish(
     new Response(JSON.stringify(rewritten), {
       status: workos.status,
-      headers: { "Content-Type": workos.contentType ?? SCIM_CONTENT_TYPE },
+      headers: proxiedHeaders(workos, { ...idForward, bodyRewritten: true }),
     }),
   );
 }
@@ -448,12 +485,84 @@ async function replaceWithMigratedId(
   });
 }
 
-function upstreamResponse(result: UpstreamResult): Response {
+interface ForwardOptions {
+  /** SCIM base URL of the upstream that produced the response. */
+  upstreamBase: string;
+  /** SCIM base URL the IdP addresses the proxy by. */
+  proxyBase: string;
+  /**
+   * Set when the proxy re-serializes the body (id translation), which makes an
+   * upstream ETag describe a payload the IdP never receives.
+   */
+  bodyRewritten?: boolean;
+  /** Maps an upstream resource id back into the id space the IdP addresses. */
+  toIdpId?: (id: string) => string;
+}
+
+function upstreamResponse(result: UpstreamResult, forward: ForwardOptions): Response {
   const body = BODYLESS_STATUSES.has(result.status) ? null : result.bodyText;
   return new Response(body, {
     status: result.status,
-    headers: { "Content-Type": result.contentType ?? SCIM_CONTENT_TYPE },
+    headers: proxiedHeaders(result, forward),
   });
+}
+
+function proxiedHeaders(result: UpstreamResult, forward: ForwardOptions): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": result.contentType ?? SCIM_CONTENT_TYPE,
+  };
+  for (const [name, value] of Object.entries(result.headers)) {
+    if (name === "ETag") {
+      if (!forward.bodyRewritten) headers.ETag = value;
+      continue;
+    }
+    if (name === "Location") {
+      const rewritten = rewriteLocation(value, forward);
+      if (rewritten) headers.Location = rewritten;
+      continue;
+    }
+    headers[name] = value;
+  }
+  return headers;
+}
+
+/**
+ * Re-point an upstream Location at the proxy. The IdP only knows the proxy's
+ * SCIM base URL and its own id space, so a Location naming the native app or
+ * WorkOS directly would send it around the proxy — and, after cutover, at a
+ * WorkOS id it never issued. Anything that does not sit under the upstream's
+ * own SCIM base cannot be rewritten safely and is dropped rather than leaked.
+ */
+function rewriteLocation(value: string, forward: ForwardOptions): string | null {
+  let base: URL;
+  let target: URL;
+  try {
+    base = new URL(forward.upstreamBase);
+    // Resolve against the base as a directory, so a path-relative "Users/u1"
+    // lands under the SCIM base instead of replacing its last segment.
+    target = new URL(value, `${base.href.replace(/\/+$/, "")}/`);
+  } catch {
+    return null;
+  }
+  if (target.origin !== base.origin) return null;
+  const basePath = base.pathname.replace(/\/+$/, "");
+  if (target.pathname !== basePath && !target.pathname.startsWith(`${basePath}/`)) return null;
+  let rest = target.pathname.slice(basePath.length);
+  if (forward.toIdpId) {
+    let segments: string[];
+    try {
+      segments = rest.split("/").filter(Boolean).map(decodeURIComponent);
+    } catch {
+      return null;
+    }
+    if (segments.length !== 2) return null;
+    rest = `/${segments[0]}/${encodeURIComponent(forward.toIdpId(segments[1]))}`;
+  }
+  return `${forward.proxyBase}${rest}${target.search}`;
+}
+
+function proxyBaseUrl(url: URL): string {
+  return `${url.origin}${SCIM_PREFIX}`;
 }
 
 function applyMirrorResult(log: ProxyLogInsert, result: MirrorResult): void {

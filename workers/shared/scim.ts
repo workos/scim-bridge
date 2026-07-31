@@ -75,11 +75,44 @@ export function parseScimPath(pathname: string): ScimPath | null {
   return null;
 }
 
+/**
+ * Response headers a proxied response may carry back to the IdP. An allowlist,
+ * never a denylist: the proxy re-serializes bodies, so framing headers
+ * (Content-Length, Transfer-Encoding, Content-Encoding) and hop-by-hop headers
+ * would describe the upstream response rather than the one being sent.
+ */
+export const FORWARDED_RESPONSE_HEADERS = ["Location", "ETag", "Retry-After"] as const;
+
 export interface UpstreamResult {
   status: number;
   ms: number;
   bodyText: string | null;
   contentType: string | null;
+  /** Allowlisted upstream response headers, keyed as in FORWARDED_RESPONSE_HEADERS. */
+  headers: Record<string, string>;
+}
+
+/**
+ * Conditional request headers carried through to the upstream that issued the
+ * validator the IdP is quoting. Forwarding an ETag without them would turn a
+ * conditional update into an unconditional one, so the IdP would believe a
+ * precondition ran that never reached the authoritative endpoint.
+ */
+export const CONDITIONAL_REQUEST_HEADERS = [
+  "If-Match",
+  "If-None-Match",
+  "If-Modified-Since",
+  "If-Unmodified-Since",
+] as const;
+
+/** Pick the conditional headers out of an incoming IdP request. */
+export function conditionalRequestHeaders(headers: Headers): Record<string, string> {
+  const conditional: Record<string, string> = {};
+  for (const name of CONDITIONAL_REQUEST_HEADERS) {
+    const value = headers.get(name);
+    if (value != null) conditional[name] = value;
+  }
+  return conditional;
 }
 
 export interface ScimFetchOptions {
@@ -88,6 +121,8 @@ export interface ScimFetchOptions {
   body?: string | null;
   contentType?: string | null;
   migratedId?: string;
+  /** Extra request headers, e.g. the caller's conditional headers. */
+  requestHeaders?: Record<string, string>;
 }
 
 export async function scimFetch(url: string, options: ScimFetchOptions): Promise<UpstreamResult> {
@@ -97,6 +132,9 @@ export async function scimFetch(url: string, options: ScimFetchOptions): Promise
   }
   if (options.migratedId != null) {
     headers.set(MIGRATED_ID_HEADER, options.migratedId);
+  }
+  for (const [name, value] of Object.entries(options.requestHeaders ?? {})) {
+    headers.set(name, value);
   }
   const started = Date.now();
   const response = await fetch(url, {
@@ -110,7 +148,17 @@ export async function scimFetch(url: string, options: ScimFetchOptions): Promise
     ms: Date.now() - started,
     bodyText: text === "" ? null : text,
     contentType: response.headers.get("Content-Type"),
+    headers: forwardableHeaders(response.headers),
   };
+}
+
+function forwardableHeaders(headers: Headers): Record<string, string> {
+  const forwarded: Record<string, string> = {};
+  for (const name of FORWARDED_RESPONSE_HEADERS) {
+    const value = headers.get(name);
+    if (value != null) forwarded[name] = value;
+  }
+  return forwarded;
 }
 
 export type IdMaps = Record<ResourceType, Map<string, string>>;
