@@ -112,17 +112,23 @@ describe("parseScimPath", () => {
     expect(parseScimPath("/scim/v2/Users/%zz")).toBeNull();
   });
 
-  it("accepts a prefix without a segment boundary, yielding a slash-less rest", () => {
-    // Suspected bug: "/scim/v2Users" passes the startsWith check, so it parses
-    // as a Users collection whose rest ("Users") has no leading slash — a
-    // downstream joinScimUrl would produce ".../scim/v2Users". Pinning current
-    // behavior.
-    expect(parseScimPath("/scim/v2Users")).toEqual({
-      kind: "Users",
-      id: null,
-      discovery: false,
-      rest: "Users",
-    });
+  it("rejects a prefix that does not end on a segment boundary", () => {
+    expect(parseScimPath("/scim/v2Users")).toBeNull();
+    expect(parseScimPath("/scim/v2Groups/g1")).toBeNull();
+    expect(parseScimPath("/scim/v2x/Users")).toBeNull();
+  });
+
+  it("always returns a rest that starts with a slash", () => {
+    for (const path of [
+      "/scim/v2/Users",
+      "/scim/v2/Users/abc",
+      "/scim/v2/Users/",
+      "/scim/v2//Users",
+      "/scim/v2/Schemas",
+      "/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:User",
+    ]) {
+      expect(parseScimPath(path)?.rest).toMatch(/^\//);
+    }
   });
 });
 
