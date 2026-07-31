@@ -33,6 +33,22 @@ function envelope(event: string, data: unknown, opts: EnvelopeOptions = {}) {
   };
 }
 
+/** Epoch ms the signature fixtures sign at — tests freeze the clock here so the
+ *  deliveries land inside the listener's freshness window. */
+const SIGNED_AT = Date.parse(T1);
+const TOLERANCE_MS = 5 * 60 * 1000;
+
+/** A `WorkOS-Signature` header for `body`, signed at `t` (epoch ms, as WorkOS sends it). */
+function signature(secret: string, body: string, t: number = SIGNED_AT): Record<string, string> {
+  const mac = createHmac("sha256", secret).update(`${t}.${body}`).digest("hex");
+  return { "WorkOS-Signature": `t=${t},v1=${mac}` };
+}
+
+function freezeClock(at: number = SIGNED_AT): void {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(at);
+}
+
 function webhookRequest(body: string, headers: Record<string, string> = {}): Request {
   return new Request("https://native.test/webhooks/dsync", { method: "POST", headers, body });
 }
@@ -138,31 +154,99 @@ describe("dsync listener", () => {
     });
 
     it("rejects a tampered signature", async () => {
+      freezeClock();
       const { env } = await seedListenerEnv();
       await setConfig(env.DB, "native.webhook_secret", "whsec_test");
       const body = JSON.stringify(envelope("dsync.user.created", ada));
-      const mac = createHmac("sha256", "wrong-secret").update(`1753900000.${body}`).digest("hex");
 
-      const res = await deliver(env, body, { "WorkOS-Signature": `t=1753900000,v1=${mac}` });
+      const res = await deliver(env, body, signature("wrong-secret", body));
 
       expect(res.status).toBe(401);
       expect(await nativeUsers(env.DB)).toHaveLength(0);
     });
 
     it("accepts a correctly signed delivery", async () => {
+      freezeClock();
       const { env } = await seedListenerEnv();
       const secret = "whsec_test";
       await setConfig(env.DB, "native.webhook_secret", secret);
       const body = JSON.stringify(envelope("dsync.user.created", ada));
-      const t = "1753900000";
-      const mac = createHmac("sha256", secret).update(`${t}.${body}`).digest("hex");
 
-      const res = await deliver(env, body, { "WorkOS-Signature": `t=${t},v1=${mac}` });
+      const res = await deliver(env, body, signature(secret, body));
 
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ received: true });
       expect((await lastEvent(env.DB)).action).toBe("applied");
       expect(await nativeUsers(env.DB)).toHaveLength(1);
+    });
+
+    it("rejects a validly signed delivery replayed after the tolerance window", async () => {
+      freezeClock();
+      const { env } = await seedListenerEnv();
+      const secret = "whsec_test";
+      await setConfig(env.DB, "native.webhook_secret", secret);
+      const body = JSON.stringify(envelope("dsync.user.created", ada));
+      const signed = signature(secret, body);
+
+      // The same capture is replayed one second past the window.
+      vi.setSystemTime(SIGNED_AT + TOLERANCE_MS + 1_000);
+      const res = await deliver(env, body, signed);
+
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({
+        received: false,
+        error:
+          "Webhook timestamp is outside the 5 minute tolerance window — check this host's clock.",
+      });
+      // Same as a bad MAC: nothing applied, nothing logged.
+      expect(await listenerEvents(env.DB)).toHaveLength(0);
+      expect(await nativeUsers(env.DB)).toHaveLength(0);
+    });
+
+    it("accepts a delivery signed at the far edge of the tolerance window", async () => {
+      freezeClock();
+      const { env } = await seedListenerEnv();
+      const secret = "whsec_test";
+      await setConfig(env.DB, "native.webhook_secret", secret);
+      const body = JSON.stringify(envelope("dsync.user.created", ada));
+      const signed = signature(secret, body);
+
+      vi.setSystemTime(SIGNED_AT + TOLERANCE_MS);
+      const res = await deliver(env, body, signed);
+
+      expect(res.status).toBe(200);
+      expect(await nativeUsers(env.DB)).toHaveLength(1);
+    });
+
+    it("rejects a delivery pre-dated beyond the tolerance window", async () => {
+      freezeClock();
+      const { env } = await seedListenerEnv();
+      const secret = "whsec_test";
+      await setConfig(env.DB, "native.webhook_secret", secret);
+      const body = JSON.stringify(envelope("dsync.user.created", ada));
+
+      const res = await deliver(
+        env,
+        body,
+        signature(secret, body, SIGNED_AT + TOLERANCE_MS + 1_000),
+      );
+
+      expect(res.status).toBe(401);
+      expect(await listenerEvents(env.DB)).toHaveLength(0);
+      expect(await nativeUsers(env.DB)).toHaveLength(0);
+    });
+
+    it("rejects a timestamp signed in seconds rather than milliseconds", async () => {
+      freezeClock();
+      const { env } = await seedListenerEnv();
+      const secret = "whsec_test";
+      await setConfig(env.DB, "native.webhook_secret", secret);
+      const body = JSON.stringify(envelope("dsync.user.created", ada));
+
+      const res = await deliver(env, body, signature(secret, body, Math.floor(SIGNED_AT / 1000)));
+
+      expect(res.status).toBe(401);
+      expect(await nativeUsers(env.DB)).toHaveLength(0);
     });
 
     it("accepts unsigned deliveries while no secret is configured", async () => {
@@ -668,14 +752,17 @@ describe("dsync listener", () => {
 
   describe("webhook auth edge cases", () => {
     it("accepts a signature whose hex digest is uppercase", async () => {
+      freezeClock();
       const { env } = await seedListenerEnv();
       const secret = "whsec_test";
       await setConfig(env.DB, "native.webhook_secret", secret);
       const body = JSON.stringify(envelope("dsync.user.created", ada));
-      const t = "1753900000";
-      const mac = createHmac("sha256", secret).update(`${t}.${body}`).digest("hex").toUpperCase();
+      const mac = createHmac("sha256", secret)
+        .update(`${SIGNED_AT}.${body}`)
+        .digest("hex")
+        .toUpperCase();
 
-      const res = await deliver(env, body, { "WorkOS-Signature": `t=${t},v1=${mac}` });
+      const res = await deliver(env, body, { "WorkOS-Signature": `t=${SIGNED_AT},v1=${mac}` });
 
       expect(res.status).toBe(200);
       expect((await lastEvent(env.DB)).action).toBe("applied");

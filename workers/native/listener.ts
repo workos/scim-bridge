@@ -8,6 +8,17 @@ const GROUP_SCHEMA = "urn:ietf:params:scim:core:2.0:Group";
 
 type Json = Record<string, unknown>;
 
+/**
+ * How far the signed `t=` may sit from our own clock before a delivery is
+ * refused. WorkOS signs `t` in epoch MILLISECONDS. The window is symmetric: an
+ * old signature can't be replayed forever, and a pre-dated one can't reserve a
+ * replay slot in the future. Five minutes is generous enough that ordinary
+ * clock drift on the host running the bridge doesn't reject real deliveries.
+ */
+const SIGNATURE_TOLERANCE_MS = 5 * 60 * 1000;
+
+type SignatureResult = "valid" | "invalid" | "stale";
+
 interface Outcome {
   action: "applied" | "skipped" | "ignored";
   detail: string;
@@ -19,10 +30,16 @@ export async function handleDsyncWebhook(request: Request, db: D1Database): Prom
 
   const secret = (await getConfig(db, "native.webhook_secret")) ?? "";
   if (secret !== "") {
-    const valid = await verifySignature(secret, request.headers.get("WorkOS-Signature"), rawBody);
-    if (!valid) {
+    const result = await verifySignature(secret, request.headers.get("WorkOS-Signature"), rawBody);
+    if (result !== "valid") {
       return Response.json(
-        { received: false, error: "Webhook signature verification failed." },
+        {
+          received: false,
+          error:
+            result === "stale"
+              ? "Webhook timestamp is outside the 5 minute tolerance window — check this host's clock."
+              : "Webhook signature verification failed.",
+        },
         { status: 401 },
       );
     }
@@ -601,13 +618,19 @@ async function recordEvent(
   );
 }
 
+/**
+ * Freshness is only reported to a caller that already proved it holds the
+ * secret, so the distinct "stale" answer can't be used as an oracle by an
+ * unauthenticated caller.
+ */
 async function verifySignature(
   secret: string,
   header: string | null,
   rawBody: string,
-): Promise<boolean> {
+  now: number = Date.now(),
+): Promise<SignatureResult> {
   const match = header?.match(/t=(\d+)\s*,\s*v1=([0-9a-fA-F]+)/);
-  if (!match) return false;
+  if (!match) return "invalid";
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
     "raw",
@@ -618,7 +641,8 @@ async function verifySignature(
   );
   const mac = await crypto.subtle.sign("HMAC", key, encoder.encode(`${match[1]}.${rawBody}`));
   const expected = [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
-  return timingSafeEqual(expected, match[2].toLowerCase());
+  if (!timingSafeEqual(expected, match[2].toLowerCase())) return "invalid";
+  return Math.abs(now - Number(match[1])) <= SIGNATURE_TOLERANCE_MS ? "valid" : "stale";
 }
 
 export function timingSafeEqual(a: string, b: string): boolean {
