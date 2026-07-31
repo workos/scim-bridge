@@ -197,11 +197,20 @@ export async function action({
   }
 
   if (intent === "save-workos-directory-id") {
-    await setDirectoryWorkosDirectoryId(
-      env.DB,
-      directory.id,
-      String(form.get("workos_directory_id") ?? "").trim(),
-    );
+    try {
+      await setDirectoryWorkosDirectoryId(
+        env.DB,
+        directory.id,
+        String(form.get("workos_directory_id") ?? "").trim(),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        error: /unique/i.test(message)
+          ? "That WorkOS directory id is already assigned to another directory."
+          : message,
+      };
+    }
     return {};
   }
 

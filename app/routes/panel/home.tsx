@@ -96,14 +96,24 @@ export async function action({ context, request }: ActionFunctionArgs) {
     if (!name) {
       return { error: "The directory needs a name before it can be created." };
     }
-    const row = await insertDirectory(env.DB, {
-      name,
-      native_url: field("native_url"),
-      native_token: field("native_token"),
-      workos_url: field("workos_url"),
-      workos_token: field("workos_token"),
-      workos_directory_id: field("workos_directory_id"),
-    });
+    let row: { id: string } | null;
+    try {
+      row = await insertDirectory(env.DB, {
+        name,
+        native_url: field("native_url"),
+        native_token: field("native_token"),
+        workos_url: field("workos_url"),
+        workos_token: field("workos_token"),
+        workos_directory_id: field("workos_directory_id"),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        error: /unique/i.test(message)
+          ? "That WorkOS directory id is already assigned to another directory."
+          : message,
+      };
+    }
     if (!row) {
       return { error: "The directory could not be created. Check the database and retry." };
     }

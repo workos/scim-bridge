@@ -14,6 +14,9 @@ interface CacheEntry {
 }
 
 const cache = new Map<string, CacheEntry>();
+// Failed lookups back off for a TTL too, so a burst of events doesn't pay the
+// fetch timeout once per event while the endpoint is unreachable.
+const failedUntil = new Map<string, number>();
 
 /**
  * Read a directory's migration-mode status from the proxy's
@@ -33,8 +36,13 @@ export async function fetchDirectoryStatus(
   const now = Date.now();
   const cached = cache.get(directory.id);
   if (cached && cached.freshUntil > now) return cached.status;
+  if ((failedUntil.get(directory.id) ?? 0) > now) return null;
 
-  const base = (await getConfig(db, "proxy.public_url"))?.replace(/\/+$/, "");
+  // The bundled listener runs in the proxy's own process, so loopback is the
+  // reliable route; the public URL may only resolve outside the container.
+  const base = (
+    (await getConfig(db, "proxy.loopback_url")) ?? (await getConfig(db, "proxy.public_url"))
+  )?.replace(/\/+$/, "");
   if (!base) return null;
   try {
     const response = await fetch(`${base}/status/directories/${encodeURIComponent(directory.id)}`, {
@@ -48,7 +56,10 @@ export async function fetchDirectoryStatus(
       cached.freshUntil = now + TTL_MS;
       return cached.status;
     }
-    if (!response.ok) return null;
+    if (!response.ok) {
+      failedUntil.set(directory.id, now + TTL_MS);
+      return null;
+    }
     const status = (await response.json()) as DirectoryStatus;
     cache.set(directory.id, {
       status,
@@ -57,6 +68,7 @@ export async function fetchDirectoryStatus(
     });
     return status;
   } catch {
+    failedUntil.set(directory.id, now + TTL_MS);
     return null;
   }
 }
