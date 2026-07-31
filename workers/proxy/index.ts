@@ -322,6 +322,24 @@ async function workosOnly(
   }
   applyWorkosLeg(log, workos);
 
+  // Prune the mapping the same way the dual-write mirror does, so the table
+  // never claims a deleted resource is live. A 404 counts: the resource is gone
+  // on the WorkOS side either way.
+  if (method === "DELETE" && kind && scimPath.id) {
+    if (isSuccess(workos.status) || workos.status === 404) {
+      // The WorkOS delete already committed, so a failed prune must not turn a
+      // completed delete into an error for the IdP — log it and let the next
+      // write self-heal the row.
+      try {
+        await deleteMapping(env.DB, directory.id, kind, scimPath.id);
+      } catch (error) {
+        log.error = `id mapping prune failed: ${errorMessage(error)}`;
+      }
+    } else {
+      log.error = `WorkOS DELETE returned ${workos.status}; id mapping kept for repair`;
+    }
+  }
+
   if (!kind || !toNative || method === "POST") {
     return finish(upstreamResponse(workos));
   }
