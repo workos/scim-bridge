@@ -1082,6 +1082,29 @@ describe("dsync listener", () => {
       ]);
     });
 
+    it("keeps a promoted secondary's own labels", async () => {
+      const { env } = await seedListenerEnv();
+      await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
+      const seeded = (await nativeUsers(env.DB))[0];
+      const resource = JSON.parse(seeded.resource);
+      resource.emails = [
+        { value: "ada@example.com", primary: true, type: "work" },
+        { value: "ada@home.example.com", type: "home" },
+      ];
+      await env.DB.prepare("UPDATE native_users SET resource = ? WHERE id = ?")
+        .bind(JSON.stringify(resource), seeded.id)
+        .run();
+
+      await deliver(
+        env,
+        envelope("dsync.user.updated", { ...ada, email: "ada@home.example.com" }, { at: T2 }),
+      );
+
+      expect(JSON.parse((await nativeUsers(env.DB))[0].resource).emails).toEqual([
+        { value: "ada@home.example.com", primary: true, type: "home" },
+      ]);
+    });
+
     it("mirrors an emails array the event carries", async () => {
       const { env } = await seedListenerEnv();
       await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));

@@ -470,11 +470,13 @@ function emailsFromEvent(data: Json, base: unknown): Json[] | null {
   if (!email) return null;
   const stored = emailEntries(base);
   const previousPrimary = stored.find((entry) => entry.primary === true) ?? stored[0];
+  // Promoting an address already stored as a secondary keeps that entry's own
+  // labels (`type`, `display`); a brand-new address inherits the old primary's.
+  const promoted = stored.find((entry) => asString(entry.value) === email);
   const secondaries = stored.filter(
     (entry) => entry !== previousPrimary && asString(entry.value) !== email,
   );
-  // Keep any labels (`type`, `display`) the stored primary carried.
-  return [{ ...previousPrimary, value: email, primary: true }, ...secondaries];
+  return [{ ...(promoted ?? previousPrimary), value: email, primary: true }, ...secondaries];
 }
 
 function emailEntries(emails: unknown): Json[] {
