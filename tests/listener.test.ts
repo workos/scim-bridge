@@ -33,6 +33,22 @@ function envelope(event: string, data: unknown, opts: EnvelopeOptions = {}) {
   };
 }
 
+/** Epoch ms the signature fixtures sign at — tests freeze the clock here so the
+ *  deliveries land inside the listener's freshness window. */
+const SIGNED_AT = Date.parse(T1);
+const TOLERANCE_MS = 5 * 60 * 1000;
+
+/** A `WorkOS-Signature` header for `body`, signed at `t` (epoch ms, as WorkOS sends it). */
+function signature(secret: string, body: string, t: number = SIGNED_AT): Record<string, string> {
+  const mac = createHmac("sha256", secret).update(`${t}.${body}`).digest("hex");
+  return { "WorkOS-Signature": `t=${t},v1=${mac}` };
+}
+
+function freezeClock(at: number = SIGNED_AT): void {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(at);
+}
+
 function webhookRequest(body: string, headers: Record<string, string> = {}): Request {
   return new Request("https://native.test/webhooks/dsync", { method: "POST", headers, body });
 }
@@ -138,31 +154,99 @@ describe("dsync listener", () => {
     });
 
     it("rejects a tampered signature", async () => {
+      freezeClock();
       const { env } = await seedListenerEnv();
       await setConfig(env.DB, "native.webhook_secret", "whsec_test");
       const body = JSON.stringify(envelope("dsync.user.created", ada));
-      const mac = createHmac("sha256", "wrong-secret").update(`1753900000.${body}`).digest("hex");
 
-      const res = await deliver(env, body, { "WorkOS-Signature": `t=1753900000,v1=${mac}` });
+      const res = await deliver(env, body, signature("wrong-secret", body));
 
       expect(res.status).toBe(401);
       expect(await nativeUsers(env.DB)).toHaveLength(0);
     });
 
     it("accepts a correctly signed delivery", async () => {
+      freezeClock();
       const { env } = await seedListenerEnv();
       const secret = "whsec_test";
       await setConfig(env.DB, "native.webhook_secret", secret);
       const body = JSON.stringify(envelope("dsync.user.created", ada));
-      const t = "1753900000";
-      const mac = createHmac("sha256", secret).update(`${t}.${body}`).digest("hex");
 
-      const res = await deliver(env, body, { "WorkOS-Signature": `t=${t},v1=${mac}` });
+      const res = await deliver(env, body, signature(secret, body));
 
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ received: true });
       expect((await lastEvent(env.DB)).action).toBe("applied");
       expect(await nativeUsers(env.DB)).toHaveLength(1);
+    });
+
+    it("rejects a validly signed delivery replayed after the tolerance window", async () => {
+      freezeClock();
+      const { env } = await seedListenerEnv();
+      const secret = "whsec_test";
+      await setConfig(env.DB, "native.webhook_secret", secret);
+      const body = JSON.stringify(envelope("dsync.user.created", ada));
+      const signed = signature(secret, body);
+
+      // The same capture is replayed one second past the window.
+      vi.setSystemTime(SIGNED_AT + TOLERANCE_MS + 1_000);
+      const res = await deliver(env, body, signed);
+
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({
+        received: false,
+        error:
+          "Webhook timestamp is outside the 5 minute tolerance window — check this host's clock.",
+      });
+      // Same as a bad MAC: nothing applied, nothing logged.
+      expect(await listenerEvents(env.DB)).toHaveLength(0);
+      expect(await nativeUsers(env.DB)).toHaveLength(0);
+    });
+
+    it("accepts a delivery signed at the far edge of the tolerance window", async () => {
+      freezeClock();
+      const { env } = await seedListenerEnv();
+      const secret = "whsec_test";
+      await setConfig(env.DB, "native.webhook_secret", secret);
+      const body = JSON.stringify(envelope("dsync.user.created", ada));
+      const signed = signature(secret, body);
+
+      vi.setSystemTime(SIGNED_AT + TOLERANCE_MS);
+      const res = await deliver(env, body, signed);
+
+      expect(res.status).toBe(200);
+      expect(await nativeUsers(env.DB)).toHaveLength(1);
+    });
+
+    it("rejects a delivery pre-dated beyond the tolerance window", async () => {
+      freezeClock();
+      const { env } = await seedListenerEnv();
+      const secret = "whsec_test";
+      await setConfig(env.DB, "native.webhook_secret", secret);
+      const body = JSON.stringify(envelope("dsync.user.created", ada));
+
+      const res = await deliver(
+        env,
+        body,
+        signature(secret, body, SIGNED_AT + TOLERANCE_MS + 1_000),
+      );
+
+      expect(res.status).toBe(401);
+      expect(await listenerEvents(env.DB)).toHaveLength(0);
+      expect(await nativeUsers(env.DB)).toHaveLength(0);
+    });
+
+    it("rejects a timestamp signed in seconds rather than milliseconds", async () => {
+      freezeClock();
+      const { env } = await seedListenerEnv();
+      const secret = "whsec_test";
+      await setConfig(env.DB, "native.webhook_secret", secret);
+      const body = JSON.stringify(envelope("dsync.user.created", ada));
+
+      const res = await deliver(env, body, signature(secret, body, Math.floor(SIGNED_AT / 1000)));
+
+      expect(res.status).toBe(401);
+      expect(await nativeUsers(env.DB)).toHaveLength(0);
     });
 
     it("accepts unsigned deliveries while no secret is configured", async () => {
@@ -668,14 +752,17 @@ describe("dsync listener", () => {
 
   describe("webhook auth edge cases", () => {
     it("accepts a signature whose hex digest is uppercase", async () => {
+      freezeClock();
       const { env } = await seedListenerEnv();
       const secret = "whsec_test";
       await setConfig(env.DB, "native.webhook_secret", secret);
       const body = JSON.stringify(envelope("dsync.user.created", ada));
-      const t = "1753900000";
-      const mac = createHmac("sha256", secret).update(`${t}.${body}`).digest("hex").toUpperCase();
+      const mac = createHmac("sha256", secret)
+        .update(`${SIGNED_AT}.${body}`)
+        .digest("hex")
+        .toUpperCase();
 
-      const res = await deliver(env, body, { "WorkOS-Signature": `t=${t},v1=${mac}` });
+      const res = await deliver(env, body, { "WorkOS-Signature": `t=${SIGNED_AT},v1=${mac}` });
 
       expect(res.status).toBe(200);
       expect((await lastEvent(env.DB)).action).toBe("applied");
@@ -757,13 +844,15 @@ describe("dsync listener", () => {
       expect(await nativeUsers(env.DB)).toHaveLength(0);
     });
 
-    it("treats a redelivery of an event first seen while inert as a duplicate after cutover", async () => {
-      // Pins current behavior: the inert 'ignored' row records the event_id, so
-      // a post-cutover retry of the same delivery is deduplicated rather than
-      // applied — cutover relies on the backfill, not on webhook retries.
+    it("applies a redelivery of an event first seen while inert after cutover", async () => {
+      // A delivery logged only as 'ignored' while the listener was inert does
+      // not count as a duplicate, so a post-cutover redelivery re-evaluates
+      // under the current mode and applies — an event straddling the cutover is
+      // no longer stranded waiting on the backfill.
       const { env, directory } = await seedListenerEnv({ mode: "passthrough" });
       const event = envelope("dsync.user.created", ada, { id: "event_precut", at: T1 });
       await deliver(env, event);
+      expect((await lastEvent(env.DB)).action).toBe("ignored");
 
       await env.DB.prepare("UPDATE scim_directories SET mode = 'workos-only' WHERE id = ?")
         .bind(directory.id)
@@ -771,8 +860,28 @@ describe("dsync listener", () => {
       await deliver(env, event);
 
       const row = await lastEvent(env.DB);
+      expect(row.action).toBe("applied");
+      expect(row.event_id).toBe("event_precut");
+      expect(await nativeUsers(env.DB)).toHaveLength(1);
+    });
+
+    it("still drops a stale redelivery superseded by a newer inert event after cutover", async () => {
+      // The version ledger advances even while inert, so a redelivery whose own
+      // timeline was overtaken by a newer pre-cutover event is still gated as
+      // out-of-order rather than resurrecting superseded state.
+      const { env, directory } = await seedListenerEnv({ mode: "passthrough" });
+      const stale = envelope("dsync.user.created", ada, { id: "event_stale", at: T1 });
+      await deliver(env, stale);
+      await deliver(env, envelope("dsync.user.updated", ada, { id: "event_newer", at: T3 }));
+
+      await env.DB.prepare("UPDATE scim_directories SET mode = 'workos-only' WHERE id = ?")
+        .bind(directory.id)
+        .run();
+      await deliver(env, stale);
+
+      const row = await lastEvent(env.DB);
       expect(row.action).toBe("skipped");
-      expect(row.detail).toBe("duplicate delivery");
+      expect(row.detail).toBe("superseded by a newer event (out-of-order delivery)");
       expect(await nativeUsers(env.DB)).toHaveLength(0);
     });
   });
@@ -1009,7 +1118,7 @@ describe("dsync listener", () => {
       expect((await nativeUsers(env.DB))[0].active).toBe(1);
     });
 
-    it("applies an attribute-only change as 'attributes updated' and keeps the original emails array", async () => {
+    it("applies an attribute-only change as 'attributes updated' and follows the new primary email", async () => {
       const { env } = await seedListenerEnv();
       await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
 
@@ -1029,11 +1138,128 @@ describe("dsync listener", () => {
       expect(users[0].user_name).toBe("ada.king@example.com");
       const resource = JSON.parse(users[0].resource);
       expect(resource.name).toMatchObject({ givenName: "Ada", familyName: "King" });
-      // Pins current behavior: once the resource has an emails array it is
-      // never overwritten, so the SCIM emails lag a changed primary address
-      // even though userName follows it.
-      expect(resource.emails).toEqual([{ value: "ada@example.com", primary: true }]);
+      expect(resource.emails).toEqual([{ value: "ada.king@example.com", primary: true }]);
       expect(resource.userName).toBe("ada.king@example.com");
+    });
+
+    it("keeps upserting by idp_id once the email change breaks the userName match", async () => {
+      const { env } = await seedListenerEnv();
+      await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
+
+      await deliver(
+        env,
+        envelope("dsync.user.updated", { ...ada, email: "ada.king@example.com" }, { at: T2 }),
+      );
+      // Second change: the stored user_name is now the T2 address, so the
+      // userByUserName fallback cannot match either address — only the
+      // external_id lookup keeps this a single row.
+      await deliver(
+        env,
+        envelope("dsync.user.updated", { ...ada, email: "ada.byron@example.com" }, { at: T3 }),
+      );
+
+      const users = await nativeUsers(env.DB);
+      expect(users).toHaveLength(1);
+      expect(users[0].id).toBe("idp-user-1");
+      expect(users[0].user_name).toBe("ada.byron@example.com");
+      expect(JSON.parse(users[0].resource).emails).toEqual([
+        { value: "ada.byron@example.com", primary: true },
+      ]);
+    });
+
+    it("replaces the primary email but keeps the secondaries and their labels", async () => {
+      const { env } = await seedListenerEnv();
+      await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
+      const seeded = (await nativeUsers(env.DB))[0];
+      const resource = JSON.parse(seeded.resource);
+      resource.emails = [
+        { value: "ada@example.com", primary: true, type: "work" },
+        { value: "ada@home.example.com", type: "home" },
+      ];
+      await env.DB.prepare("UPDATE native_users SET resource = ? WHERE id = ?")
+        .bind(JSON.stringify(resource), seeded.id)
+        .run();
+
+      await deliver(
+        env,
+        envelope("dsync.user.updated", { ...ada, email: "ada.king@example.com" }, { at: T2 }),
+      );
+
+      expect(JSON.parse((await nativeUsers(env.DB))[0].resource).emails).toEqual([
+        { value: "ada.king@example.com", primary: true, type: "work" },
+        { value: "ada@home.example.com", type: "home" },
+      ]);
+    });
+
+    it("keeps a promoted secondary's own labels", async () => {
+      const { env } = await seedListenerEnv();
+      await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
+      const seeded = (await nativeUsers(env.DB))[0];
+      const resource = JSON.parse(seeded.resource);
+      resource.emails = [
+        { value: "ada@example.com", primary: true, type: "work" },
+        { value: "ada@home.example.com", type: "home" },
+      ];
+      await env.DB.prepare("UPDATE native_users SET resource = ? WHERE id = ?")
+        .bind(JSON.stringify(resource), seeded.id)
+        .run();
+
+      await deliver(
+        env,
+        envelope("dsync.user.updated", { ...ada, email: "ada@home.example.com" }, { at: T2 }),
+      );
+
+      expect(JSON.parse((await nativeUsers(env.DB))[0].resource).emails).toEqual([
+        { value: "ada@home.example.com", primary: true, type: "home" },
+      ]);
+    });
+
+    it("mirrors an emails array the event carries", async () => {
+      const { env } = await seedListenerEnv();
+      await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
+
+      await deliver(
+        env,
+        envelope(
+          "dsync.user.updated",
+          {
+            ...ada,
+            emails: [
+              { value: "ada@home.example.com" },
+              { value: "ada.king@example.com", primary: true },
+            ],
+          },
+          { at: T2 },
+        ),
+      );
+
+      const users = await nativeUsers(env.DB);
+      expect(users[0].user_name).toBe("ada.king@example.com");
+      expect(JSON.parse(users[0].resource).emails).toEqual([
+        { value: "ada@home.example.com" },
+        { value: "ada.king@example.com", primary: true },
+      ]);
+    });
+
+    it("leaves the stored emails alone for an event carrying no address", async () => {
+      const { env } = await seedListenerEnv();
+      await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
+
+      // A membership event's user object is partial: idp_id and username only.
+      await deliver(
+        env,
+        envelope(
+          "dsync.group.user_added",
+          { user: { idp_id: "idp-user-1", username: "ada@example.com" }, group: engineering },
+          { at: T2 },
+        ),
+      );
+
+      const users = await nativeUsers(env.DB);
+      expect(users).toHaveLength(1);
+      expect(JSON.parse(users[0].resource).emails).toEqual([
+        { value: "ada@example.com", primary: true },
+      ]);
     });
   });
 

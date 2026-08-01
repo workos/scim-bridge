@@ -8,6 +8,17 @@ const GROUP_SCHEMA = "urn:ietf:params:scim:core:2.0:Group";
 
 type Json = Record<string, unknown>;
 
+/**
+ * How far the signed `t=` may sit from our own clock before a delivery is
+ * refused. WorkOS signs `t` in epoch MILLISECONDS. The window is symmetric: an
+ * old signature can't be replayed forever, and a pre-dated one can't reserve a
+ * replay slot in the future. Five minutes is generous enough that ordinary
+ * clock drift on the host running the bridge doesn't reject real deliveries.
+ */
+const SIGNATURE_TOLERANCE_MS = 5 * 60 * 1000;
+
+type SignatureResult = "valid" | "invalid" | "stale";
+
 interface Outcome {
   action: "applied" | "skipped" | "ignored";
   detail: string;
@@ -19,10 +30,16 @@ export async function handleDsyncWebhook(request: Request, db: D1Database): Prom
 
   const secret = (await getConfig(db, "native.webhook_secret")) ?? "";
   if (secret !== "") {
-    const valid = await verifySignature(secret, request.headers.get("WorkOS-Signature"), rawBody);
-    if (!valid) {
+    const result = await verifySignature(secret, request.headers.get("WorkOS-Signature"), rawBody);
+    if (result !== "valid") {
       return Response.json(
-        { received: false, error: "Webhook signature verification failed." },
+        {
+          received: false,
+          error:
+            result === "stale"
+              ? "Webhook timestamp is outside the 5 minute tolerance window — check this host's clock."
+              : "Webhook signature verification failed.",
+        },
         { status: 401 },
       );
     }
@@ -452,11 +469,36 @@ function userResourceFromEvent(
       ...(familyName ? { familyName } : {}),
     };
   }
-  const email = primaryEmail(data.emails) ?? asString(data.email);
-  if (email && !Array.isArray(base.emails)) {
-    resource.emails = [{ value: email, primary: true }];
-  }
+  const emails = emailsFromEvent(data, base.emails);
+  if (emails) resource.emails = emails;
   return resource;
+}
+
+/** The emails array to store for a user, given a WorkOS event and whatever the
+ *  stored resource already had. An event that carries an `emails` array is
+ *  mirrored wholesale; one that carries only the top-level `email` replaces the
+ *  primary entry and keeps the secondaries. Events with no address at all —
+ *  notably the partial `user` object on a membership event — leave the stored
+ *  emails untouched rather than clearing them. */
+function emailsFromEvent(data: Json, base: unknown): Json[] | null {
+  const fromEvent = emailEntries(data.emails);
+  if (fromEvent.length > 0) return fromEvent;
+  const email = asString(data.email);
+  if (!email) return null;
+  const stored = emailEntries(base);
+  const previousPrimary = stored.find((entry) => entry.primary === true) ?? stored[0];
+  // Promoting an address already stored as a secondary keeps that entry's own
+  // labels (`type`, `display`); a brand-new address inherits the old primary's.
+  const promoted = stored.find((entry) => asString(entry.value) === email);
+  const secondaries = stored.filter(
+    (entry) => entry !== previousPrimary && asString(entry.value) !== email,
+  );
+  return [{ ...(promoted ?? previousPrimary), value: email, primary: true }, ...secondaries];
+}
+
+function emailEntries(emails: unknown): Json[] {
+  if (!Array.isArray(emails)) return [];
+  return emails.map(asObject).filter((entry): entry is Json => entry !== null);
 }
 
 /** Derive a stable user name from a WorkOS directory_user event. WorkOS sends
@@ -561,10 +603,17 @@ async function directoryModeForEvent(db: D1Database, data: Json): Promise<string
 }
 
 async function isDuplicate(db: D1Database, eventId: string): Promise<boolean> {
+  // Only a delivery we actually processed (applied or skipped) counts as a
+  // duplicate. An event merely logged as `ignored` — e.g. one that arrived while
+  // the listener was inert pre-cutover — must be free to re-evaluate under the
+  // current mode when WorkOS redelivers it, or an event straddling the cutover
+  // could never be applied via webhook. A stale redelivery is still guarded by
+  // the version ledger, which the inert path advances.
   const row = await withD1Retry(() =>
     db
       .prepare(
-        "SELECT 1 AS one FROM listener_events WHERE event_id IS NOT NULL AND event_id = ? LIMIT 1",
+        "SELECT 1 AS one FROM listener_events " +
+          "WHERE event_id IS NOT NULL AND event_id = ? AND action <> 'ignored' LIMIT 1",
       )
       .bind(eventId)
       .first<{ one: number }>(),
@@ -601,13 +650,19 @@ async function recordEvent(
   );
 }
 
+/**
+ * Freshness is only reported to a caller that already proved it holds the
+ * secret, so the distinct "stale" answer can't be used as an oracle by an
+ * unauthenticated caller.
+ */
 async function verifySignature(
   secret: string,
   header: string | null,
   rawBody: string,
-): Promise<boolean> {
+  now: number = Date.now(),
+): Promise<SignatureResult> {
   const match = header?.match(/t=(\d+)\s*,\s*v1=([0-9a-fA-F]+)/);
-  if (!match) return false;
+  if (!match) return "invalid";
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
     "raw",
@@ -618,7 +673,8 @@ async function verifySignature(
   );
   const mac = await crypto.subtle.sign("HMAC", key, encoder.encode(`${match[1]}.${rawBody}`));
   const expected = [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
-  return timingSafeEqual(expected, match[2].toLowerCase());
+  if (!timingSafeEqual(expected, match[2].toLowerCase())) return "invalid";
+  return Math.abs(now - Number(match[1])) <= SIGNATURE_TOLERANCE_MS ? "valid" : "stale";
 }
 
 export function timingSafeEqual(a: string, b: string): boolean {
@@ -631,8 +687,7 @@ export function timingSafeEqual(a: string, b: string): boolean {
 }
 
 function primaryEmail(emails: unknown): string | null {
-  if (!Array.isArray(emails)) return null;
-  const entries = emails.map(asObject).filter((entry): entry is Json => entry !== null);
+  const entries = emailEntries(emails);
   const primary = entries.find((entry) => entry.primary === true) ?? entries[0];
   return primary ? asString(primary.value) : null;
 }
