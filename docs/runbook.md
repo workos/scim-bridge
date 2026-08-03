@@ -84,12 +84,19 @@ Wiring it up, per directory:
    `GET /status/directories/{id}` accepts for that token.
 3. In the WorkOS dashboard, point a webhook endpoint at
    `<PUBLIC_URL>/webhooks/dsync` and set its signing secret as `WEBHOOK_SECRET`.
+   The container refuses to start without one: the endpoint is publicly routable,
+   and an unverified listener would apply anything posted to it.
 
-The listener then applies events only once the bridge reports `workos-only` for
-that directory (see [listener-status.md](./listener-status.md)). If
-`BRIDGE_STATUS_URL` is unreachable it falls back to the seeded row, which stays
-at `passthrough` — events are logged as ignored rather than applied, so a
-cutover that looks inert is the first thing to check there.
+`DIRECTORIES_JSON` is the authoritative set, reconciled on every boot — rows it
+no longer declares are deleted, so removing a directory (or moving its token to a
+new directory id) takes effect on the next restart with no manual cleanup.
+
+The listener applies an event only when its `directory_id` matches a declared
+directory *and* the bridge reports `workos-only` for it (see
+[listener-status.md](./listener-status.md)). If `BRIDGE_STATUS_URL` is
+unreachable it falls back to the seeded row, which stays at `passthrough` —
+events are logged as ignored rather than applied, so a cutover that looks inert
+is the first thing to check there.
 
 ## Self-contained demo
 

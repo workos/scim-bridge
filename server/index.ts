@@ -42,7 +42,7 @@ const env: PocEnv = { DB };
 if (config.role === "native-app") {
   await seedNativeAppConfig(env, config);
   await seedNativeAppDirectories(env, config);
-  console.log(`Seeded ${config.directories.length} directory row(s) from DIRECTORIES_JSON`);
+  console.log(`Reconciled directories to the ${config.directories.length} in DIRECTORIES_JSON`);
   if (!config.bridgeStatusUrl) {
     console.log(
       "BRIDGE_STATUS_URL is unset: the listener can't read the bridge's status endpoint " +

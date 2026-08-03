@@ -2,9 +2,9 @@ import {
   getConfig,
   insertDirectory,
   listDirectories,
+  reconcileDirectories,
   setConfig,
   setDirectoryLogPersistence,
-  upsertDirectoryByWorkosId,
   type EnvDirectory,
 } from "../workers/shared/db";
 import type { PocEnv } from "../workers/shared/types";
@@ -102,6 +102,7 @@ function directories(value: string | undefined): EnvDirectory[] {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  const role = appRole(env.APP_ROLE);
   const port = Number(env.PORT ?? "8080");
   if (!Number.isFinite(port) || port <= 0) {
     throw new Error(`PORT must be a positive number; received "${env.PORT}".`);
@@ -109,9 +110,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const databasePath = env.DATABASE_PATH?.trim() || "/data/scim-bridge.db";
   const publicUrl = trimTrailingSlash(env.PUBLIC_URL?.trim() || `http://127.0.0.1:${port}`);
   const bridgeStatusUrl = env.BRIDGE_STATUS_URL?.trim();
+  const webhookSecret = env.WEBHOOK_SECRET?.trim() || null;
+  // Refuse to boot rather than serve /webhooks/dsync unauthenticated: the
+  // listener skips signature verification when it has no secret, so an
+  // internet-routable stand-in would apply any unsigned POST as a real WorkOS
+  // event. (Unlike BRIDGE_STATUS_URL, which only degrades to reading no status.)
+  if (role === "native-app" && !webhookSecret) {
+    throw new Error(
+      "WEBHOOK_SECRET is required when APP_ROLE=native-app: without it every unsigned " +
+        "POST to the publicly routable /webhooks/dsync would be applied as a genuine " +
+        "WorkOS event. Use the signing secret of the webhook endpoint in the WorkOS dashboard.",
+    );
+  }
 
   return {
-    role: appRole(env.APP_ROLE),
+    role,
     port,
     databasePath,
     publicUrl,
@@ -120,7 +133,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     panelAuthUser: env.PANEL_AUTH_USER?.trim() || null,
     panelAuthPassword: env.PANEL_AUTH_PASSWORD || null,
     nativeScimToken: env.NATIVE_SCIM_TOKEN?.trim() || null,
-    webhookSecret: env.WEBHOOK_SECRET?.trim() || null,
+    webhookSecret,
     bridgeStatusUrl: bridgeStatusUrl ? trimTrailingSlash(bridgeStatusUrl) : null,
     directories: directories(env.DIRECTORIES_JSON),
   };
@@ -159,6 +172,7 @@ export async function seedConfig(env: PocEnv, config: AppConfig): Promise<void> 
 export async function seedNativeAppConfig(env: PocEnv, config: AppConfig): Promise<void> {
   const db = env.DB;
   if (config.nativeScimToken) await setConfig(db, "native.scim_token", config.nativeScimToken);
+  // Always set in this role — loadConfig refuses to boot without it.
   if (config.webhookSecret) await setConfig(db, "native.webhook_secret", config.webhookSecret);
   // The listener's status client resolves the status endpoint from this
   // container's own `proxy.loopback_url ?? proxy.public_url`. Here the proxy is
@@ -175,17 +189,16 @@ export async function seedNativeAppConfig(env: PocEnv, config: AppConfig): Promi
 }
 
 /**
- * `native-app` role: mirror the directories from `DIRECTORIES_JSON` into
- * `scim_directories`, the table the listener resolves an event's directory and
- * proxy token from. Each row's id IS the WorkOS directory id, so the
- * `directory_id` an event carries both finds the row here and is an id the
- * bridge's status endpoint accepts for that token. Re-seeded on every boot: env
- * is authoritative, as with the config keys.
+ * `native-app` role: make `scim_directories` — the table the listener resolves
+ * an event's directory and proxy token from — match `DIRECTORIES_JSON` exactly.
+ * Each row's id IS the WorkOS directory id, so the `directory_id` an event
+ * carries both finds the row here and is an id the bridge's status endpoint
+ * accepts for that token. Env is authoritative, as with the config keys: a
+ * directory dropped from the var loses its row on the next boot, so it can no
+ * longer resolve an event or hold on to a proxy token.
  */
 export async function seedNativeAppDirectories(env: PocEnv, config: AppConfig): Promise<void> {
-  for (const directory of config.directories) {
-    await upsertDirectoryByWorkosId(env.DB, directory);
-  }
+  await reconcileDirectories(env.DB, config.directories);
 }
 
 /**

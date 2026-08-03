@@ -28,8 +28,9 @@ describe("APP_ROLE", () => {
     });
 
     it("accepts the native-app role, whitespace included", () => {
-      expect(loadConfig({ APP_ROLE: "native-app" }).role).toBe("native-app");
-      expect(loadConfig({ APP_ROLE: " native-app " }).role).toBe("native-app");
+      const env = { WEBHOOK_SECRET: "whsec_123" };
+      expect(loadConfig({ ...env, APP_ROLE: "native-app" }).role).toBe("native-app");
+      expect(loadConfig({ ...env, APP_ROLE: " native-app " }).role).toBe("native-app");
     });
 
     it("rejects an unknown role at boot", () => {
@@ -52,10 +53,20 @@ describe("APP_ROLE", () => {
       expect(config.bridgeStatusUrl).toBe("https://bridge.acme.com");
     });
 
-    it("leaves the native-app vars null when unset, panel auth included", () => {
-      const config = loadConfig({ APP_ROLE: "native-app" });
+    it("refuses the native-app role without a WEBHOOK_SECRET", () => {
+      expect(() => loadConfig({ APP_ROLE: "native-app" })).toThrow(
+        /WEBHOOK_SECRET is required when APP_ROLE=native-app/,
+      );
+      expect(() => loadConfig({ APP_ROLE: "native-app", WEBHOOK_SECRET: "  " })).toThrow(
+        /unsigned/,
+      );
+      // The bridge never serves /webhooks/dsync, so it boots without one.
+      expect(loadConfig({}).webhookSecret).toBeNull();
+    });
+
+    it("leaves the optional native-app vars null when unset, panel auth included", () => {
+      const config = loadConfig({ APP_ROLE: "native-app", WEBHOOK_SECRET: "whsec_123" });
       expect(config.nativeScimToken).toBeNull();
-      expect(config.webhookSecret).toBeNull();
       expect(config.bridgeStatusUrl).toBeNull();
       expect(config.panelAuthUser).toBeNull();
       expect(config.panelAuthPassword).toBeNull();
@@ -65,6 +76,7 @@ describe("APP_ROLE", () => {
     it("parses DIRECTORIES_JSON, defaulting a missing name to the directory id", () => {
       const config = loadConfig({
         APP_ROLE: "native-app",
+        WEBHOOK_SECRET: "whsec_123",
         DIRECTORIES_JSON: JSON.stringify([
           { workos_directory_id: "directory_01A", proxy_token: "tok_a", name: "Acme" },
           { workos_directory_id: "directory_01B", proxy_token: "tok_b" },
@@ -105,16 +117,15 @@ describe("APP_ROLE", () => {
       expect(await getConfig(env.DB, "mock_workos.emit_dsync")).toBe("false");
     });
 
-    it("keeps the migration's own seeds for vars that are unset", async () => {
+    it("keeps the migration's own seeds for the optional vars when unset", async () => {
       const env = createEnv();
       const seeded = await getConfig(env.DB, "native.scim_token");
       await seedNativeAppConfig(
         env,
-        nativeAppConfig({ nativeScimToken: null, webhookSecret: null, bridgeStatusUrl: null }),
+        nativeAppConfig({ nativeScimToken: null, bridgeStatusUrl: null }),
       );
 
       expect(await getConfig(env.DB, "native.scim_token")).toBe(seeded);
-      expect(await getConfig(env.DB, "native.webhook_secret")).toBe("");
       expect(await getConfig(env.DB, "proxy.public_url")).toBe("http://localhost:8787");
     });
   });
@@ -161,6 +172,63 @@ describe("APP_ROLE", () => {
       expect(rows).toHaveLength(1);
       expect(rows[0].proxy_token).toBe("tok_rotated");
     });
+
+    it("boots cleanly when a proxy token moves to a different directory id", async () => {
+      const env = createEnv();
+      await seedNativeAppDirectories(
+        env,
+        nativeAppConfig({
+          directories: [
+            { workos_directory_id: "directory_01OLD", proxy_token: "tok_a", name: "A" },
+          ],
+        }),
+      );
+      // proxy_token is UNIQUE table-wide, so re-creating the directory under a
+      // new id with the same token must not collide with the row holding it.
+      await seedNativeAppDirectories(
+        env,
+        nativeAppConfig({
+          directories: [
+            { workos_directory_id: "directory_01NEW", proxy_token: "tok_a", name: "A" },
+          ],
+        }),
+      );
+
+      const rows = await listDirectories(env.DB);
+      expect(rows.map((d) => d.id)).toEqual(["directory_01NEW"]);
+      expect(rows[0].proxy_token).toBe("tok_a");
+    });
+
+    it("drops a directory removed from DIRECTORIES_JSON", async () => {
+      const env = createEnv();
+      await seedNativeAppDirectories(
+        env,
+        nativeAppConfig({
+          directories: [
+            { workos_directory_id: "directory_01A", proxy_token: "tok_a", name: "Acme" },
+            { workos_directory_id: "directory_01B", proxy_token: "tok_b", name: "Beta" },
+          ],
+        }),
+      );
+      await seedNativeAppDirectories(
+        env,
+        nativeAppConfig({
+          directories: [
+            { workos_directory_id: "directory_01A", proxy_token: "tok_a", name: "Acme" },
+          ],
+        }),
+      );
+
+      expect((await listDirectories(env.DB)).map((d) => d.id)).toEqual(["directory_01A"]);
+    });
+
+    it("drops every row when the var is emptied", async () => {
+      const env = createEnv();
+      await seedNativeAppDirectories(env, nativeAppConfig());
+      await seedNativeAppDirectories(env, nativeAppConfig({ directories: [] }));
+
+      expect(await listDirectories(env.DB)).toEqual([]);
+    });
   });
 
   describe("the seeded container as the native app", () => {
@@ -170,14 +238,40 @@ describe("APP_ROLE", () => {
       vi.useRealTimers();
     });
 
-    async function seedNativeApp(): Promise<PocEnv> {
+    async function seedNativeApp(overrides: Partial<AppConfig> = {}): Promise<PocEnv> {
       const env = createEnv();
       // The fake upstreams only answer the two known hosts, so the bridge is
       // reachable at the native host's base.
-      const config = nativeAppConfig({ bridgeStatusUrl: NATIVE_URL });
+      const config = nativeAppConfig({ bridgeStatusUrl: NATIVE_URL, ...overrides });
       await seedNativeAppConfig(env, config);
       await seedNativeAppDirectories(env, config);
       return env;
+    }
+
+    /** Deliver the fixture event (for directory_01A) as WorkOS would: signed with
+     *  WEBHOOK_SECRET, at a frozen clock inside the freshness window. */
+    function deliverSigned(env: PocEnv): Promise<Response> {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(SIGNED_AT);
+      const mac = createHmac("sha256", "whsec_123").update(`${SIGNED_AT}.${EVENT}`).digest("hex");
+      return nativeWorker.fetch(
+        new Request("https://app.test/webhooks/dsync", {
+          method: "POST",
+          headers: { "WorkOS-Signature": `t=${SIGNED_AT},v1=${mac}` },
+          body: EVENT,
+        }),
+        env,
+        createCtx(),
+      );
+    }
+
+    async function listenerActions(env: PocEnv): Promise<string[]> {
+      const { results } = await env.DB.prepare(
+        "SELECT action FROM listener_events ORDER BY id",
+      ).all<{
+        action: string;
+      }>();
+      return results.map((r) => r.action);
     }
 
     it("accepts NATIVE_SCIM_TOKEN as the bearer on its SCIM endpoint", async () => {
@@ -217,8 +311,6 @@ describe("APP_ROLE", () => {
 
     it("asks the bridge for the status of the directory an event carries", async () => {
       const env = await seedNativeApp();
-      vi.useFakeTimers({ toFake: ["Date"] });
-      vi.setSystemTime(SIGNED_AT);
       fake = installFakeUpstreams();
       fake.route("native", "GET", "/status/directories/", (call) => {
         expect(call.headers.get("Authorization")).toBe("Bearer tok_a");
@@ -231,25 +323,53 @@ describe("APP_ROLE", () => {
         });
       });
 
-      const mac = createHmac("sha256", "whsec_123").update(`${SIGNED_AT}.${EVENT}`).digest("hex");
-      const res = await nativeWorker.fetch(
-        new Request("https://app.test/webhooks/dsync", {
-          method: "POST",
-          headers: { "WorkOS-Signature": `t=${SIGNED_AT},v1=${mac}` },
-          body: EVENT,
-        }),
-        env,
-        createCtx(),
-      );
+      const res = await deliverSigned(env);
 
       expect(res.status).toBe(200);
       // The row id doubles as the path segment, so the bridge resolves the
       // directory by its WorkOS id without this container knowing the dir_… one.
       expect(fake.callsTo("native")[0]?.path).toBe("/status/directories/directory_01A");
-      const { results } = await env.DB.prepare("SELECT action FROM listener_events").all<{
-        action: string;
-      }>();
-      expect(results.map((r) => r.action)).toEqual(["applied"]);
+      expect(await listenerActions(env)).toEqual(["applied"]);
+    });
+
+    it("ignores an event whose directory_id matches no seeded directory", async () => {
+      // One directory, but a different one than the event names: the lone-row
+      // shortcut must not adopt another directory's users.
+      const env = await seedNativeApp({
+        directories: [{ workos_directory_id: "directory_01B", proxy_token: "tok_b", name: "Beta" }],
+      });
+      fake = installFakeUpstreams();
+
+      const res = await deliverSigned(env);
+
+      expect(res.status).toBe(200);
+      expect(await listenerActions(env)).toEqual(["ignored"]);
+      // Resolution fails before any status lookup, so no credential is spent.
+      expect(fake.calls).toHaveLength(0);
+      const { results } = await env.DB.prepare("SELECT id FROM native_users").all();
+      expect(results).toHaveLength(0);
+    });
+
+    it("stops applying events for a directory dropped from DIRECTORIES_JSON", async () => {
+      const env = await seedNativeApp();
+      fake = installFakeUpstreams();
+      fake.route("native", "GET", "/status/directories/", () =>
+        Response.json({
+          directory_id: "directory_01A",
+          workos_directory_id: "directory_01A",
+          mode: "workos-only",
+          native_authoritative: false,
+          updated_at: "2026-08-03 12:00:00",
+        }),
+      );
+      // The next boot no longer declares it.
+      await seedNativeAppDirectories(env, nativeAppConfig({ directories: [] }));
+
+      const res = await deliverSigned(env);
+
+      expect(res.status).toBe(200);
+      expect(await listenerActions(env)).toEqual(["ignored"]);
+      expect(fake.calls).toHaveLength(0);
     });
   });
 });

@@ -130,33 +130,49 @@ export interface EnvDirectory {
 }
 
 /**
- * Create or update a directory whose primary key IS its WorkOS directory id, so
- * one value both resolves the row from an event's `directory_id` and works as
- * `{id}` in the bridge's `GET /status/directories/{id}` (which accepts either
- * side's id). Carries no upstream URLs or tokens — nothing here proxies SCIM;
- * the row exists so a listener can find its directory and status credential.
- * The mode is left at the table default (`passthrough`), the safe answer if the
- * status endpoint is ever unreachable: the listener stays inert.
+ * Make `scim_directories` match a declared set exactly: drop every row that is
+ * no longer declared, then create or update the declared ones. Each row's
+ * primary key IS its WorkOS directory id, so one value both resolves the row
+ * from an event's `directory_id` and works as `{id}` in the bridge's
+ * `GET /status/directories/{id}` (which accepts either side's id). Rows carry no
+ * upstream URLs or tokens — nothing here proxies SCIM; a row exists so a
+ * listener can find its directory and status credential. The mode is left at the
+ * table default (`passthrough`), the safe answer if the status endpoint is ever
+ * unreachable: the listener stays inert.
+ *
+ * One transaction, and the deletes run first: `proxy_token` is UNIQUE across the
+ * table, so a token that moved to a different directory id would otherwise
+ * collide with the row still holding it.
  */
-export async function upsertDirectoryByWorkosId(
+export async function reconcileDirectories(
   db: D1Database,
-  directory: EnvDirectory,
+  directories: EnvDirectory[],
 ): Promise<void> {
+  const ids = directories.map((d) => d.workos_directory_id);
+  const undeclared = ids.length
+    ? db
+        .prepare(`DELETE FROM scim_directories WHERE id NOT IN (${ids.map(() => "?").join(", ")})`)
+        .bind(...ids)
+    : db.prepare("DELETE FROM scim_directories");
   await withD1Retry(() =>
-    db
-      .prepare(
-        "INSERT INTO scim_directories (id, name, proxy_token, workos_directory_id) " +
-          "VALUES (?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET " +
-          "name = excluded.name, proxy_token = excluded.proxy_token, " +
-          "updated_at = datetime('now')",
-      )
-      .bind(
-        directory.workos_directory_id,
-        directory.name,
-        directory.proxy_token,
-        directory.workos_directory_id,
-      )
-      .run(),
+    db.batch([
+      undeclared,
+      ...directories.map((directory) =>
+        db
+          .prepare(
+            "INSERT INTO scim_directories (id, name, proxy_token, workos_directory_id) " +
+              "VALUES (?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET " +
+              "name = excluded.name, proxy_token = excluded.proxy_token, " +
+              "updated_at = datetime('now')",
+          )
+          .bind(
+            directory.workos_directory_id,
+            directory.name,
+            directory.proxy_token,
+            directory.workos_directory_id,
+          ),
+      ),
+    ]),
   );
 }
 
