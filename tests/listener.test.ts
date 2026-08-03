@@ -334,6 +334,24 @@ describe("dsync listener", () => {
       expect(await nativeUsers(env.DB)).toHaveLength(1);
     });
 
+    it("leaves an event unapplied when the only directory names a different WorkOS id", async () => {
+      // The lone-directory shortcut exists for the bundled simulator, whose row
+      // is never linked to a WorkOS directory; a linked row must match the event.
+      const { env } = await seedListenerEnv({
+        mode: "workos-only",
+        workos_directory_id: "directory_123",
+      });
+
+      await deliver(env, envelope("dsync.user.created", { ...ada, directory_id: "directory_999" }));
+
+      const event = await lastEvent(env.DB);
+      expect(event.action).toBe("ignored");
+      expect(event.detail).toBe(
+        "listener inactive in pre-cutover mode — the proxy writes the native app directly until cutover",
+      );
+      expect(await nativeUsers(env.DB)).toHaveLength(0);
+    });
+
     it("prefers the mode from the proxy status endpoint over the directory row", async () => {
       const { env, directory } = await seedListenerEnv({ mode: "passthrough" });
       await setConfig(env.DB, "proxy.loopback_url", NATIVE_URL);

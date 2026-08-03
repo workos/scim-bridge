@@ -2,10 +2,21 @@ import {
   getConfig,
   insertDirectory,
   listDirectories,
+  reconcileDirectories,
   setConfig,
   setDirectoryLogPersistence,
+  type EnvDirectory,
 } from "../workers/shared/db";
 import type { PocEnv } from "../workers/shared/types";
+
+/**
+ * Which half of a migration deployment this container runs. The image ships
+ * both sides: `bridge` is the real product (migration proxy + control panel),
+ * `native-app` runs only the bundled native app worker so the same image can
+ * stand in for the customer's own application during an end-to-end run.
+ */
+export const APP_ROLES = ["bridge", "native-app"] as const;
+export type AppRole = (typeof APP_ROLES)[number];
 
 /**
  * Global configuration for the container, read from environment variables.
@@ -14,6 +25,8 @@ import type { PocEnv } from "../workers/shared/types";
  * parameters live here.
  */
 export interface AppConfig {
+  /** Which half of the deployment this container runs. */
+  role: AppRole;
   /** HTTP port the server listens on. */
   port: number;
   /** Path to the SQLite database file (mount a volume here to persist). */
@@ -27,6 +40,15 @@ export interface AppConfig {
   /** Optional HTTP Basic credentials guarding the control panel. */
   panelAuthUser: string | null;
   panelAuthPassword: string | null;
+  /** `native-app` role: bearer token the bridge presents to this app's /scim/v2. */
+  nativeScimToken: string | null;
+  /** `native-app` role: HMAC secret of the WorkOS webhook endpoint feeding /webhooks/dsync. */
+  webhookSecret: string | null;
+  /** `native-app` role: base URL of the BRIDGE, which serves the status endpoint. */
+  bridgeStatusUrl: string | null;
+  /** Directories declared by env. Only the `native-app` role seeds them; the
+   *  bridge imports its own through the control panel. */
+  directories: EnvDirectory[];
 }
 
 function bool(value: string | undefined, fallback = false): boolean {
@@ -38,15 +60,71 @@ function trimTrailingSlash(url: string): string {
   return url.replace(/\/+$/, "");
 }
 
+function appRole(value: string | undefined): AppRole {
+  const role = value?.trim() || "bridge";
+  if (!(APP_ROLES as readonly string[]).includes(role)) {
+    throw new Error(`APP_ROLE must be one of ${APP_ROLES.join(", ")}; received "${value}".`);
+  }
+  return role as AppRole;
+}
+
+/**
+ * Parse `DIRECTORIES_JSON`: the directories a `native-app` container serves,
+ * `[{ "workos_directory_id": "directory_…", "proxy_token": "…", "name": "…" }]`.
+ * A real customer's app already knows these two values per directory (the id
+ * DSync events carry, and the proxy token they configured their IdP with), so
+ * the stand-in is told them the same way instead of growing a panel of its own.
+ */
+function directories(value: string | undefined): EnvDirectory[] {
+  const raw = value?.trim();
+  if (!raw) return [];
+  const shape = 'DIRECTORIES_JSON must be a JSON array of {"workos_directory_id","proxy_token"}';
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`${shape}; it is not valid JSON (${(error as Error).message}).`);
+  }
+  if (!Array.isArray(parsed)) throw new Error(`${shape}; received ${typeof parsed}.`);
+  return parsed.map((entry, index) => {
+    const record = (entry ?? {}) as Record<string, unknown>;
+    const id = typeof record.workos_directory_id === "string" ? record.workos_directory_id : "";
+    const token = typeof record.proxy_token === "string" ? record.proxy_token : "";
+    if (!id || !token) {
+      throw new Error(`${shape}; entry ${index} is missing workos_directory_id or proxy_token.`);
+    }
+    return {
+      workos_directory_id: id,
+      proxy_token: token,
+      name: typeof record.name === "string" && record.name ? record.name : id,
+    };
+  });
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  const role = appRole(env.APP_ROLE);
   const port = Number(env.PORT ?? "8080");
   if (!Number.isFinite(port) || port <= 0) {
     throw new Error(`PORT must be a positive number; received "${env.PORT}".`);
   }
   const databasePath = env.DATABASE_PATH?.trim() || "/data/scim-bridge.db";
   const publicUrl = trimTrailingSlash(env.PUBLIC_URL?.trim() || `http://127.0.0.1:${port}`);
+  const bridgeStatusUrl = env.BRIDGE_STATUS_URL?.trim();
+  const webhookSecret = env.WEBHOOK_SECRET?.trim() || null;
+  // Refuse to boot rather than serve /webhooks/dsync unauthenticated: the
+  // listener skips signature verification when it has no secret, so an
+  // internet-routable stand-in would apply any unsigned POST as a real WorkOS
+  // event. (Unlike BRIDGE_STATUS_URL, which only degrades to reading no status.)
+  if (role === "native-app" && !webhookSecret) {
+    throw new Error(
+      "WEBHOOK_SECRET is required when APP_ROLE=native-app: without it every unsigned " +
+        "POST to the publicly routable /webhooks/dsync would be applied as a genuine " +
+        "WorkOS event. Use the signing secret of the webhook endpoint in the WorkOS dashboard.",
+    );
+  }
 
   return {
+    role,
     port,
     databasePath,
     publicUrl,
@@ -54,6 +132,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     encryptionKey: env.APP_ENCRYPTION_KEY?.trim() || null,
     panelAuthUser: env.PANEL_AUTH_USER?.trim() || null,
     panelAuthPassword: env.PANEL_AUTH_PASSWORD || null,
+    nativeScimToken: env.NATIVE_SCIM_TOKEN?.trim() || null,
+    webhookSecret,
+    bridgeStatusUrl: bridgeStatusUrl ? trimTrailingSlash(bridgeStatusUrl) : null,
+    directories: directories(env.DIRECTORIES_JSON),
   };
 }
 
@@ -79,6 +161,44 @@ export async function seedConfig(env: PocEnv, config: AppConfig): Promise<void> 
     await setConfig(db, "idp.public_url", `${base}/__demo/idp`);
     await setConfig(db, "native.public_url", `${base}/__demo/native`);
   }
+}
+
+/**
+ * `native-app` role: push the env-supplied secrets and the bridge's base URL
+ * into `poc_config`, where the native worker and its listener already read them
+ * from. Only values actually provided are written, so an unset var leaves the
+ * migration's own seed (e.g. the random `native.scim_token`) in place.
+ */
+export async function seedNativeAppConfig(env: PocEnv, config: AppConfig): Promise<void> {
+  const db = env.DB;
+  if (config.nativeScimToken) await setConfig(db, "native.scim_token", config.nativeScimToken);
+  // Always set in this role — loadConfig refuses to boot without it.
+  if (config.webhookSecret) await setConfig(db, "native.webhook_secret", config.webhookSecret);
+  // The listener's status client resolves the status endpoint from this
+  // container's own `proxy.loopback_url ?? proxy.public_url`. Here the proxy is
+  // a DIFFERENT container, so both keys point at the bridge — loopback included,
+  // or it would win and dial this container instead.
+  if (config.bridgeStatusUrl) {
+    await setConfig(db, "proxy.public_url", config.bridgeStatusUrl);
+    await setConfig(db, "proxy.loopback_url", config.bridgeStatusUrl);
+  }
+  // Real WorkOS delivers the DSync events here, so the bundled mock WorkOS —
+  // which rides along inside the native worker at /mock-workos/scim/v2 — must
+  // not also emit them if anything ever writes to it.
+  await setConfig(db, "mock_workos.emit_dsync", "false");
+}
+
+/**
+ * `native-app` role: make `scim_directories` — the table the listener resolves
+ * an event's directory and proxy token from — match `DIRECTORIES_JSON` exactly.
+ * Each row's id IS the WorkOS directory id, so the `directory_id` an event
+ * carries both finds the row here and is an id the bridge's status endpoint
+ * accepts for that token. Env is authoritative, as with the config keys: a
+ * directory dropped from the var loses its row on the next boot, so it can no
+ * longer resolve an event or hold on to a proxy token.
+ */
+export async function seedNativeAppDirectories(env: PocEnv, config: AppConfig): Promise<void> {
+  await reconcileDirectories(env.DB, config.directories);
 }
 
 /**

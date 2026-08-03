@@ -583,20 +583,22 @@ async function recordEventVersion(
  * falls back to the directory row this bundled listener already shares.
  *
  * The bundled simulator models a SINGLE directory (its mock WorkOS and native
- * app are one shared store, and its demo events carry no `directory_id`), so
- * with exactly one directory configured we resolve to it. With several
- * directories and no id to map, we return `null` and the event is left
- * unapplied rather than guessed onto the wrong directory.
+ * app are one shared store, and its demo events carry no `directory_id`), so a
+ * lone directory that was never linked to a WorkOS directory resolves to itself.
+ * A directory that names its WorkOS id must match the event's, or an event for
+ * another directory would be applied to it — so a mismatch, like several
+ * directories with no id to map, returns `null` and leaves the event unapplied
+ * rather than guessed onto the wrong directory.
  */
 async function directoryModeForEvent(db: D1Database, data: Json): Promise<string | null> {
   const directories = await listDirectories(db);
   const directoryId = asString(data.directory_id);
-  const directory =
-    directories.length === 1
-      ? directories[0]
-      : directoryId
-        ? directories.find((d) => d.id === directoryId || d.workos_directory_id === directoryId)
-        : undefined;
+  const byId = directoryId
+    ? directories.find((d) => d.id === directoryId || d.workos_directory_id === directoryId)
+    : undefined;
+  const unlinkedLone =
+    directories.length === 1 && !directories[0].workos_directory_id ? directories[0] : undefined;
+  const directory = byId ?? unlinkedLone;
   if (!directory) return null;
   const status = await fetchDirectoryStatus(db, directory);
   return status?.mode ?? directory.mode;
