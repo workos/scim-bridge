@@ -38,11 +38,14 @@ interface CsvRow {
   workos_url: string;
   workos_token: string;
   workos_directory_id: string;
+  proxy_token: string;
 }
 
 /** Parse the bulk-import CSV: one directory per line, columns in header order.
  *  A leading `name,...` header row is optional. Values must not contain commas
- *  (URLs and bearer tokens don't), so a simple split is sufficient. */
+ *  (URLs and bearer tokens don't), so a simple split is sufficient. `proxy_token`
+ *  trails the original six columns, so CSVs written against those import
+ *  unchanged. */
 function parseCsv(text: string): CsvRow[] {
   const lines = text
     .split(/\r?\n/)
@@ -59,10 +62,47 @@ function parseCsv(text: string): CsvRow[] {
       workos_url = "",
       workos_token = "",
       workos_directory_id = "",
+      proxy_token = "",
     ] = cells;
-    rows.push({ name, native_url, native_token, workos_url, workos_token, workos_directory_id });
+    rows.push({
+      name,
+      native_url,
+      native_token,
+      workos_url,
+      workos_token,
+      workos_directory_id,
+      proxy_token,
+    });
   });
   return rows;
+}
+
+/** An imported proxy token is a credential an IdP is already presenting, so a
+ *  truncated paste would 401 every SCIM request instead of failing here. Real IdP
+ *  tokens are far longer; this bound only catches a fat-fingered value. */
+const MIN_PROXY_TOKEN_LENGTH = 16;
+
+function proxyTokenError(token: string): string | null {
+  if (!token || token.length >= MIN_PROXY_TOKEN_LENGTH) return null;
+  return (
+    `A proxy token must be at least ${MIN_PROXY_TOKEN_LENGTH} characters ` +
+    `(received ${token.length}) — check the value wasn't truncated.`
+  );
+}
+
+/** Both `proxy_token` and `workos_directory_id` are UNIQUE and an import is the
+ *  one place a caller supplies either, so name which one collided. */
+function directoryError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/unique/i.test(message)) {
+    if (/proxy_token/i.test(message)) {
+      return "That proxy token already belongs to another directory — it is the key the proxy routes on, so no two directories can share one.";
+    }
+    if (/workos_directory_id/i.test(message)) {
+      return "That WorkOS directory id is already assigned to another directory.";
+    }
+  }
+  return message;
 }
 
 export async function loader({ context }: LoaderFunctionArgs) {
@@ -96,6 +136,11 @@ export async function action({ context, request }: ActionFunctionArgs) {
     if (!name) {
       return { error: "The directory needs a name before it can be created." };
     }
+    const proxyToken = field("proxy_token");
+    const tokenError = proxyTokenError(proxyToken);
+    if (tokenError) {
+      return { error: tokenError };
+    }
     let row: { id: string } | null;
     try {
       row = await insertDirectory(env.DB, {
@@ -105,14 +150,10 @@ export async function action({ context, request }: ActionFunctionArgs) {
         workos_url: field("workos_url"),
         workos_token: field("workos_token"),
         workos_directory_id: field("workos_directory_id"),
+        proxy_token: proxyToken,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return {
-        error: /unique/i.test(message)
-          ? "That WorkOS directory id is already assigned to another directory."
-          : message,
-      };
+      return { error: directoryError(error) };
     }
     if (!row) {
       return { error: "The directory could not be created. Check the database and retry." };
@@ -132,13 +173,16 @@ export async function action({ context, request }: ActionFunctionArgs) {
         importErrors.push(`Row ${i + 1}: missing a name in the first column.`);
         continue;
       }
+      const tokenError = proxyTokenError(r.proxy_token);
+      if (tokenError) {
+        importErrors.push(`Row ${i + 1} (${r.name}): ${tokenError}`);
+        continue;
+      }
       try {
         await insertDirectory(env.DB, r);
         imported++;
       } catch (error) {
-        importErrors.push(
-          `Row ${i + 1} (${r.name}): ${error instanceof Error ? error.message : String(error)}`,
-        );
+        importErrors.push(`Row ${i + 1} (${r.name}): ${directoryError(error)}`);
       }
     }
     return { imported, importErrors };
@@ -271,7 +315,7 @@ export default function PanelHome() {
                 <Flex direction="column" gap="5">
                   <Dialog.Header
                     title="Bulk import directories"
-                    description="One directory per line. Columns: name, native SCIM URL, native token, WorkOS endpoint, WorkOS token, WorkOS directory id. Only the name is required; the rest can be filled per directory later."
+                    description="One directory per line. Columns: name, native SCIM URL, native token, WorkOS endpoint, WorkOS token, WorkOS directory id, proxy token. Only the name is required; the rest can be filled per directory later."
                     error={actionData?.error}
                   />
                   <input type="hidden" name="intent" value="bulk-import" />
@@ -283,12 +327,14 @@ export default function PanelHome() {
                       resize="vertical"
                       rows={8}
                       placeholder={
-                        "name,native_url,native_token,workos_url,workos_token,workos_directory_id\n" +
-                        "Acme — Okta,https://acme.com/scim/v2,tok_native,https://api.workos.com/scim/v2.0/xxx,tok_workos,directory_01XXX"
+                        "name,native_url,native_token,workos_url,workos_token,workos_directory_id,proxy_token\n" +
+                        "Acme — Okta,https://acme.com/scim/v2,tok_native,https://api.workos.com/scim/v2.0/xxx,tok_workos,directory_01XXX,tok_idp_existing"
                       }
                     />
                     <Text color="gray" size="1">
-                      A leading header row is optional. Values must not contain commas.
+                      A leading header row is optional. Values must not contain commas. Leave the
+                      last column off to mint a proxy token per directory; fill it in with the
+                      bearer token that directory's IdP already presents.
                     </Text>
                   </Flex>
                   <Dialog.Footer>
@@ -313,7 +359,7 @@ export default function PanelHome() {
                 <Flex direction="column" gap="5">
                   <Dialog.Header
                     title="Import directory"
-                    description="A new directory starts in passthrough mode with a freshly minted proxy token."
+                    description="A new directory starts in passthrough mode, with a freshly minted proxy token unless you bring the one its IdP already uses."
                     error={actionData?.error}
                   />
                   <input type="hidden" name="intent" value="create-directory" />
@@ -326,6 +372,18 @@ export default function PanelHome() {
                       placeholder="Acme Corp — Okta"
                       required
                     />
+                  </Flex>
+                  <Flex direction="column" gap="2">
+                    <FieldLabel htmlFor="proxy-token">Existing IdP bearer token</FieldLabel>
+                    <TextField.Root
+                      id="proxy-token"
+                      name="proxy_token"
+                      placeholder="The token the IdP already sends"
+                    />
+                    <Text color="gray" size="1">
+                      Only when you point an existing SCIM hostname at the bridge by DNS and the IdP
+                      keeps its current token. Leave blank to mint a new one for the IdP to use.
+                    </Text>
                   </Flex>
                   <Separator size="4" />
                   <CredentialFields />

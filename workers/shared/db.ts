@@ -93,6 +93,10 @@ export interface NewDirectory {
   workos_url?: string;
   workos_token?: string;
   workos_directory_id?: string;
+  /** The bearer token the IdP will present, when it already has one to keep (a
+   *  DNS swap in front of an existing SCIM hostname). Omitted → the schema mints
+   *  one. Stays plaintext: it is the routing key `getDirectoryByToken` looks up. */
+  proxy_token?: string;
 }
 
 /** Create a directory, encrypting the native/WorkOS tokens at rest. */
@@ -100,22 +104,37 @@ export async function insertDirectory(
   db: D1Database,
   directory: NewDirectory,
 ): Promise<{ id: string } | null> {
-  const nativeToken = await encryptSecret(db, directory.native_token ?? "");
-  const workosToken = await encryptSecret(db, directory.workos_token ?? "");
+  const columns = [
+    "name",
+    "native_url",
+    "native_token",
+    "workos_url",
+    "workos_token",
+    "workos_directory_id",
+  ];
+  const values: unknown[] = [
+    directory.name,
+    directory.native_url ?? "",
+    await encryptSecret(db, directory.native_token ?? ""),
+    directory.workos_url ?? "",
+    await encryptSecret(db, directory.workos_token ?? ""),
+    directory.workos_directory_id || null,
+  ];
+  // Left out of the statement entirely when no token is supplied, so the
+  // column's DEFAULT generates one exactly as it did before imports could carry
+  // a token.
+  const proxyToken = directory.proxy_token?.trim();
+  if (proxyToken) {
+    columns.push("proxy_token");
+    values.push(proxyToken);
+  }
   return withD1Retry(() =>
     db
       .prepare(
-        "INSERT INTO scim_directories (name, native_url, native_token, workos_url, workos_token, workos_directory_id) " +
-          "VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+        `INSERT INTO scim_directories (${columns.join(", ")}) ` +
+          `VALUES (${columns.map(() => "?").join(", ")}) RETURNING id`,
       )
-      .bind(
-        directory.name,
-        directory.native_url ?? "",
-        nativeToken,
-        directory.workos_url ?? "",
-        workosToken,
-        directory.workos_directory_id || null,
-      )
+      .bind(...values)
       .first<{ id: string }>(),
   );
 }

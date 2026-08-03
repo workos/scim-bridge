@@ -128,7 +128,7 @@ export function DirectoryTable({ directories }: { directories: Directory[] }) {
       <Card size="3">
         <EmptyState.Root
           title="No directories yet"
-          subtitle="Import a directory to mint the proxy token the IdP will authenticate with."
+          subtitle="Import a directory to mint the proxy token the IdP will authenticate with — or to bring the one it already presents."
         />
       </Card>
     );

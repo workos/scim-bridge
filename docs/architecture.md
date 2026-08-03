@@ -32,7 +32,7 @@ are applied on boot (`server/db/migrate.ts`).
 
 | Table | Holds |
 | --- | --- |
-| `scim_directories` | One row per directory being migrated: `mode`, `proxy_token` (IdP→proxy), native URL + token, WorkOS URL + token, `workos_directory_id` (the `directory_...` id DSync events carry). |
+| `scim_directories` | One row per directory being migrated: `mode`, `proxy_token` (IdP→proxy; minted at import, or the token the IdP already presents when one is imported), native URL + token, WorkOS URL + token, `workos_directory_id` (the `directory_...` id DSync events carry). |
 | `id_mappings` | native id ↔ WorkOS id per resource, with the strategy used (`migrated-id` or `fallback-post`). |
 | `proxy_log` | Every proxied request, both legs — the panel's Activity view. |
 | `listener_events` / `listener_versions` | The demo DSync listener's log and last-writer-wins ledger. |
