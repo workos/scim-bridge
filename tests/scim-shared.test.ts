@@ -13,6 +13,7 @@ import {
   parseScimPath,
   scimError,
   scimFetch,
+  stripNulls,
   translateListResponse,
   translatePatchIds,
   translateResourceIds,
@@ -393,6 +394,54 @@ describe("isSuccess", () => {
     expect(isSuccess(299)).toBe(true);
     expect(isSuccess(300)).toBe(false);
     expect(isSuccess(404)).toBe(false);
+  });
+});
+
+describe("stripNulls", () => {
+  it("drops null-valued keys, at any depth", () => {
+    expect(
+      stripNulls({
+        displayName: "Engineering",
+        externalId: null,
+        name: { givenName: "Ada", familyName: null },
+        members: [{ value: "u1", display: null }, { value: "u2" }],
+      }),
+    ).toEqual({
+      displayName: "Engineering",
+      name: { givenName: "Ada" },
+      members: [{ value: "u1" }, { value: "u2" }],
+    });
+  });
+
+  it("keeps empty objects and arrays — an empty value is not an absence", () => {
+    expect(stripNulls({ members: [], meta: {}, externalId: null })).toEqual({
+      members: [],
+      meta: {},
+    });
+  });
+
+  it("keeps a null array element, which would otherwise renumber the rest", () => {
+    expect(stripNulls({ members: [null, { value: "u2" }] })).toEqual({
+      members: [null, { value: "u2" }],
+    });
+  });
+
+  it("passes scalars and false-y values through untouched", () => {
+    expect(stripNulls({ active: false, count: 0, note: "" })).toEqual({
+      active: false,
+      count: 0,
+      note: "",
+    });
+    expect(stripNulls("value")).toBe("value");
+    expect(stripNulls(null)).toBeNull();
+  });
+
+  it("does not mutate the input", () => {
+    const resource = { displayName: "Engineering", externalId: null };
+
+    stripNulls(resource);
+
+    expect(resource).toEqual({ displayName: "Engineering", externalId: null });
   });
 });
 
