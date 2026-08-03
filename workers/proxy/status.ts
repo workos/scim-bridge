@@ -1,4 +1,5 @@
 import { getDirectoryByToken } from "../shared/db";
+import { authorizationToken } from "../shared/scim";
 import type { Directory, PocEnv } from "../shared/types";
 
 export const STATUS_PREFIX = "/status/directories";
@@ -44,8 +45,7 @@ export async function handleStatus(request: Request, env: PocEnv, url: URL): Pro
     return statusError(404, `Nothing is served at ${url.pathname}. Try ${STATUS_PREFIX}/{id}.`);
   }
 
-  const auth = request.headers.get("Authorization") ?? "";
-  const token = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length).trim() : "";
+  const token = authorizationToken(request.headers.get("Authorization"));
   let directory: Directory | null;
   try {
     directory = await getDirectoryByToken(env.DB, token);

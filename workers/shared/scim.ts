@@ -16,6 +16,26 @@ export function scimError(status: number, detail: string): Response {
   );
 }
 
+/**
+ * The proxy token an inbound request presents, or "" when the header carries
+ * none. Two shapes count:
+ *
+ * - `Bearer <token>`, scheme matched case-insensitively (RFC 7235 §2.1).
+ * - the bare token, no scheme. An IdP that sends the `Authorization` header
+ *   verbatim — Okta's header-auth SCIM app puts the API Token field straight in
+ *   it — never adds a prefix, and after a DNS swap the bridge inherits whatever
+ *   shape that IdP always sent to the native app.
+ *
+ * Any other scheme (`Basic …`) is not a token to route on, so a value
+ * containing whitespace only counts behind `Bearer`.
+ */
+export function authorizationToken(header: string | null): string {
+  const value = (header ?? "").trim();
+  const bearer = /^Bearer\s+(.*)$/i.exec(value);
+  if (bearer) return bearer[1].trim();
+  return /\s/.test(value) ? "" : value;
+}
+
 export function isSuccess(status: number): boolean {
   return status >= 200 && status < 300;
 }

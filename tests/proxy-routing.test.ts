@@ -106,15 +106,55 @@ describe("proxy routing", () => {
       expect(fake.calls).toHaveLength(0);
     });
 
-    it("401s a token sent without the Bearer prefix", async () => {
-      const directory = await seedDirectory(env.DB, { mode: "passthrough" });
+    // An IdP that sends the Authorization header verbatim (Okta's header-auth
+    // SCIM app) never adds the scheme, and after a DNS swap the bridge inherits
+    // whatever shape that IdP always sent — so a bare token authenticates.
+    it("routes a token sent without the Bearer prefix to its own directory", async () => {
+      await seedDirectory(env.DB, { mode: "passthrough", native_token: "native-a" });
+      const b = await seedDirectory(env.DB, { mode: "passthrough", native_token: "native-b" });
+      fake.route("native", "GET", "/Users", scimJson(200, { Resources: [] }));
+
       const res = await proxyWorker.fetch(
-        proxyRequest(directory, "GET", "/scim/v2/Users", undefined, {
-          Authorization: directory.proxy_token,
+        proxyRequest(b, "GET", "/scim/v2/Users", undefined, {
+          Authorization: b.proxy_token,
         }),
         env,
         createCtx(),
       );
+
+      expect(res.status).toBe(200);
+      expect(fake.callsTo("native")).toHaveLength(1);
+      expect(fake.callsTo("native")[0].headers.get("Authorization")).toBe("Bearer native-b");
+    });
+
+    it("routes a Bearer scheme in any casing", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "passthrough" });
+      fake.route("native", "GET", "/Users", scimJson(200, { Resources: [] }));
+
+      for (const scheme of ["Bearer", "bearer", "BEARER"]) {
+        const res = await proxyWorker.fetch(
+          proxyRequest(directory, "GET", "/scim/v2/Users", undefined, {
+            Authorization: `${scheme} ${directory.proxy_token}`,
+          }),
+          env,
+          createCtx(),
+        );
+        expect(res.status).toBe(200);
+      }
+      expect(fake.callsTo("native")).toHaveLength(3);
+    });
+
+    it("401s a scheme that isn't Bearer, rather than reading the token after it", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "passthrough" });
+
+      const res = await proxyWorker.fetch(
+        proxyRequest(directory, "GET", "/scim/v2/Users", undefined, {
+          Authorization: `Basic ${directory.proxy_token}`,
+        }),
+        env,
+        createCtx(),
+      );
+
       expect(res.status).toBe(401);
       expect(fake.calls).toHaveLength(0);
     });

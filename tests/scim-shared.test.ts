@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { decryptSecret, encryptSecret } from "../workers/shared/crypto";
 import { upsertMapping } from "../workers/shared/db";
 import {
+  authorizationToken,
   errorMessage,
   isRecord,
   isSuccess,
@@ -392,6 +393,31 @@ describe("isSuccess", () => {
     expect(isSuccess(299)).toBe(true);
     expect(isSuccess(300)).toBe(false);
     expect(isSuccess(404)).toBe(false);
+  });
+});
+
+describe("authorizationToken", () => {
+  it("takes the token after a Bearer scheme, in any casing", () => {
+    expect(authorizationToken("Bearer tok_abc")).toBe("tok_abc");
+    expect(authorizationToken("bearer tok_abc")).toBe("tok_abc");
+    expect(authorizationToken("BEARER tok_abc")).toBe("tok_abc");
+    expect(authorizationToken("Bearer   tok_abc  ")).toBe("tok_abc");
+  });
+
+  it("takes a bare value as the token, for IdPs that send the header verbatim", () => {
+    expect(authorizationToken("tok_abc")).toBe("tok_abc");
+    expect(authorizationToken("  tok_abc  ")).toBe("tok_abc");
+  });
+
+  it("reads no token from another scheme or an absent header", () => {
+    expect(authorizationToken("Basic dXNlcjpwYXNz")).toBe("");
+    expect(authorizationToken("Negotiate tok_abc")).toBe("");
+    // A doubled prefix strips one and leaves the other in the value, which
+    // matches no directory — the IdP-side misconfiguration still 401s.
+    expect(authorizationToken("Bearer Bearer tok_abc")).toBe("Bearer tok_abc");
+    expect(authorizationToken(null)).toBe("");
+    expect(authorizationToken("")).toBe("");
+    expect(authorizationToken("   ")).toBe("");
   });
 });
 
