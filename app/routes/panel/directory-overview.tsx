@@ -533,7 +533,7 @@ export default function DirectoryOverview() {
         <Flex direction="column" gap="4">
           <CardHeader
             title="Identity provider"
-            description="Paste these into the IdP's SCIM provisioning settings (Okta: header auth, HTTP Header — Bearer)."
+            description="Paste these into the IdP's SCIM provisioning settings (Okta: header auth, HTTP Header — Bearer). Paste the token on its own: the proxy takes it with or without a Bearer prefix, so IdPs that send the Authorization header verbatim work too."
           />
           <Grid columns={{ initial: "1", sm: "2" }} gap="4">
             <Flex direction="column" gap="2">

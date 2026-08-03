@@ -9,6 +9,7 @@ import {
 import {
   SCIM_CONTENT_TYPE,
   SCIM_PREFIX,
+  authorizationToken,
   conditionalRequestHeaders,
   errorMessage,
   isSuccess,
@@ -74,8 +75,7 @@ async function handleScim(
     return response;
   };
 
-  const auth = request.headers.get("Authorization") ?? "";
-  const token = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length).trim() : "";
+  const token = authorizationToken(request.headers.get("Authorization"));
   let directory: Directory | null = null;
   try {
     directory = await getDirectoryByToken(env.DB, token);

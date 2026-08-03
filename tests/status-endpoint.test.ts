@@ -311,7 +311,7 @@ describe("status endpoint", () => {
   });
 
   describe("auth parsing", () => {
-    it("rejects a lowercase 'bearer' scheme with 401", async () => {
+    it("accepts a lowercase 'bearer' scheme", async () => {
       const env = createEnv();
       const directory = await seedDirectory(env.DB);
 
@@ -319,6 +319,37 @@ describe("status endpoint", () => {
         env,
         new Request(`https://bridge.test/status/directories/${directory.id}`, {
           headers: { Authorization: `bearer ${directory.proxy_token}` },
+        }),
+      );
+
+      expect(res.status).toBe(200);
+    });
+
+    // The listener polling this endpoint runs on the customer's side, so it may
+    // present the token in whichever shape its HTTP client is configured with.
+    it("accepts a bare token with no scheme", async () => {
+      const env = createEnv();
+      const directory = await seedDirectory(env.DB);
+
+      const res = await fetchStatus(
+        env,
+        new Request(`https://bridge.test/status/directories/${directory.id}`, {
+          headers: { Authorization: directory.proxy_token },
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ directory_id: directory.id });
+    });
+
+    it("rejects another scheme carrying the token with 401", async () => {
+      const env = createEnv();
+      const directory = await seedDirectory(env.DB);
+
+      const res = await fetchStatus(
+        env,
+        new Request(`https://bridge.test/status/directories/${directory.id}`, {
+          headers: { Authorization: `Basic ${directory.proxy_token}` },
         }),
       );
 
