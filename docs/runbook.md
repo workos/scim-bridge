@@ -20,15 +20,52 @@ and set `APP_ENCRYPTION_KEY` so per-directory tokens are encrypted at rest.
 Open `/panel`.
 
 - **One directory** → *Import directory*: name, your native SCIM base URL + token,
-  and the WorkOS directory endpoint + token (from the WorkOS dashboard).
+  and the WorkOS directory endpoint + token (from the WorkOS dashboard). The
+  optional **Existing IdP bearer token** field is the proxy token to use — see
+  [zero IdP-touch](#zero-idp-touch-deployment) below.
 - **Many** → *Bulk import*: paste CSV
-  `name,native_url,native_token,workos_url,workos_token,workos_directory_id`
-  (header optional; only the name is required). See [workos-directory-provisioning.md](./workos-directory-provisioning.md)
+  `name,native_url,native_token,workos_url,workos_token,workos_directory_id,proxy_token`
+  (header optional; only the name is required). `proxy_token` is the last column
+  and optional, so six-column CSVs written before it existed import unchanged.
+  See [workos-directory-provisioning.md](./workos-directory-provisioning.md)
   for producing the WorkOS side in bulk.
 
 Then copy the directory's **SCIM base URL + proxy token** into your IdP's SCIM
 config. It starts in `passthrough`, so repointing the IdP changes no behavior —
 every request still reaches your native app.
+
+### Zero IdP-touch deployment
+
+The proxy resolves a directory by the bearer token the IdP presents, so there are
+two ways to put the bridge in front of a directory:
+
+| | The IdP admin must… | Proxy token |
+| --- | --- | --- |
+| **Repoint** | change the SCIM base URL (and the token) in the IdP | minted at import; copy it into the IdP |
+| **DNS swap** | nothing | import the token the IdP already presents |
+
+The DNS swap is the one the product promises for end customers: you own the
+hostname the IdP already calls, so you point it at the bridge and import that
+directory's existing bearer token as its `proxy_token`. The IdP keeps sending the
+same URL and the same token, and the bridge routes on it. Nothing about the
+migration itself differs — the directory still starts in `passthrough`.
+
+Constraints worth knowing before you plan a swap:
+
+- **A token can only belong to one directory.** `proxy_token` is unique and is
+  the routing key; a duplicate is refused per row at import naming the conflict.
+  A native app that issued **one shared token to every enterprise customer**
+  therefore cannot be token-routed at all — that needs a different routing key
+  (hostname or path per tenant) and is not supported today.
+- **Imported tokens are stored as-is**, like minted ones: `APP_ENCRYPTION_KEY`
+  covers the native/WorkOS upstream tokens, not the routing key the proxy must
+  look up on every request.
+- A too-short value is rejected at import (a truncated paste would 401 every
+  SCIM request instead of failing here).
+- **The token is set at import only.** The directory page shows it read-only;
+  there is no in-place rotation, and re-importing means deleting the directory
+  (which drops its id mappings). Get it right while the directory is being
+  created.
 
 ## Run the migration
 
