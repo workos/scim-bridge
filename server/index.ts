@@ -9,7 +9,13 @@ import proxyWorker from "../workers/proxy/index";
 import nativeWorker from "../workers/native/index";
 import idpWorker from "../workers/idp/index";
 import type { PocEnv } from "../workers/shared/types";
-import { loadConfig, seedConfig, seedDemoDirectory } from "./config";
+import {
+  loadConfig,
+  seedConfig,
+  seedDemoDirectory,
+  seedNativeAppConfig,
+  seedNativeAppDirectories,
+} from "./config";
 import { openDatabase, SqliteD1 } from "./db/d1-sqlite";
 import { runMigrations } from "./db/migrate";
 
@@ -33,8 +39,20 @@ sqliteD1.encryptionKey = config.encryptionKey;
 if (config.encryptionKey) console.log("Per-directory token encryption: enabled");
 const DB = sqliteD1 as unknown as PocEnv["DB"];
 const env: PocEnv = { DB };
-await seedConfig(env, config);
-await seedDemoDirectory(env, config);
+if (config.role === "native-app") {
+  await seedNativeAppConfig(env, config);
+  await seedNativeAppDirectories(env, config);
+  console.log(`Seeded ${config.directories.length} directory row(s) from DIRECTORIES_JSON`);
+  if (!config.bridgeStatusUrl) {
+    console.log(
+      "BRIDGE_STATUS_URL is unset: the listener can't read the bridge's status endpoint " +
+        "and will stay inert (falling back to each directory row's own mode).",
+    );
+  }
+} else {
+  await seedConfig(env, config);
+  await seedDemoDirectory(env, config);
+}
 
 // `ctx.waitUntil` on Workers keeps async work alive after the response; on Node
 // we just run it fire-and-forget and swallow rejections (the callers already
@@ -46,10 +64,7 @@ const ctx = {
   passThroughOnException(): void {},
 } as unknown as ExecutionContext;
 
-const requestHandler = createRequestHandler(
-  (await import(pathToFileURL(SERVER_BUILD).href)) as unknown as ServerBuild,
-  "production",
-);
+const app = new Hono();
 
 /** Re-issue a request to a mounted worker with the mount prefix stripped. */
 function mounted(
@@ -62,74 +77,97 @@ function mounted(
   return worker.fetch(new Request(url, req), env, ctx);
 }
 
-const app = new Hono();
+/** The `bridge` role: the migration proxy's data-plane and status endpoint, the
+ *  control panel behind them, and the demo simulators when enabled. */
+async function mountBridge(): Promise<void> {
+  const requestHandler = createRequestHandler(
+    (await import(pathToFileURL(SERVER_BUILD).href)) as unknown as ServerBuild,
+    "production",
+  );
 
-// Guard the control panel with optional HTTP Basic auth. The SCIM data-plane
-// (/scim) and the directory status endpoint (/status) authenticate each
-// request by its own proxy token, and /healthz stays open for load-balancer
-// probes, so none of them are gated here.
-app.use("*", async (c, next) => {
-  const { panelAuthUser, panelAuthPassword } = config;
-  if (!panelAuthUser || !panelAuthPassword) return next();
-  const path = new URL(c.req.url).pathname;
-  if (
-    path === "/healthz" ||
-    path === "/scim/v2" ||
-    path.startsWith("/scim/v2/") ||
-    path === "/status/directories" ||
-    path.startsWith("/status/directories/")
-  ) {
-    return next();
+  // Guard the control panel with optional HTTP Basic auth. The SCIM data-plane
+  // (/scim) and the directory status endpoint (/status) authenticate each
+  // request by its own proxy token, and /healthz stays open for load-balancer
+  // probes, so none of them are gated here.
+  app.use("*", async (c, next) => {
+    const { panelAuthUser, panelAuthPassword } = config;
+    if (!panelAuthUser || !panelAuthPassword) return next();
+    const path = new URL(c.req.url).pathname;
+    if (
+      path === "/healthz" ||
+      path === "/scim/v2" ||
+      path.startsWith("/scim/v2/") ||
+      path === "/status/directories" ||
+      path.startsWith("/status/directories/")
+    ) {
+      return next();
+    }
+
+    const header = c.req.header("Authorization") ?? "";
+    const [scheme, encoded] = header.split(" ");
+    const [user, pass] = Buffer.from(encoded ?? "", "base64")
+      .toString()
+      .split(":");
+    if (scheme === "Basic" && user === panelAuthUser && pass === panelAuthPassword) return next();
+    return c.body("Authentication required.", 401, {
+      "WWW-Authenticate": 'Basic realm="scim-bridge", charset="UTF-8"',
+    });
+  });
+
+  app.get("/healthz", (c) => c.json({ ok: true }));
+
+  // SCIM data-plane → the migration proxy.
+  app.all("/scim/v2", (c) => proxyWorker.fetch(c.req.raw, env, ctx));
+  app.all("/scim/v2/*", (c) => proxyWorker.fetch(c.req.raw, env, ctx));
+
+  // Directory migration-mode status, polled by the customer's DSync listener.
+  // Token-authenticated by the proxy like the data-plane.
+  app.all("/status/directories", (c) => proxyWorker.fetch(c.req.raw, env, ctx));
+  app.all("/status/directories/*", (c) => proxyWorker.fetch(c.req.raw, env, ctx));
+
+  // Bundled simulators for a self-contained demo (a real customer has their own
+  // IdP and native app, so these are off unless DEMO_MODE is set).
+  if (config.demoMode) {
+    console.log("DEMO_MODE on: mounting IdP + native-app simulators under /__demo");
+    app.all("/__demo/native", (c) => mounted(nativeWorker, "/__demo/native", c.req.raw));
+    app.all("/__demo/native/*", (c) => mounted(nativeWorker, "/__demo/native", c.req.raw));
+    app.all("/__demo/idp", (c) => mounted(idpWorker, "/__demo/idp", c.req.raw));
+    app.all("/__demo/idp/*", (c) => mounted(idpWorker, "/__demo/idp", c.req.raw));
   }
 
-  const header = c.req.header("Authorization") ?? "";
-  const [scheme, encoded] = header.split(" ");
-  const [user, pass] = Buffer.from(encoded ?? "", "base64")
-    .toString()
-    .split(":");
-  if (scheme === "Basic" && user === panelAuthUser && pass === panelAuthPassword) return next();
-  return c.body("Authentication required.", 401, {
-    "WWW-Authenticate": 'Basic realm="scim-bridge", charset="UTF-8"',
+  // Static client assets (hashed bundles, fonts, favicon). Only GET/HEAD are
+  // candidates for a file; other methods fall straight through to the panel so
+  // form POSTs aren't swallowed by the static handler. Misses fall through too.
+  const staticFiles = serveStatic({ root: CLIENT_DIR });
+  app.use("*", (c, next) => {
+    if (c.req.method !== "GET" && c.req.method !== "HEAD") return next();
+    return staticFiles(c, next);
   });
-});
 
-app.get("/healthz", (c) => c.json({ ok: true }));
-
-// SCIM data-plane → the migration proxy.
-app.all("/scim/v2", (c) => proxyWorker.fetch(c.req.raw, env, ctx));
-app.all("/scim/v2/*", (c) => proxyWorker.fetch(c.req.raw, env, ctx));
-
-// Directory migration-mode status, polled by the customer's DSync listener.
-// Token-authenticated by the proxy like the data-plane.
-app.all("/status/directories", (c) => proxyWorker.fetch(c.req.raw, env, ctx));
-app.all("/status/directories/*", (c) => proxyWorker.fetch(c.req.raw, env, ctx));
-
-// Bundled simulators for a self-contained demo (a real customer has their own
-// IdP and native app, so these are off unless DEMO_MODE is set).
-if (config.demoMode) {
-  console.log("DEMO_MODE on: mounting IdP + native-app simulators under /__demo");
-  app.all("/__demo/native", (c) => mounted(nativeWorker, "/__demo/native", c.req.raw));
-  app.all("/__demo/native/*", (c) => mounted(nativeWorker, "/__demo/native", c.req.raw));
-  app.all("/__demo/idp", (c) => mounted(idpWorker, "/__demo/idp", c.req.raw));
-  app.all("/__demo/idp/*", (c) => mounted(idpWorker, "/__demo/idp", c.req.raw));
+  // Everything else → the React Router control panel (SSR).
+  app.all("*", (c) =>
+    requestHandler(c.req.raw, { cloudflare: { env, ctx, demoMode: config.demoMode } }),
+  );
 }
 
-// Static client assets (hashed bundles, fonts, favicon). Only GET/HEAD are
-// candidates for a file; other methods fall straight through to the panel so
-// form POSTs aren't swallowed by the static handler. Misses fall through too.
-const staticFiles = serveStatic({ root: CLIENT_DIR });
-app.use("*", (c, next) => {
-  if (c.req.method !== "GET" && c.req.method !== "HEAD") return next();
-  return staticFiles(c, next);
-});
-
-// Everything else → the React Router control panel (SSR).
-app.all("*", (c) =>
-  requestHandler(c.req.raw, { cloudflare: { env, ctx, demoMode: config.demoMode } }),
-);
+if (config.role === "native-app") {
+  // Standing in for the customer's own application: the native worker owns
+  // every route (its SCIM server at /scim/v2, the DSync listener at
+  // /webhooks/dsync, /healthz, and its status page at /). No proxy, no panel,
+  // no simulators — so PANEL_AUTH_* has nothing to guard here either.
+  console.log("APP_ROLE=native-app: serving the native app at the root, no proxy or panel");
+  app.all("*", (c) => nativeWorker.fetch(c.req.raw, env, ctx));
+} else {
+  await mountBridge();
+}
 
 serve({ fetch: app.fetch, port: config.port, hostname: "0.0.0.0" }, (info) => {
   console.log(`scim-bridge listening on http://0.0.0.0:${info.port}`);
-  console.log(`  control panel: ${config.publicUrl}/panel`);
-  console.log(`  SCIM base URL: ${config.publicUrl}/scim/v2`);
+  if (config.role === "native-app") {
+    console.log(`  native SCIM base URL: ${config.publicUrl}/scim/v2`);
+    console.log(`  DSync webhook URL: ${config.publicUrl}/webhooks/dsync`);
+  } else {
+    console.log(`  control panel: ${config.publicUrl}/panel`);
+    console.log(`  SCIM base URL: ${config.publicUrl}/scim/v2`);
+  }
 });

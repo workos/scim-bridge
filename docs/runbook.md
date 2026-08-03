@@ -54,6 +54,43 @@ is kept current by the DSync listener; if you're unsure it stayed caught up, run
 WorkOS directory and replays every resource back into native (id-preserving),
 guaranteeing parity before you flip the mode back.
 
+## Run the image as the customer-app stand-in
+
+For an end-to-end rehearsal against real WorkOS you need something on the other
+side of the proxy. `APP_ROLE=native-app` deploys this same image a second time as
+that app: the bundled native worker serves every route at the root — SCIM at
+`/scim/v2`, the DSync listener at `/webhooks/dsync`, `/healthz`, and its live
+state at `/` — with no proxy, no panel, and no simulators (so `PANEL_AUTH_*` and
+`DEMO_MODE` do nothing here). Give it its own `DATABASE_PATH` volume.
+
+```bash
+APP_ROLE=native-app
+PUBLIC_URL=https://app.acme-demo.com          # where WorkOS and the bridge reach it
+NATIVE_SCIM_TOKEN=…                           # what the bridge presents to /scim/v2
+WEBHOOK_SECRET=whsec_…                         # from the WorkOS webhook endpoint
+BRIDGE_STATUS_URL=https://scim-bridge.acme.com # the BRIDGE container, not this one
+DIRECTORIES_JSON=[{"workos_directory_id":"directory_01HXYZ","proxy_token":"…","name":"Acme"}]
+```
+
+Wiring it up, per directory:
+
+1. On the **bridge**, import the directory with this app's `<PUBLIC_URL>/scim/v2`
+   + `NATIVE_SCIM_TOKEN` as its native endpoint, and set its **WorkOS directory
+   id** — the stand-in's status lookups are keyed on it.
+2. Copy that directory's `workos_directory_id` and `proxy_token` into
+   `DIRECTORIES_JSON`. Each entry becomes a row in the stand-in's own
+   `scim_directories` keyed *by the WorkOS directory id*, which is both what an
+   event's `data.directory_id` resolves against and an id the bridge's
+   `GET /status/directories/{id}` accepts for that token.
+3. In the WorkOS dashboard, point a webhook endpoint at
+   `<PUBLIC_URL>/webhooks/dsync` and set its signing secret as `WEBHOOK_SECRET`.
+
+The listener then applies events only once the bridge reports `workos-only` for
+that directory (see [listener-status.md](./listener-status.md)). If
+`BRIDGE_STATUS_URL` is unreachable it falls back to the seeded row, which stays
+at `passthrough` — events are logged as ignored rather than applied, so a
+cutover that looks inert is the first thing to check there.
+
 ## Self-contained demo
 
 `DEMO_MODE=true` mounts a simulated IdP + native app and seeds a pre-wired "Demo
@@ -70,3 +107,4 @@ directory and watch it converge.
 | Mappings show `fallback-post` | The migrated-id contract wasn't active for that WorkOS directory (flag/`migrated`/`created_at` prerequisites) — ids aren't shared. |
 | Tokens look like `enc:v1:…` in the DB | Expected — they're encrypted at rest. Never change `APP_ENCRYPTION_KEY` after writing, or they become unreadable. |
 | Panel 500s after setting a key | The key changed since tokens were written; restore the original `APP_ENCRYPTION_KEY`. |
+| Stand-in ignores every DSync event | Its `DIRECTORIES_JSON` entry must carry the directory's WorkOS id and proxy token, the bridge's row must have that WorkOS id set, and `BRIDGE_STATUS_URL` must reach the bridge — otherwise the mode reads as pre-cutover. |
