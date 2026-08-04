@@ -131,7 +131,9 @@ npm install
 npm run dev          # React Router dev server (control panel)
 npm run build        # production client + server build
 npm start            # run the full server (proxy + panel) against the build
-npm run typecheck    # react-router typegen + tsc --noEmit
+npm run typecheck    # react-router typegen + tsc -b (workers/, server/, tests/)
+npm run typecheck:gate  # asserts the gate rejects a deliberate type error
+npm run typecheck:app   # the control panel, which is not gated yet
 ```
 
 `npm run dev` serves the panel with HMR; the `/scim` proxy data-plane runs under

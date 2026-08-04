@@ -1,4 +1,9 @@
 {
+  // The control panel, plus everything it imports. NOT gated: this project still
+  // reports errors in app/routes/panel and app/vendor/design-system (the latter
+  // synced from the monorepo, so local fixes are overwritten). Kept as a project
+  // so editors resolve panel files, and so the cleanup can be measured with
+  // `npm run typecheck:app` (ENT-6755). The gate lives in tsconfig.check.json.
   "extends": "./tsconfig.json",
   "include": [".react-router/types/**/*", "app/**/*", "workers/**/*", "server/**/*", "tests/**/*"],
   "compilerOptions": {

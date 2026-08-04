@@ -16,6 +16,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # Proves the gate above can actually fail (ENT-6754: for months it could not).
+      - run: npm run typecheck:gate
       - run: npm run lint
       - run: npm run format:check
       - run: npm test

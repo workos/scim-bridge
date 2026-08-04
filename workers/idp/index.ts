@@ -1,4 +1,4 @@
-import type { Directory } from "../shared/types";
+import type { Directory, WorkerHandler } from "../shared/types";
 import { getDirectoryById, withD1Retry } from "../shared/db";
 import * as client from "./client";
 import type { ActionContext } from "./client";
@@ -31,7 +31,7 @@ function str(body: Record<string, unknown>, key: string): string {
   return typeof body[key] === "string" ? (body[key] as string) : "";
 }
 
-export default {
+const handler: WorkerHandler<IdpEnv> = {
   async fetch(request, env) {
     try {
       return await route(request, env);
@@ -39,7 +39,9 @@ export default {
       return json({ error: error instanceof Error ? error.message : String(error) }, 500);
     }
   },
-} satisfies ExportedHandler<IdpEnv>;
+};
+
+export default handler;
 
 async function route(request: Request, env: IdpEnv): Promise<Response> {
   {

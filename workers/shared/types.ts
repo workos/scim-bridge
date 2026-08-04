@@ -75,4 +75,18 @@ export interface BackfillSummary {
 export interface PocEnv {
   DB: Datastore;
 }
+
+/**
+ * A mounted worker module, as `server/index.ts` actually calls it.
+ *
+ * Not `ExportedHandler` from @cloudflare/workers-types: that models a Worker
+ * receiving a request from Cloudflare's edge, so it demands
+ * `Request<unknown, IncomingRequestCfProperties>`. These modules are mounted
+ * inside the Node server and handed an ordinary `Request` plus the
+ * `ExecutionContext` shim — typing what we pass, rather than what a Worker
+ * would receive, keeps a generic mismatch out of every caller and every test.
+ */
+export interface WorkerHandler<Env> {
+  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response>;
+}
 import type { Datastore } from "./datastore";
