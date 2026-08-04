@@ -70,6 +70,11 @@ export async function loader({ context, params }: LoaderFunctionArgs) {
 export default function DirectoryMappings() {
   const { mappings, workos } = useLoaderData<typeof loader>();
   const revalidator = useRevalidator();
+  // fallback-post rows are the ones whose native↔WorkOS pairing only this table
+  // records, so they are the ones that decide how much a lost database costs —
+  // see docs/runbook.md#durable-storage. The rows are already loaded; this is a
+  // filter, not another query.
+  const fallbackPost = mappings.filter((mapping) => mapping.strategy === "fallback-post").length;
 
   return (
     <Card size="3">
@@ -86,6 +91,17 @@ export default function DirectoryMappings() {
             Refresh
           </Button>
         </Flex>
+
+        {fallbackPost > 0 && (
+          <Callout.Root color="yellow">
+            <Callout.Text>
+              {fallbackPost} of {mappings.length} mappings are <Code>fallback-post</Code>: WorkOS
+              minted those ids, so this table is the only record of the pairing. Losing the database
+              costs a filter-and-repair round trip per resource on the next write — make sure
+              DATABASE_PATH is on a volume that survives a restart.
+            </Callout.Text>
+          </Callout.Root>
+        )}
 
         {!workos.reachable && mappings.length > 0 && (
           <Callout.Root color="yellow">
