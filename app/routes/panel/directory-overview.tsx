@@ -456,7 +456,7 @@ function BackfillResult({ summary }: { summary: BackfillSummary }) {
             <Text size="2" weight="medium">
               {kind === "users" ? "Users" : "Groups"}
             </Text>
-            <Badge color="gray" lowContrast>
+            <Badge color="white" lowContrast>
               {summary[kind].total} total
             </Badge>
             <Badge color="green">{summary[kind].mirrored} mirrored</Badge>

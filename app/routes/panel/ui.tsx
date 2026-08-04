@@ -18,7 +18,7 @@ export function ModeBadge({ mode }: { mode: Mode }) {
 export function StatusCodeBadge({ status }: { status: number | null }) {
   if (status == null) {
     return (
-      <Badge color="gray" lowContrast>
+      <Badge color="white" lowContrast>
         —
       </Badge>
     );
