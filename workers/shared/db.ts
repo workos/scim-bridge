@@ -6,10 +6,16 @@ import type { Directory, IdMapping, Mode, ProxyLogEntry, ResourceType } from "./
 /**
  * Retry a datastore operation when the failure was transient.
  *
- * Each driver classifies its own engine's errors and wraps them in
- * `TransientDatastoreError` — SQLite's `SQLITE_BUSY`/`SQLITE_LOCKED`, Postgres's
- * serialization and deadlock codes plus a connection the pool lost. The string
- * match is a fallback for anything that arrives unwrapped.
+ * `TransientDatastoreError` is the only signal: each driver classifies its own
+ * engine's errors by code - SQLite's `SQLITE_BUSY`/`SQLITE_LOCKED`, Postgres's
+ * serialization and deadlock codes plus a connection the pool lost - and anything
+ * unclassified is rethrown on the first attempt.
+ *
+ * There used to be a message-substring fallback as well. It matched `internal
+ * error`, which is broad enough to hit errors that are not transient at all, and
+ * six attempts of latency in front of the real error is worse for whoever is
+ * reading the logs than not retrying. Its other patterns were D1 wording, which
+ * nothing produces now.
  *
  * As deployed this is a narrow safety net rather than a hot path: `busy_timeout`
  * absorbs SQLite contention inside the driver, and READ COMMITTED with a single
@@ -22,13 +28,7 @@ export async function withDatastoreRetry<T>(fn: () => Promise<T>): Promise<T> {
     try {
       return await fn();
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const transient =
-        error instanceof TransientDatastoreError ||
-        /database is locked|SQLITE_BUSY|internal error|Failed to parse body as JSON|Network connection lost|storage caused object to be reset|reset because its code was updated/i.test(
-          message,
-        );
-      if (!transient) throw error;
+      if (!(error instanceof TransientDatastoreError)) throw error;
       lastError = error;
       await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
     }
