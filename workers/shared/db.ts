@@ -1,4 +1,5 @@
 import { decryptSecret, encryptSecret } from "./crypto";
+import { newDirectoryId, newProxyToken } from "./ids";
 import type { Datastore } from "./datastore";
 import type { Directory, IdMapping, Mode, ProxyLogEntry, ResourceType } from "./types";
 
@@ -79,7 +80,7 @@ export async function getDirectoryById(db: Datastore, id: string): Promise<Direc
 
 export async function listDirectories(db: Datastore): Promise<Directory[]> {
   const { results } = await withD1Retry(() =>
-    db.prepare("SELECT * FROM scim_directories ORDER BY created_at").all<Directory>(),
+    db.prepare("SELECT * FROM scim_directories ORDER BY created_at, name, id").all<Directory>(),
   );
   return Promise.all(results.map((d) => decryptDirectory(db, d) as Promise<Directory>));
 }
@@ -92,49 +93,38 @@ export interface NewDirectory {
   workos_token?: string;
   workos_directory_id?: string;
   /** The bearer token the IdP will present, when it already has one to keep (a
-   *  DNS swap in front of an existing SCIM hostname). Omitted → the schema mints
-   *  one. Stays plaintext: it is the routing key `getDirectoryByToken` looks up. */
+   *  DNS swap in front of an existing SCIM hostname). Omitted → a fresh one is
+   *  minted. Stays plaintext: it is the key `getDirectoryByToken` looks up. */
   proxy_token?: string;
 }
 
-/** Create a directory, encrypting the native/WorkOS tokens at rest. */
-export async function insertDirectory(
-  db: Datastore,
-  directory: NewDirectory,
-): Promise<{ id: string } | null> {
-  const columns = [
-    "name",
-    "native_url",
-    "native_token",
-    "workos_url",
-    "workos_token",
-    "workos_directory_id",
-  ];
-  const values: unknown[] = [
-    directory.name,
-    directory.native_url ?? "",
-    await encryptSecret(db, directory.native_token ?? ""),
-    directory.workos_url ?? "",
-    await encryptSecret(db, directory.workos_token ?? ""),
-    directory.workos_directory_id || null,
-  ];
-  // Left out of the statement entirely when no token is supplied, so the
-  // column's DEFAULT generates one exactly as it did before imports could carry
-  // a token.
-  const proxyToken = directory.proxy_token?.trim();
-  if (proxyToken) {
-    columns.push("proxy_token");
-    values.push(proxyToken);
-  }
-  return withD1Retry(() =>
+/** Create a directory, encrypting the native/WorkOS tokens at rest, and return
+ *  its id. The id and proxy token are minted here rather than by column
+ *  defaults, so every driver produces the same shapes (see shared/ids.ts). */
+export async function insertDirectory(db: Datastore, directory: NewDirectory): Promise<string> {
+  const id = newDirectoryId();
+  const nativeToken = await encryptSecret(db, directory.native_token ?? "");
+  const workosToken = await encryptSecret(db, directory.workos_token ?? "");
+  await withD1Retry(() =>
     db
       .prepare(
-        `INSERT INTO scim_directories (${columns.join(", ")}) ` +
-          `VALUES (${columns.map(() => "?").join(", ")}) RETURNING id`,
+        "INSERT INTO scim_directories " +
+          "(id, name, native_url, native_token, workos_url, workos_token, workos_directory_id, proxy_token) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
-      .bind(...values)
-      .first<{ id: string }>(),
+      .bind(
+        id,
+        directory.name,
+        directory.native_url ?? "",
+        nativeToken,
+        directory.workos_url ?? "",
+        workosToken,
+        directory.workos_directory_id || null,
+        directory.proxy_token?.trim() || newProxyToken(),
+      )
+      .run(),
   );
+  return id;
 }
 
 /** A directory declared by environment rather than imported through the panel:

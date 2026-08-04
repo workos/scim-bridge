@@ -54,7 +54,7 @@ export async function loader({ context, params }: LoaderFunctionArgs) {
   const [{ results }, directory] = await Promise.all([
     withD1Retry(() =>
       env.DB.prepare(
-        "SELECT * FROM id_mappings WHERE directory_id = ? ORDER BY updated_at DESC, native_id",
+        "SELECT * FROM id_mappings WHERE directory_id = ? ORDER BY updated_at DESC, native_id, resource_type",
       )
         .bind(directoryId)
         .all<IdMapping>(),

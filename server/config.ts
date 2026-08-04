@@ -7,6 +7,7 @@ import {
   setDirectoryLogPersistence,
   type EnvDirectory,
 } from "../workers/shared/db";
+import { newScimToken } from "../workers/shared/ids";
 import type { PocEnv } from "../workers/shared/types";
 
 /**
@@ -152,6 +153,7 @@ export function loopbackBase(config: AppConfig): string {
  */
 export async function seedConfig(env: PocEnv, config: AppConfig): Promise<void> {
   const db = env.DB;
+  await seedGeneratedTokens(env);
   await setConfig(db, "proxy.public_url", config.publicUrl);
   // The in-process reference listener reaches the proxy over loopback, so it
   // works even when the public URL only resolves outside the container.
@@ -164,13 +166,26 @@ export async function seedConfig(env: PocEnv, config: AppConfig): Promise<void> 
 }
 
 /**
+ * Mint the bundled endpoints' bearer tokens on first boot. Migration 0002 used to
+ * generate these in SQL, which would hand each datastore driver a different
+ * secret; the app owns them now. Only ever written when absent, so a restart
+ * never rotates a token an IdP or the panel is already using.
+ */
+export async function seedGeneratedTokens(env: PocEnv): Promise<void> {
+  for (const key of ["native.scim_token", "mock_workos.scim_token"]) {
+    if (!(await getConfig(env.DB, key))) await setConfig(env.DB, key, newScimToken());
+  }
+}
+
+/**
  * `native-app` role: push the env-supplied secrets and the bridge's base URL
  * into `poc_config`, where the native worker and its listener already read them
  * from. Only values actually provided are written, so an unset var leaves the
- * migration's own seed (e.g. the random `native.scim_token`) in place.
+ * boot-seeded default (e.g. the random `native.scim_token`) in place.
  */
 export async function seedNativeAppConfig(env: PocEnv, config: AppConfig): Promise<void> {
   const db = env.DB;
+  await seedGeneratedTokens(env);
   if (config.nativeScimToken) await setConfig(db, "native.scim_token", config.nativeScimToken);
   // Always set in this role — loadConfig refuses to boot without it.
   if (config.webhookSecret) await setConfig(db, "native.webhook_secret", config.webhookSecret);
@@ -211,7 +226,7 @@ export async function seedDemoDirectory(env: PocEnv, config: AppConfig): Promise
   const existing = await listDirectories(env.DB);
   if (existing.length > 0) return;
   const base = loopbackBase(config);
-  const demo = await insertDirectory(env.DB, {
+  const id = await insertDirectory(env.DB, {
     name: "Demo directory",
     native_url: `${base}/__demo/native/scim/v2`,
     native_token: (await getConfig(env.DB, "native.scim_token")) ?? "",
@@ -219,5 +234,5 @@ export async function seedDemoDirectory(env: PocEnv, config: AppConfig): Promise
     workos_token: (await getConfig(env.DB, "mock_workos.scim_token")) ?? "",
   });
   // The demo runs one directory you actively watch, so persist its logs.
-  if (demo) await setDirectoryLogPersistence(env.DB, demo.id, true);
+  await setDirectoryLogPersistence(env.DB, id, true);
 }

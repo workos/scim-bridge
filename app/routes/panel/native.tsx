@@ -58,7 +58,7 @@ export async function loader({ context }: LoaderFunctionArgs) {
     ),
     withD1Retry(() =>
       env.DB.prepare(
-        "SELECT id, display_name, external_id FROM native_groups ORDER BY display_name",
+        "SELECT id, display_name, external_id FROM native_groups ORDER BY display_name, id",
       ).all<NativeGroupRow>(),
     ),
     withD1Retry(() =>
