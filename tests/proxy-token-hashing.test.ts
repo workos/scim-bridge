@@ -15,7 +15,8 @@ import {
 import { createUser } from "../workers/idp/client";
 import { fetchDirectoryStatus } from "../workers/native/status-client";
 import { newDirectoryId } from "../workers/shared/ids";
-import type { PocEnv } from "../workers/shared/types";
+import type { Directory, PocEnv } from "../workers/shared/types";
+import type { Datastore } from "../workers/shared/datastore";
 import { createEnv, installFakeUpstreams, seedDirectory } from "./helpers";
 
 /**
@@ -43,6 +44,37 @@ async function seedLegacyRow(env: PocEnv, token: string): Promise<string> {
     .bind(id, "Legacy", token)
     .run();
   return id;
+}
+
+/** A directory row with every column filled in, for tests that build one by hand
+ *  rather than through a driver. */
+const blankDirectory: Directory = {
+  id: "dir_stub",
+  name: "Stub",
+  mode: "passthrough",
+  proxy_token_hash: "",
+  proxy_token_hint: "",
+  native_url: "",
+  native_token: "",
+  workos_url: "",
+  workos_token: "",
+  workos_directory_id: null,
+  log_persistence: 0,
+  created_at: "2026-01-01 00:00:00",
+  updated_at: "2026-01-01 00:00:00",
+};
+
+/** The narrowest datastore that `getDirectoryByToken` can run against: one that
+ *  answers every query with the given row. Lets a test hand the lookup a row the
+ *  real engines would never return (see the byte-identity case). */
+function stubDatastore(row: Directory): Datastore {
+  const statement = {
+    bind: () => statement,
+    first: async () => row,
+    all: async () => ({ results: [row], success: true as const, meta: {} }),
+    run: async () => ({ results: [], success: true as const, meta: { changes: 1, duration: 0 } }),
+  };
+  return { prepare: () => statement, batch: async () => [] } as unknown as Datastore;
 }
 
 async function storedRow(env: PocEnv, id: string) {
@@ -79,6 +111,34 @@ describe("proxy token hashing", () => {
 
       expect(directory.proxy_token_hint).toBe("nted");
       expect(await getDirectoryByToken(env.DB, "nted")).toBeNull();
+    });
+
+    it("rejects a row the query matched but whose digest is not byte-identical", async () => {
+      /*
+       * The constant-time recheck after the lookup.
+       *
+       * This one needs a stub datastore, and the reason is the interesting part: no
+       * real query can reach the recheck today. Both engines compare TEXT byte-wise,
+       * so a row whose digest differs — in case or anything else — is simply not
+       * returned, and my first attempt at this test passed with the recheck deleted.
+       * The recheck defends against a *future* schema where that stops holding: a
+       * nondeterministic Postgres collation, or this column becoming CHAR with its
+       * blank-padded equality. So the state is constructed directly instead of being
+       * coaxed out of SQL that cannot produce it.
+       */
+      const hash = await hashProxyToken("tok_presented");
+      const rowWithADifferentDigest = { ...blankDirectory, proxy_token_hash: hash.toUpperCase() };
+      const db = stubDatastore(rowWithADifferentDigest);
+
+      expect(await getDirectoryByToken(db, "tok_presented")).toBeNull();
+      // Same stub, digest byte-identical: proves the null above is the compare
+      // talking and not the stub failing to return anything.
+      expect(
+        await getDirectoryByToken(
+          stubDatastore({ ...blankDirectory, proxy_token_hash: hash }),
+          "tok_presented",
+        ),
+      ).toMatchObject({ id: "dir_stub" });
     });
   });
 
@@ -117,21 +177,42 @@ describe("proxy token hashing", () => {
       expect(await getDirectoryByToken(env.DB, "okta_tok_live_9f3a")).toMatchObject({ id });
     });
 
-    it("converts only the legacy rows in a mixed table", async () => {
+    it("converges from a half-converted table, leaving the done rows byte-identical", async () => {
+      // The realistic bad state: a container killed partway through the pass, so
+      // some rows are hashed and some are not. Prefix-driven detection handles it by
+      // construction — but "by construction" is the kind of claim that stops being
+      // true quietly, so it is asserted rather than trusted.
       const env = await createEnv();
       const legacy = await seedLegacyRow(env, "okta_tok_live_9f3a");
-      const current = await seedDirectory(env.DB, { proxy_token: "tok_current" });
+      const alreadyDone = await seedDirectory(env.DB, { proxy_token: "tok_current" });
+      const untouched = await storedRow(env, alreadyDone.id);
 
       expect(await backfillProxyTokenHashes(env.DB)).toBe(1);
 
-      // Both authenticate afterwards, which is the only property an operator cares
-      // about — one row was rewritten and the other must not have been touched.
+      // One boot finishes the job: both authenticate afterwards.
       expect(await getDirectoryByToken(env.DB, "okta_tok_live_9f3a")).toMatchObject({
         id: legacy,
       });
       expect(await getDirectoryByToken(env.DB, "tok_current")).toMatchObject({
-        id: current.id,
+        id: alreadyDone.id,
       });
+      // And the row that was already done was not rewritten — a re-hash here would
+      // be silent, and would retire a credential an IdP is still presenting.
+      expect(await storedRow(env, alreadyDone.id)).toEqual(untouched);
+    });
+
+    it("captures the hint in the same pass as the hash, because there is no later", async () => {
+      // Hash now, hint "in a follow-up" is hint never: the last 4 characters live in
+      // the plaintext this pass overwrites. Separate from the conversion test above
+      // so a regression names which half went missing.
+      const env = await createEnv();
+      const id = await seedLegacyRow(env, "okta_tok_live_9f3a");
+
+      await backfillProxyTokenHashes(env.DB);
+
+      const row = await storedRow(env, id);
+      expect(row?.proxy_token_hash).toBe(await hashProxyToken("okta_tok_live_9f3a"));
+      expect(row?.proxy_token_hint).toBe("9f3a");
     });
 
     it("converts a token that is itself 64 hex characters", async () => {
