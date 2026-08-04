@@ -1,6 +1,12 @@
 import type { Datastore } from "./datastore";
 import type { BackfillSummary, Directory, ResourceType } from "./types";
-import { insertProxyLog, shouldPersistLogs, upsertMapping } from "./db";
+import {
+  getMapping,
+  insertProxyLog,
+  listOtherMappingsByNativeId,
+  shouldPersistLogs,
+  upsertMapping,
+} from "./db";
 import {
   errorMessage,
   isRecord,
@@ -9,6 +15,7 @@ import {
   loadIdMaps,
   makeTranslator,
   mirrorUpsert,
+  nativeNamespaceKey,
   parseJson,
   scimFetch,
   type IdTranslationMaps,
@@ -353,8 +360,13 @@ interface DriftRepair {
  * Resolve the native row a 409 collided with by its unique attribute, update it
  * in place under its own id, and map shared-id -> that drifted id. Returns null
  * when the collision can't be attributed to a resolvable row (no value on the
- * WorkOS resource, or native can't find one), leaving the original 409 to be
- * reported as an unresolved failure.
+ * WorkOS resource, native can't find one, or the row isn't this directory's),
+ * leaving the original 409 to be reported as an unresolved failure.
+ *
+ * `userName`/`displayName` are unique per native namespace, not per directory, so
+ * in a deployment that fronts several directories into one native SCIM namespace
+ * a match on the attribute is not evidence that the row is this directory's — see
+ * `unattributedReason`.
  */
 async function repairDrift(
   db: Datastore,
@@ -377,6 +389,16 @@ async function repairDrift(
     driftedId = resolved;
   } catch (error) {
     pushError(errors, `${kind}/${nativeId}: resolving drift by ${attr}: ${errorMessage(error)}`);
+    return null;
+  }
+
+  const unowned = await unattributedReason(db, directory, kind, workosId, driftedId, resource);
+  if (unowned) {
+    pushError(
+      errors,
+      `${kind}/${nativeId}: ${attr} "${value}" is native id ${driftedId}, which ${unowned}; ` +
+        "drift left unrepaired",
+    );
     return null;
   }
 
@@ -403,6 +425,63 @@ async function repairDrift(
     maps.nativeToWorkos[kind].set(driftedId, workosId);
   }
   return { nativeId: driftedId, attr, value, result };
+}
+
+/**
+ * Why the matched native row can't be treated as this directory's resource, or
+ * null when it can. Attribution is positive — one of:
+ *
+ * - the mapping table already binds the row to this directory and this WorkOS id;
+ * - the row's id *is* the `externalId` WorkOS holds for the resource, which is the
+ *   signature of the drift this repair exists for: the listener created the row
+ *   under the IdP id (`idp_id` == `externalId`) while WorkOS kept the shared id.
+ *
+ * A row another directory in the same native namespace maps is never written —
+ * that would be one tenant's reconcile overwriting another tenant's resource.
+ * `externalId` equality between the two *resources* is deliberately not enough:
+ * a directory admin controls their own `externalId`s, so they could mint one
+ * matching the victim's and re-open the cross-directory write.
+ */
+async function unattributedReason(
+  db: Datastore,
+  directory: Directory,
+  kind: ResourceType,
+  workosId: string,
+  driftedId: string,
+  resource: Record<string, unknown>,
+): Promise<string | null> {
+  const others = await listOtherMappingsByNativeId(db, directory, kind, driftedId);
+  const foreign = others.find((mapping) =>
+    sharesNamespace(directory.native_url, mapping.native_url),
+  );
+  if (foreign) return `is already mapped by directory ${foreign.directory_id}`;
+
+  const mine = await getMapping(db, directory.id, kind, driftedId);
+  if (mine) {
+    return mine.workos_id === workosId
+      ? null
+      : `this directory already maps it to WorkOS ${mine.workos_id}`;
+  }
+
+  const ours = resource.externalId;
+  if (typeof ours !== "string" || !ours) {
+    return "is unmapped, and the WorkOS resource has no externalId to attribute it by";
+  }
+  if (ours !== driftedId) return `is unmapped and is not this directory's externalId ${ours}`;
+  return null;
+}
+
+/**
+ * Whether two directories' native base URLs can address the same native app, and
+ * so whether their ids can collide. Compared canonically, because equivalent URLs
+ * are stored verbatim (`https://x:443/scim/v2` and `https://X/scim/v2/` are one
+ * endpoint). Fails closed: a URL that won't parse is treated as possibly shared,
+ * which only ever refuses a repair.
+ */
+function sharesNamespace(ours: string, theirs: string): boolean {
+  const a = nativeNamespaceKey(ours);
+  const b = nativeNamespaceKey(theirs);
+  return a === null || b === null ? true : a === b;
 }
 
 /** GET native filtered on a unique attribute, returning the first match's id. */

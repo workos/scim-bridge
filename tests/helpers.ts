@@ -179,6 +179,7 @@ export interface SeedDirectoryOptions {
   mode?: Mode;
   name?: string;
   proxy_token?: string;
+  native_url?: string;
   native_token?: string;
   workos_token?: string;
   workos_directory_id?: string | null;
@@ -204,7 +205,7 @@ export async function seedDirectory(
       opts.name ?? "Test Directory",
       opts.mode ?? "dual-write",
       token,
-      NATIVE_URL,
+      opts.native_url ?? NATIVE_URL,
       opts.native_token ?? "native-secret",
       WORKOS_URL,
       opts.workos_token ?? "workos-secret",

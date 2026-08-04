@@ -347,6 +347,32 @@ export async function getMappingByWorkosId(
   );
 }
 
+/**
+ * Mappings of this native id held by *other* directories, each carrying that
+ * directory's native base URL so the caller can tell which of them address the
+ * same native app: ids only collide meaningfully within one native namespace, so
+ * two directories pointed at different endpoints can mint the same id for
+ * unrelated resources. URL comparison is the caller's job — it needs
+ * canonicalisation, which SQL string equality can't do.
+ */
+export async function listOtherMappingsByNativeId(
+  db: Datastore,
+  directory: Directory,
+  resourceType: ResourceType,
+  nativeId: string,
+): Promise<(IdMapping & { native_url: string })[]> {
+  const { results } = await withD1Retry(() =>
+    db
+      .prepare(
+        "SELECT m.*, d.native_url FROM id_mappings m JOIN scim_directories d ON d.id = m.directory_id " +
+          "WHERE m.resource_type = ? AND m.native_id = ? AND m.directory_id != ?",
+      )
+      .bind(resourceType, nativeId, directory.id)
+      .all<IdMapping & { native_url: string }>(),
+  );
+  return results;
+}
+
 export async function upsertMapping(
   db: Datastore,
   mapping: Pick<

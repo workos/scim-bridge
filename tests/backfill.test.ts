@@ -618,8 +618,14 @@ describe("runReconcileFromWorkos", () => {
     fake = installFakeUpstreams();
     // No mapping seeded: the shared id translates to itself, so reconcile first
     // PUTs /Users/shared-1. Native holds that user under the drifted IdP id, so
-    // its userName collides → 409.
-    fake.route("workos", "GET", "/Users", listPage([{ id: "shared-1", userName: "one@x.test" }]));
+    // its userName collides → 409. The drifted row's id is the externalId WorkOS
+    // holds (the listener adopted `idp_id`), which is what attributes it here.
+    fake.route(
+      "workos",
+      "GET",
+      "/Users",
+      listPage([{ id: "shared-1", userName: "one@x.test", externalId: "idp-1" }]),
+    );
     fake.route("workos", "GET", "/Groups", listPage([]));
     fake.route("native", "PUT", "/Users/shared-1", scimJson(409, { detail: "userName exists" }));
     fake.route("native", "GET", "/Users", () =>
@@ -654,7 +660,209 @@ describe("runReconcileFromWorkos", () => {
     // The repair PUT carried the drifted id in both the path and the migrated-id header.
     const repair = fake.callsTo("native")[2];
     expect(repair.headers.get(MIGRATED_ID_HEADER)).toBe("idp-1");
-    expect(repair.json()).toEqual({ id: "idp-1", userName: "one@x.test" });
+    expect(repair.json()).toEqual({ id: "idp-1", userName: "one@x.test", externalId: "idp-1" });
+  });
+
+  it("refuses to repair a colliding row another directory maps", async () => {
+    const env = await createEnv();
+    // Two directories fronted into ONE native namespace, where userName
+    // uniqueness is namespace-global: this directory's reconcile must not adopt a
+    // row that is the other directory's resource.
+    const other = await seedDirectory(env.DB, { name: "Org B", mode: "dual-write" });
+    const directory = await seedDirectory(env.DB, { name: "Org A", mode: "workos-only" });
+    await upsertMapping(env.DB, {
+      directory_id: other.id,
+      resource_type: "Users",
+      native_id: "victim-1",
+      workos_id: "orgb-1",
+      strategy: "migrated-id",
+    });
+    fake = installFakeUpstreams();
+    fake.route(
+      "workos",
+      "GET",
+      "/Users",
+      listPage([{ id: "attacker-1", userName: "one@x.test", externalId: "victim-1" }]),
+    );
+    fake.route("workos", "GET", "/Groups", listPage([]));
+    fake.route("native", "PUT", "/Users/attacker-1", scimJson(409, { detail: "userName exists" }));
+    fake.route("native", "GET", "/Users", () =>
+      listPage([{ id: "victim-1", userName: "one@x.test" }]),
+    );
+    fake.route("native", "PUT", "/Users/victim-1", (call) => scimJson(200, call.json()));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    // The mapping wins even though the attacker minted an externalId matching the
+    // victim's native id: a row another directory maps is never written, and the
+    // 409 stays a failure.
+    expect(fake.callsTo("native").some((c) => c.path.startsWith("/Users/victim-1"))).toBe(false);
+    expect(summary.users).toEqual({ total: 1, mirrored: 0, failed: 1 });
+    expect(summary.errors).toEqual([
+      `Users/attacker-1: userName "one@x.test" is native id victim-1, which is already mapped by ` +
+        `directory ${other.id}; drift left unrepaired`,
+      "Users/attacker-1: native returned 409 (userName/displayName exists under a different id; drift unresolved)",
+    ]);
+    expect(await mappingRows(env, directory.id)).toEqual([]);
+  });
+
+  it("refuses to repair an unmapped colliding row that is not this directory's externalId", async () => {
+    const env = await createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "workos-only" });
+    fake = installFakeUpstreams();
+    // Nothing maps the colliding row, so the only thing that would attribute it is
+    // its id being the externalId WorkOS holds — which is not the case here.
+    fake.route(
+      "workos",
+      "GET",
+      "/Users",
+      listPage([{ id: "attacker-1", userName: "one@x.test", externalId: "orga-ext" }]),
+    );
+    fake.route("workos", "GET", "/Groups", listPage([]));
+    fake.route("native", "PUT", "/Users/attacker-1", scimJson(409, { detail: "userName exists" }));
+    fake.route("native", "GET", "/Users", () =>
+      listPage([{ id: "victim-1", userName: "one@x.test", externalId: "orga-ext" }]),
+    );
+    fake.route("native", "PUT", "/Users/victim-1", (call) => scimJson(200, call.json()));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    // Note the victim row carries the *same* externalId: resource-level externalId
+    // equality is attacker-mintable, so it must not authorize the write.
+    expect(fake.callsTo("native").some((c) => c.path.startsWith("/Users/victim-1"))).toBe(false);
+    expect(summary.users).toEqual({ total: 1, mirrored: 0, failed: 1 });
+    expect(summary.errors[0]).toBe(
+      'Users/attacker-1: userName "one@x.test" is native id victim-1, which is unmapped and is ' +
+        "not this directory's externalId orga-ext; drift left unrepaired",
+    );
+    expect(await mappingRows(env, directory.id)).toEqual([]);
+  });
+
+  it("refuses to repair a colliding row mapped through an equivalent native url", async () => {
+    const env = await createEnv();
+    // Same native app, written differently: explicit default port and a trailing
+    // slash. Namespace comparison is canonical, so the foreign mapping still wins.
+    const other = await seedDirectory(env.DB, {
+      name: "Org B",
+      native_url: "https://Native.test:443/scim/v2/",
+    });
+    const directory = await seedDirectory(env.DB, { name: "Org A", mode: "workos-only" });
+    await upsertMapping(env.DB, {
+      directory_id: other.id,
+      resource_type: "Users",
+      native_id: "victim-1",
+      workos_id: "orgb-1",
+      strategy: "migrated-id",
+    });
+    fake = installFakeUpstreams();
+    fake.route(
+      "workos",
+      "GET",
+      "/Users",
+      listPage([{ id: "attacker-1", userName: "one@x.test", externalId: "victim-1" }]),
+    );
+    fake.route("workos", "GET", "/Groups", listPage([]));
+    fake.route("native", "PUT", "/Users/attacker-1", scimJson(409, { detail: "userName exists" }));
+    fake.route("native", "GET", "/Users", () =>
+      listPage([{ id: "victim-1", userName: "one@x.test" }]),
+    );
+    fake.route("native", "PUT", "/Users/victim-1", (call) => scimJson(200, call.json()));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    expect(fake.callsTo("native").some((c) => c.path.startsWith("/Users/victim-1"))).toBe(false);
+    expect(summary.users).toEqual({ total: 1, mirrored: 0, failed: 1 });
+    expect(summary.errors[0]).toBe(
+      `Users/attacker-1: userName "one@x.test" is native id victim-1, which is already mapped by ` +
+        `directory ${other.id}; drift left unrepaired`,
+    );
+    expect(await mappingRows(env, directory.id)).toEqual([]);
+  });
+
+  it("repairs drift when another directory maps the same id in a different native namespace", async () => {
+    const env = await createEnv();
+    // Same native id, unrelated native endpoints: not a namespace collision, so
+    // the foreign mapping must not block this directory's repair.
+    const other = await seedDirectory(env.DB, {
+      name: "Other",
+      native_url: "https://other.native.test/scim/v2",
+    });
+    const directory = await seedDirectory(env.DB, { mode: "workos-only" });
+    await upsertMapping(env.DB, {
+      directory_id: other.id,
+      resource_type: "Users",
+      native_id: "idp-1",
+      workos_id: "other-1",
+      strategy: "migrated-id",
+    });
+    fake = installFakeUpstreams();
+    fake.route(
+      "workos",
+      "GET",
+      "/Users",
+      listPage([{ id: "shared-1", userName: "one@x.test", externalId: "idp-1" }]),
+    );
+    fake.route("workos", "GET", "/Groups", listPage([]));
+    fake.route("native", "PUT", "/Users/shared-1", scimJson(409, { detail: "userName exists" }));
+    fake.route("native", "GET", "/Users", () =>
+      listPage([{ id: "idp-1", userName: "one@x.test" }]),
+    );
+    fake.route("native", "PUT", "/Users/idp-1", (call) => scimJson(200, call.json()));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    expect(summary.users).toEqual({ total: 1, mirrored: 1, failed: 0 });
+    expect(await mappingRows(env, directory.id)).toEqual([
+      {
+        resource_type: "Users",
+        native_id: "idp-1",
+        workos_id: "shared-1",
+        strategy: "fallback-post",
+      },
+    ]);
+  });
+
+  it("refuses to replace the membership of a colliding group another directory maps", async () => {
+    const env = await createEnv();
+    const other = await seedDirectory(env.DB, { name: "Org B", mode: "dual-write" });
+    const directory = await seedDirectory(env.DB, { name: "Org A", mode: "workos-only" });
+    await upsertMapping(env.DB, {
+      directory_id: other.id,
+      resource_type: "Groups",
+      native_id: "victim-g1",
+      workos_id: "orgb-g1",
+      strategy: "migrated-id",
+    });
+    fake = installFakeUpstreams();
+    fake.route("workos", "GET", "/Users", listPage([]));
+    fake.route(
+      "workos",
+      "GET",
+      "/Groups",
+      listPage([{ id: "attacker-g1", displayName: "Admins", externalId: "victim-g1" }]),
+    );
+    fake.route(
+      "native",
+      "PUT",
+      "/Groups/attacker-g1",
+      scimJson(409, { detail: "displayName exists" }),
+    );
+    fake.route("native", "GET", "/Groups", () =>
+      listPage([
+        {
+          id: "victim-g1",
+          displayName: "Admins",
+          members: [{ value: "orgb-user", display: "someone@orgb.test" }],
+        },
+      ]),
+    );
+    fake.route("native", "PUT", "/Groups/victim-g1", (call) => scimJson(200, call.json()));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    expect(fake.callsTo("native").some((c) => c.path.startsWith("/Groups/victim-g1"))).toBe(false);
+    expect(summary.groups).toEqual({ total: 1, mirrored: 0, failed: 1 });
+    expect(await mappingRows(env, directory.id)).toEqual([]);
   });
 
   it("repairs a drifted group on 409 by resolving on displayName", async () => {
@@ -662,7 +870,12 @@ describe("runReconcileFromWorkos", () => {
     const directory = await seedDirectory(env.DB, { mode: "workos-only" });
     fake = installFakeUpstreams();
     fake.route("workos", "GET", "/Users", listPage([]));
-    fake.route("workos", "GET", "/Groups", listPage([{ id: "shared-g1", displayName: "Eng" }]));
+    fake.route(
+      "workos",
+      "GET",
+      "/Groups",
+      listPage([{ id: "shared-g1", displayName: "Eng", externalId: "idp-g1" }]),
+    );
     fake.route(
       "native",
       "PUT",
@@ -697,7 +910,12 @@ describe("runReconcileFromWorkos", () => {
     // afterwards lists that user by its WorkOS shared id. The member value must
     // come out as the drifted native id — otherwise the group PUT replaces the
     // membership set with a non-existent id and silently drops the real user.
-    fake.route("workos", "GET", "/Users", listPage([{ id: "shared-1", userName: "one@x.test" }]));
+    fake.route(
+      "workos",
+      "GET",
+      "/Users",
+      listPage([{ id: "shared-1", userName: "one@x.test", externalId: "idp-1" }]),
+    );
     fake.route(
       "workos",
       "GET",
