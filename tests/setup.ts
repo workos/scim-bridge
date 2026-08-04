@@ -1,12 +1,18 @@
-import { afterEach } from "vitest";
-import { closeTestDatabases } from "./helpers";
+import { afterAll, afterEach } from "vitest";
+import { closeTestDatabases, teardownTestDatabases } from "./helpers";
 
 /**
- * Tear down whatever databases a test created. Needed for the Postgres engine —
- * each database is a schema plus a connection pool, and a run that leaked them
- * would exhaust `max_connections` long before the suite finished. A no-op for the
- * in-memory SQLite engine, which the garbage collector handles.
+ * Release the databases a test held, then drop them when the file is done.
+ *
+ * For Postgres each database is a schema this worker migrated once and reuses, so
+ * releasing is what lets the next test have it (reset on the way out). Dropping at
+ * the end returns the schemas and their connections. Both are no-ops for the
+ * in-memory SQLite engine.
  */
 afterEach(async () => {
   await closeTestDatabases();
+});
+
+afterAll(async () => {
+  await teardownTestDatabases();
 });
