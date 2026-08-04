@@ -153,14 +153,15 @@ export async function loader({ context }: LoaderFunctionArgs) {
     withD1Retry(() =>
       env.DB.prepare(
         "SELECT g.display_name AS name, COUNT(m.user_id) AS member_count " +
-          "FROM native_groups g LEFT JOIN native_group_members m ON m.group_id = g.id GROUP BY g.id",
+          "FROM native_groups g LEFT JOIN native_group_members m ON m.group_id = g.id " +
+          "GROUP BY g.id ORDER BY g.display_name, g.id",
       ).all<GroupRow>(),
     ),
     withD1Retry(() =>
       env.DB.prepare(
         "SELECT g.display_name AS name, COUNT(m.user_id) AS member_count " +
           "FROM idp_groups g LEFT JOIN idp_group_members m ON m.group_id = g.id " +
-          "WHERE g.directory_id = ? GROUP BY g.id",
+          "WHERE g.directory_id = ? GROUP BY g.id ORDER BY g.display_name, g.id",
       )
         .bind(directory.id)
         .all<GroupRow>(),

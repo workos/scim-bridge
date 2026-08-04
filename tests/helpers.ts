@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { SqliteDatastore, SqliteMigrator } from "../server/db/sqlite";
+import { newDirectoryId } from "../workers/shared/ids";
 import { runMigrationsSync } from "../server/db/migrate";
 import type { Directory, Mode, PocEnv } from "../workers/shared/types";
 
@@ -70,11 +71,13 @@ export async function seedDirectory(
   await db
     .prepare(
       `INSERT INTO scim_directories
-         (name, mode, proxy_token, native_url, native_token, workos_url, workos_token,
+         (id, name, mode, proxy_token, native_url, native_token, workos_url, workos_token,
           workos_directory_id, log_persistence)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
+      // The same generator production uses, now that the column has no default.
+      newDirectoryId(),
       opts.name ?? "Test Directory",
       opts.mode ?? "dual-write",
       token,

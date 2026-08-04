@@ -6,7 +6,7 @@
 INSERT INTO poc_config (key, value) VALUES ('idp.public_url', 'http://localhost:8789');
 
 CREATE TABLE IF NOT EXISTS idp_users (
-  id TEXT PRIMARY KEY DEFAULT ('idpu_' || lower(hex(randomblob(8)))),
+  id TEXT PRIMARY KEY,
   directory_id TEXT NOT NULL,
   user_name TEXT NOT NULL,
   -- The stable external key the IdP emits as externalId (the DSync idp_id).
@@ -26,7 +26,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_idp_users_conn_username
   ON idp_users (directory_id, user_name);
 
 CREATE TABLE IF NOT EXISTS idp_groups (
-  id TEXT PRIMARY KEY DEFAULT ('idpg_' || lower(hex(randomblob(8)))),
+  id TEXT PRIMARY KEY,
   directory_id TEXT NOT NULL,
   display_name TEXT NOT NULL,
   external_id TEXT NOT NULL,

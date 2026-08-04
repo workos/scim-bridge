@@ -67,8 +67,9 @@ describe("directory import", () => {
       const row = await only(env);
       expect(row.name).toBe("Acme — Okta");
       expect(row.workos_directory_id).toBe("directory_01A");
-      // No seventh column: the schema default still mints the token.
+      // No seventh column: insertDirectory mints the token (shared/ids.ts).
       expect(row.proxy_token).toMatch(/^[0-9a-f]{48}$/);
+      expect(row.id).toMatch(/^dir_[0-9a-f]{16}$/);
     });
 
     it("imports the trailing proxy token when a row carries one", async () => {
@@ -147,6 +148,17 @@ describe("directory import", () => {
       expect(result.importErrors?.[0]).toContain("at least 16 characters");
       // Rejected before the insert, so no half-imported row.
       expect((await listDirectories(env.DB)).map((d) => d.name)).toEqual(["Beta"]);
+    });
+
+    it("lists a same-second bulk import by name, not by minted id", async () => {
+      const env = createEnv();
+
+      // Every row lands in the same second, so created_at cannot order them and
+      // the minted dir_… id is random. Without a meaningful tiebreaker the panel
+      // would list a bulk import in a different order on each engine.
+      await bulkImport(env, ["Zeta,,,,,", "Acme,,,,,", "Mid,,,,,"].join("\n"));
+
+      expect((await listDirectories(env.DB)).map((d) => d.name)).toEqual(["Acme", "Mid", "Zeta"]);
     });
 
     it("still reports a duplicate WorkOS directory id distinctly", async () => {

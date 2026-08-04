@@ -2,6 +2,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { decryptSecret, encryptSecret } from "../workers/shared/crypto";
 import { upsertMapping } from "../workers/shared/db";
 import {
+  newDirectoryId,
+  newIdpGroupId,
+  newIdpUserId,
+  newProxyToken,
+  newScimToken,
+} from "../workers/shared/ids";
+import {
   authorizationToken,
   errorMessage,
   isRecord,
@@ -517,6 +524,28 @@ describe("parseJson", () => {
     expect(parseJson("123")).toBeNull();
     expect(parseJson("null")).toBeNull();
     expect(parseJson("true")).toBeNull();
+  });
+});
+
+describe("generated ids and tokens", () => {
+  const generators = [
+    { name: "newDirectoryId", make: newDirectoryId, shape: /^dir_[0-9a-f]{16}$/ },
+    { name: "newProxyToken", make: newProxyToken, shape: /^[0-9a-f]{48}$/ },
+    { name: "newScimToken", make: newScimToken, shape: /^[0-9a-f]{32}$/ },
+    { name: "newIdpUserId", make: newIdpUserId, shape: /^idpu_[0-9a-f]{16}$/ },
+    { name: "newIdpGroupId", make: newIdpGroupId, shape: /^idpg_[0-9a-f]{16}$/ },
+  ];
+
+  // The shapes the SQL column defaults used to produce, now that the app mints
+  // them for every driver: 'dir_'/'idpu_'/'idpg_' + 8 bytes hex, 24 bytes for a
+  // proxy token, 16 for a bundled endpoint's token.
+  it.each(generators)("$name keeps its shape", ({ make, shape }) => {
+    expect(make()).toMatch(shape);
+  });
+
+  it.each(generators)("$name does not repeat", ({ make }) => {
+    const values = new Set(Array.from({ length: 500 }, () => make()));
+    expect(values.size).toBe(500);
   });
 });
 

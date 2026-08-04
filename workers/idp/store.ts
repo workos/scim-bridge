@@ -1,11 +1,12 @@
 import type { Datastore } from "../shared/datastore";
 import type { IdpActivity, IdpAutoState, IdpGroup, IdpUser, Origin } from "./types";
 import { withD1Retry } from "../shared/db";
+import { newIdpGroupId, newIdpUserId } from "../shared/ids";
 
 export async function listUsers(db: Datastore, directoryId: string): Promise<IdpUser[]> {
   const { results } = await withD1Retry(() =>
     db
-      .prepare("SELECT * FROM idp_users WHERE directory_id = ? ORDER BY created_at")
+      .prepare("SELECT * FROM idp_users WHERE directory_id = ? ORDER BY created_at, user_name")
       .bind(directoryId)
       .all<IdpUser>(),
   );
@@ -15,7 +16,7 @@ export async function listUsers(db: Datastore, directoryId: string): Promise<Idp
 export async function listGroups(db: Datastore, directoryId: string): Promise<IdpGroup[]> {
   const { results } = await withD1Retry(() =>
     db
-      .prepare("SELECT * FROM idp_groups WHERE directory_id = ? ORDER BY created_at")
+      .prepare("SELECT * FROM idp_groups WHERE directory_id = ? ORDER BY created_at, display_name")
       .bind(directoryId)
       .all<IdpGroup>(),
   );
@@ -87,10 +88,11 @@ export async function insertUser(
     () =>
       db
         .prepare(
-          "INSERT INTO idp_users (directory_id, user_name, external_id, given_name, family_name, active) " +
-            "VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
+          "INSERT INTO idp_users (id, directory_id, user_name, external_id, given_name, family_name, active) " +
+            "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *",
         )
         .bind(
+          newIdpUserId(),
           user.directory_id,
           user.user_name,
           user.external_id,
@@ -110,9 +112,9 @@ export async function insertGroup(
     () =>
       db
         .prepare(
-          "INSERT INTO idp_groups (directory_id, display_name, external_id) VALUES (?, ?, ?) RETURNING *",
+          "INSERT INTO idp_groups (id, directory_id, display_name, external_id) VALUES (?, ?, ?, ?) RETURNING *",
         )
-        .bind(group.directory_id, group.display_name, group.external_id)
+        .bind(newIdpGroupId(), group.directory_id, group.display_name, group.external_id)
         .first<IdpGroup>() as Promise<IdpGroup>,
   );
 }

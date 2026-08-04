@@ -108,14 +108,14 @@ export async function loader({ context }: LoaderFunctionArgs) {
     withD1Retry(() =>
       env.DB.prepare(
         "SELECT id, user_name, external_id, given_name, family_name, active, scim_id, last_status " +
-          "FROM idp_users WHERE directory_id = ? ORDER BY created_at",
+          "FROM idp_users WHERE directory_id = ? ORDER BY created_at, user_name",
       )
         .bind(directory.id)
         .all<IdpUserRow>(),
     ),
     withD1Retry(() =>
       env.DB.prepare(
-        "SELECT id, display_name, external_id, scim_id FROM idp_groups WHERE directory_id = ? ORDER BY created_at",
+        "SELECT id, display_name, external_id, scim_id FROM idp_groups WHERE directory_id = ? ORDER BY created_at, display_name",
       )
         .bind(directory.id)
         .all<IdpGroupRow>(),

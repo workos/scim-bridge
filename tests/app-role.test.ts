@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   loadConfig,
+  seedGeneratedTokens,
   seedNativeAppConfig,
   seedNativeAppDirectories,
   type AppConfig,
@@ -102,6 +103,29 @@ describe("APP_ROLE", () => {
     });
   });
 
+  describe("boot-seeded tokens", () => {
+    it("mints the bundled endpoints' tokens on first boot, once", async () => {
+      const env = createEnv();
+      // Migration 0002 used to generate these in SQL, which would give each
+      // driver a different secret; a fresh database now starts without them.
+      expect(await getConfig(env.DB, "native.scim_token")).toBeNull();
+      expect(await getConfig(env.DB, "mock_workos.scim_token")).toBeNull();
+
+      await seedGeneratedTokens(env);
+      const native = await getConfig(env.DB, "native.scim_token");
+      const mock = await getConfig(env.DB, "mock_workos.scim_token");
+      await seedGeneratedTokens(env);
+
+      expect(native).toMatch(/^[0-9a-f]{32}$/);
+      expect(mock).toMatch(/^[0-9a-f]{32}$/);
+      expect(native).not.toBe(mock);
+      // A restart reuses them: rotating would break the bridge's writes to the
+      // native app and every copy-pasted value in the panel.
+      expect(await getConfig(env.DB, "native.scim_token")).toBe(native);
+      expect(await getConfig(env.DB, "mock_workos.scim_token")).toBe(mock);
+    });
+  });
+
   describe("env-seeded config", () => {
     it("lands the native-app secrets and the bridge URL in poc_config", async () => {
       const env = createEnv();
@@ -117,14 +141,16 @@ describe("APP_ROLE", () => {
       expect(await getConfig(env.DB, "mock_workos.emit_dsync")).toBe("false");
     });
 
-    it("keeps the migration's own seeds for the optional vars when unset", async () => {
+    it("does not rotate the boot-seeded token when the var is unset", async () => {
       const env = createEnv();
+      const unset = nativeAppConfig({ nativeScimToken: null, bridgeStatusUrl: null });
+      // First boot mints the token; a restart with NATIVE_SCIM_TOKEN still unset
+      // must leave it alone, or every restart would break the bridge's writes.
+      await seedNativeAppConfig(env, unset);
       const seeded = await getConfig(env.DB, "native.scim_token");
-      await seedNativeAppConfig(
-        env,
-        nativeAppConfig({ nativeScimToken: null, bridgeStatusUrl: null }),
-      );
+      await seedNativeAppConfig(env, unset);
 
+      expect(seeded).toMatch(/^[0-9a-f]{32}$/);
       expect(await getConfig(env.DB, "native.scim_token")).toBe(seeded);
       expect(await getConfig(env.DB, "proxy.public_url")).toBe("http://localhost:8787");
     });

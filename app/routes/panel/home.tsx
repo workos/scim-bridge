@@ -141,9 +141,9 @@ export async function action({ context, request }: ActionFunctionArgs) {
     if (tokenError) {
       return { error: tokenError };
     }
-    let row: { id: string } | null;
+    let id: string;
     try {
-      row = await insertDirectory(env.DB, {
+      id = await insertDirectory(env.DB, {
         name,
         native_url: field("native_url"),
         native_token: field("native_token"),
@@ -155,10 +155,7 @@ export async function action({ context, request }: ActionFunctionArgs) {
     } catch (error) {
       return { error: directoryError(error) };
     }
-    if (!row) {
-      return { error: "The directory could not be created. Check the database and retry." };
-    }
-    return redirect(`/panel/directories/${row.id}`);
+    return redirect(`/panel/directories/${id}`);
   }
 
   if (intent === "bulk-import") {

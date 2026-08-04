@@ -8,11 +8,11 @@
 --    decision on it via GET /status/directories/{id}. Optional — the bridge's
 --    own id works in the path too.
 CREATE TABLE scim_directories_new (
-  id TEXT PRIMARY KEY DEFAULT ('dir_' || lower(hex(randomblob(8)))),
+  id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   mode TEXT NOT NULL DEFAULT 'passthrough'
     CHECK (mode IN ('passthrough', 'dual-write', 'workos-only')),
-  proxy_token TEXT NOT NULL UNIQUE DEFAULT (lower(hex(randomblob(24)))),
+  proxy_token TEXT NOT NULL UNIQUE,
   native_url TEXT NOT NULL DEFAULT '',
   native_token TEXT NOT NULL DEFAULT '',
   workos_url TEXT NOT NULL DEFAULT '',
