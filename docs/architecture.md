@@ -2,7 +2,8 @@
 
 scim-bridge is a single Node process that puts a reversible SCIM migration proxy
 in front of a customer's existing SCIM endpoint and mirrors changes into WorkOS
-Directory Sync. It also runs on Cloudflare Workers + D1; the same code and
+Directory Sync. The datastore is a configured choice — a SQLite file or Postgres
+(`DATABASE_DRIVER`) — behind one interface; the same code and
 migrations serve both.
 
 ## Process layout

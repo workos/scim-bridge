@@ -48,10 +48,33 @@ by design.
 | docker compose | the named volume in `docker-compose.yml` (already wired) |
 | AWS | ECS/Fargate with an **EFS** volume, or EC2 with an **EBS** volume |
 | Fly.io | `fly volumes create` and mount it |
-| **Cloudflare Containers** | **none — the disk is ephemeral.** Use Postgres, or accept that every redeploy wipes the database. |
+| **Cloudflare Containers** | **the container's local disk is ephemeral** — it is recreated with the container. See [Cloudflare](#cloudflare) below for what is durable there. |
 
 That last row is the one to read twice: it is where our own e2e ran, so anyone
 copying that setup inherits the problem the hard way.
+
+#### Cloudflare
+
+The precise statement is that **the container's local disk does not persist** —
+not that Cloudflare can't be durable. There is no volume to mount, so durability
+has to come from somewhere the container can reach over the network:
+
+- **External Postgres, via [Hyperdrive](https://developers.cloudflare.com/hyperdrive/)** —
+  works today: `DATABASE_DRIVER=postgres` with `DATABASE_URL` pointed through it.
+  Hyperdrive is what makes the connection pooling sane from Cloudflare's edge.
+- **Checkpoint the SQLite file to [R2](https://developers.cloudflare.com/r2/) and
+  restore it on boot** — the Cloudflare analogue of the Litestream→S3 option above.
+  Lossy by the checkpoint interval (anything written since the last upload is
+  gone), and it is configuration plus a boot script rather than a code change.
+- **A Durable Object / D1 driver** — possible future work, *not* a current option.
+
+That last one needs one sentence of explanation, because it is the same fact that
+kept a `d1` driver out of the datastore work and it will be asked again:
+**bindings belong to the Worker, not to the container's Node process.** A
+container fronted by a Worker cannot reach D1 or Durable Object storage directly;
+it can only reach them over the wire, through something the Worker exposes. That
+is a driver with an HTTP transport — a new component to write and operate, with a
+network hop per statement — not a configuration flag.
 
 At boot the server prints the absolute path it opened and, on Linux, the
 filesystem underneath it:

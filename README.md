@@ -177,8 +177,9 @@ scim-bridge is a single Node process:
 - **`app/`** — the React Router control panel (vendored WorkOS design system).
 - **`workers/native`, `workers/idp`** — the demo simulators (DEMO_MODE only).
 
-It also deploys to Cloudflare Workers + D1; the D1 migration files under
-`migrations/` are shared by both runtimes.
+The datastore is a configured choice: a SQLite file (default) or Postgres, behind
+one narrow interface — see [docs/runbook.md#durable-storage](docs/runbook.md#durable-storage)
+for which to pick and why.
 
 ## License
 
