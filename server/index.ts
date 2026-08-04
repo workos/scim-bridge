@@ -10,6 +10,7 @@ import nativeWorker from "../workers/native/index";
 import idpWorker from "../workers/idp/index";
 import type { PocEnv } from "../workers/shared/types";
 import {
+  decidePanelAuth,
   loadConfig,
   seedConfig,
   seedDemoDirectory,
@@ -139,8 +140,6 @@ async function mountBridge(): Promise<void> {
   // request by its own proxy token, and /healthz stays open for load-balancer
   // probes, so none of them are gated here.
   app.use("*", async (c, next) => {
-    const { panelAuthUser, panelAuthPassword } = config;
-    if (!panelAuthUser || !panelAuthPassword) return next();
     const path = new URL(c.req.url).pathname;
     if (
       path === "/healthz" ||
@@ -152,12 +151,7 @@ async function mountBridge(): Promise<void> {
       return next();
     }
 
-    const header = c.req.header("Authorization") ?? "";
-    const [scheme, encoded] = header.split(" ");
-    const [user, pass] = Buffer.from(encoded ?? "", "base64")
-      .toString()
-      .split(":");
-    if (scheme === "Basic" && user === panelAuthUser && pass === panelAuthPassword) return next();
+    if (decidePanelAuth(config, c.req.header("Authorization") ?? null) !== "denied") return next();
     return c.body("Authentication required.", 401, {
       "WWW-Authenticate": 'Basic realm="scim-bridge", charset="UTF-8"',
     });

@@ -179,6 +179,43 @@ export function loopbackBase(config: AppConfig): string {
   return `http://127.0.0.1:${config.port}`;
 }
 
+export type PanelAuthDecision = "open" | "granted" | "denied";
+
+/**
+ * Whether the panel's Basic-auth gate admits a request.
+ *
+ * `open` means no credentials are configured at all — the documented "front it
+ * with your own reverse proxy / SSO" deployment. Anything else demands a
+ * matching header, including a *half*-configured pair: a username with no
+ * password is a misconfiguration, and treating it as `open` served every
+ * directory's decrypted SCIM tokens to anonymous callers (VULN-1612).
+ *
+ * Lives here rather than in the middleware because the middleware only exists
+ * once the react-router build is mounted, and a decision this consequential
+ * should be testable without one.
+ */
+export function decidePanelAuth(
+  config: Pick<AppConfig, "panelAuthUser" | "panelAuthPassword">,
+  authorizationHeader: string | null,
+): PanelAuthDecision {
+  const { panelAuthUser, panelAuthPassword } = config;
+  if (!panelAuthUser && !panelAuthPassword) return "open";
+  // Half a pair can never be matched: the configured side would have to equal a
+  // supplied value while the unset side compares against null, so demand both.
+  if (!panelAuthUser || !panelAuthPassword) return "denied";
+
+  const [scheme, encoded] = (authorizationHeader ?? "").split(" ");
+  if (scheme !== "Basic") return "denied";
+  // Split once: a colon is legal inside a password, so everything after the
+  // first one belongs to it.
+  const decoded = Buffer.from(encoded ?? "", "base64").toString();
+  const separator = decoded.indexOf(":");
+  if (separator === -1) return "denied";
+  const user = decoded.slice(0, separator);
+  const pass = decoded.slice(separator + 1);
+  return user === panelAuthUser && pass === panelAuthPassword ? "granted" : "denied";
+}
+
 /**
  * Push global params into `poc_config` so the existing `getConfig`-based code
  * (which reads `proxy.public_url`, and in demo mode the simulator URLs) sees

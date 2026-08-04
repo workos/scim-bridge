@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  decidePanelAuth,
   loadConfig,
   seedGeneratedTokens,
   seedNativeAppConfig,
@@ -405,6 +406,63 @@ describe("APP_ROLE", () => {
       expect(await listenerActions(env)).toEqual(["ignored"]);
       expect(fake.calls).toHaveLength(0);
     });
+  });
+});
+
+/**
+ * The panel serves every directory's decrypted `native_token`, `workos_token`
+ * and `proxy_token`, on the same origin as the SCIM data plane an IdP has to
+ * reach from the public internet — so who its gate admits is the whole security
+ * boundary (VULN-1612). These pin the decision itself, which is why it lives in
+ * config.ts rather than inside the middleware.
+ */
+describe("panel auth", () => {
+  const basic = (user: string, pass: string) =>
+    `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
+
+  it("is open only when neither credential is configured", () => {
+    const open = { panelAuthUser: null, panelAuthPassword: null };
+    expect(decidePanelAuth(open, null)).toBe("open");
+    // Blank strings are what an operator gets from `PANEL_AUTH_USER=` in a .env
+    // or an unset value in docker-compose, so they must read as "not set".
+    expect(decidePanelAuth({ panelAuthUser: "", panelAuthPassword: "" }, null)).toBe("open");
+  });
+
+  it("denies a half-configured pair instead of skipping auth", () => {
+    // The regression: `||` here meant one missing var opened the whole panel.
+    // Anonymous, and with no signal to the operator that auth was off.
+    expect(decidePanelAuth({ panelAuthUser: "ada", panelAuthPassword: null }, null)).toBe("denied");
+    expect(decidePanelAuth({ panelAuthUser: null, panelAuthPassword: "hunter2" }, null)).toBe(
+      "denied",
+    );
+    // Not even by presenting the half that *is* configured, which is the shape a
+    // naive equality check would let through.
+    expect(
+      decidePanelAuth({ panelAuthUser: "ada", panelAuthPassword: null }, basic("ada", "")),
+    ).toBe("denied");
+    expect(
+      decidePanelAuth({ panelAuthUser: null, panelAuthPassword: "hunter2" }, basic("", "hunter2")),
+    ).toBe("denied");
+  });
+
+  it("grants only an exact match once both are configured", () => {
+    const config = { panelAuthUser: "ada", panelAuthPassword: "hunter2" };
+    expect(decidePanelAuth(config, basic("ada", "hunter2"))).toBe("granted");
+    expect(decidePanelAuth(config, basic("ada", "wrong"))).toBe("denied");
+    expect(decidePanelAuth(config, basic("eve", "hunter2"))).toBe("denied");
+    expect(decidePanelAuth(config, null)).toBe("denied");
+    expect(decidePanelAuth(config, "Bearer ada:hunter2")).toBe("denied");
+    expect(decidePanelAuth(config, "Basic not-base64!")).toBe("denied");
+    // A credential-less Basic header decodes to "", which has no separator.
+    expect(decidePanelAuth(config, "Basic ")).toBe("denied");
+  });
+
+  it("keeps a colon in the password intact", () => {
+    // Splitting on every colon truncates the password at the first one, so a
+    // valid credential is rejected and the operator sees an unexplained 401.
+    const config = { panelAuthUser: "ada", panelAuthPassword: "hunter2:extra:more" };
+    expect(decidePanelAuth(config, basic("ada", "hunter2:extra:more"))).toBe("granted");
+    expect(decidePanelAuth(config, basic("ada", "hunter2"))).toBe("denied");
   });
 });
 
