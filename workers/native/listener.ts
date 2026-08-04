@@ -606,6 +606,11 @@ async function directoryModeForEvent(db: Datastore, data: Json): Promise<string 
 }
 
 async function isDuplicate(db: Datastore, eventId: string): Promise<boolean> {
+  // Check-then-act: this read and the INSERT that follows it are only exclusive
+  // because one process handles webhooks. A second instance would need a partial
+  // unique index on event_id plus insert-first-then-decide (ENT-6753 §6) — the
+  // Postgres driver removes the storage-level single-writer constraint, not this
+  // one, which is why boot logs that a single instance is expected.
   // Only a delivery we actually processed (applied or skipped) counts as a
   // duplicate. An event merely logged as `ignored` — e.g. one that arrived while
   // the listener was inert pre-cutover — must be free to re-evaluate under the

@@ -1,11 +1,16 @@
 import { decryptSecret, encryptSecret } from "./crypto";
 import { newDirectoryId, newProxyToken } from "./ids";
-import type { Datastore } from "./datastore";
+import { TransientDatastoreError, type Datastore } from "./datastore";
 import type { Directory, IdMapping, Mode, ProxyLogEntry, ResourceType } from "./types";
 
-/** Retry transient local-dev D1 errors (miniflare surfaces these when several
- *  wrangler dev processes hit one SQLite file concurrently). Not needed against
- *  real D1, but harmless there. */
+/**
+ * Retry a transient datastore failure: a SQLite lock, a Postgres serialization
+ * conflict or lost pooled connection, the miniflare wording D1 used to surface.
+ *
+ * The driver classifies its own engine's errors and wraps them in
+ * `TransientDatastoreError`; the string match stays as a fallback for anything
+ * that reaches here unwrapped.
+ */
 export async function withD1Retry<T>(fn: () => Promise<T>): Promise<T> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 6; attempt++) {
@@ -14,6 +19,7 @@ export async function withD1Retry<T>(fn: () => Promise<T>): Promise<T> {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const transient =
+        error instanceof TransientDatastoreError ||
         /database is locked|SQLITE_BUSY|internal error|Failed to parse body as JSON|Network connection lost|storage caused object to be reset|reset because its code was updated/i.test(
           message,
         );
@@ -42,6 +48,34 @@ export async function setConfig(db: Datastore, key: string, value: string): Prom
       .bind(key, value)
       .run(),
   );
+}
+
+/**
+ * Set a config value only if the key is absent, and return the value that is
+ * actually stored — which may be another instance's, not the one passed in.
+ *
+ * `setConfig` overwrites, so two instances booting at once would both see a key
+ * absent and both write it. For a generated secret that is worse than a lost
+ * write: `seedDemoDirectory` copies `native.scim_token` into a directory row, so
+ * the loser's token would be stored on the row while the winner's sits in
+ * config, and the demo would 401 for a reason two boots old. `DO NOTHING` plus a
+ * read-back makes every racer agree on whichever value landed first.
+ */
+export async function setConfigIfAbsent(
+  db: Datastore,
+  key: string,
+  value: string,
+): Promise<string> {
+  await withD1Retry(() =>
+    db
+      .prepare(
+        "INSERT INTO poc_config (key, value, updated_at) VALUES (?, ?, datetime('now')) " +
+          "ON CONFLICT (key) DO NOTHING",
+      )
+      .bind(key, value)
+      .run(),
+  );
+  return (await getConfig(db, key)) ?? value;
 }
 
 /** Decrypt the at-rest secrets on a directory row (native/WorkOS tokens). No-op

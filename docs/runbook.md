@@ -15,6 +15,32 @@ Health: `GET /healthz` → `{"ok":true}`. Migrations apply on boot. Put the pane
 behind auth (`PANEL_AUTH_USER`/`PANEL_AUTH_PASSWORD`, or your own reverse proxy)
 and set `APP_ENCRYPTION_KEY` so per-directory tokens are encrypted at rest.
 
+## Choose a datastore
+
+`DATABASE_DRIVER` decides what the container writes to. Run **one instance** against
+either: the proxy serialises writes per directory and the DSync listener's dedup is
+check-then-act, so a second instance is not safe yet regardless of the engine.
+
+| | `sqlite` (default) | `postgres` |
+| --- | --- | --- |
+| Set | `DATABASE_PATH` (mount a volume) | `DATABASE_URL` |
+| Good for | docker compose, EC2, ECS+EFS | anyone already running RDS/Aurora |
+| Backups | your volume snapshots, or [Litestream](https://litestream.io) to S3 | whatever backs up the rest of your Postgres |
+| Migrations | `migrations/*.sql` | `migrations/postgres/*.sql` |
+
+```bash
+DATABASE_DRIVER=postgres
+DATABASE_URL=postgres://bridge:secret@scim-bridge-db.abc.eu-west-1.rds.amazonaws.com:5432/bridge
+```
+
+Both drivers apply their migrations on boot and are safe to restart. Switching
+driver does **not** move data: export the directories you care about (name, WorkOS
+directory id, proxy token) and re-import them on the other side.
+
+On **Cloudflare-hosted** deployments use Postgres or a durable volume — not D1.
+The container is a Node process and D1 bindings live in the Worker, so reaching D1
+would mean a query proxy per statement or losing atomic batches.
+
 ## Import directories
 
 Open `/panel`.

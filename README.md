@@ -136,6 +136,16 @@ npm run typecheck:gate  # asserts the gate rejects a deliberate type error
 npm run typecheck:app   # the control panel, which is not gated yet
 ```
 
+The test suite runs against the SQLite driver by default. To run the datastore
+conformance suite against Postgres too — the only thing that proves the driver
+holds — point `TEST_DATABASE_URL` at one:
+
+```bash
+docker run -d --rm --name sb-pg -e POSTGRES_PASSWORD=bridge -e POSTGRES_USER=bridge \
+  -e POSTGRES_DB=bridge -p 55432:5432 postgres:16-alpine
+TEST_DATABASE_URL=postgres://bridge:bridge@127.0.0.1:55432/bridge npm test
+```
+
 `npm run dev` serves the panel with HMR; the `/scim` proxy data-plane runs under
 `npm run build && npm start` (or in Docker).
 
