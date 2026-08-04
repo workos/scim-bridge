@@ -1,3 +1,4 @@
+import type { Datastore } from "./datastore";
 import type { BackfillSummary, Directory, ResourceType } from "./types";
 import { insertProxyLog, shouldPersistLogs } from "./db";
 import {
@@ -27,7 +28,7 @@ interface ResourceCounts {
  * Snapshot-then-replay: intentionally no guard against deletes that land
  * mid-backfill (the resurrection race the explainer documents).
  */
-export async function runBackfill(db: D1Database, directory: Directory): Promise<BackfillSummary> {
+export async function runBackfill(db: Datastore, directory: Directory): Promise<BackfillSummary> {
   const summary: BackfillSummary = {
     users: { total: 0, mirrored: 0, failed: 0 },
     groups: { total: 0, mirrored: 0, failed: 0 },
@@ -131,7 +132,7 @@ async function snapshot(
 }
 
 async function mirrorResource(
-  db: D1Database,
+  db: Datastore,
   directory: Directory,
   kind: ResourceType,
   original: Record<string, unknown>,
@@ -184,7 +185,7 @@ async function mirrorResource(
  * forward direction no longer relies on this: WorkOS creates only via POST.)
  */
 export async function runReconcileFromWorkos(
-  db: D1Database,
+  db: Datastore,
   directory: Directory,
 ): Promise<BackfillSummary> {
   const summary: BackfillSummary = {
@@ -229,7 +230,7 @@ export async function runReconcileFromWorkos(
 }
 
 async function pushToNative(
-  db: D1Database,
+  db: Datastore,
   directory: Directory,
   kind: ResourceType,
   resource: Record<string, unknown>,

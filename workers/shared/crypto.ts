@@ -12,8 +12,9 @@
  * (`db.encryptionKey`), not a module global — the proxy/workers and the bundled
  * control panel are separate module graphs but share one DB instance, so keying
  * off it is the only state both sides see. The derived key is cached per handle.
- * The Cloudflare D1 handle carries no `encryptionKey`, so that path stays
- * plaintext until wired.
+ * `encryptionKey` is part of the `Datastore` contract precisely so this cannot
+ * degrade silently: a driver that didn't carry one would store every upstream
+ * token in plaintext with nothing to say so.
  *
  * The proxy token is deliberately NOT encrypted — it is the lookup key
  * (`WHERE proxy_token = ?`), and AES-GCM is randomized, so an encrypted value
@@ -22,15 +23,22 @@
 
 const PREFIX = "enc:v1:";
 
+/** The slice of a handle this module needs: somewhere to find the raw key.
+ *  `Datastore` requires the property, so every driver satisfies it — but a bare
+ *  object does too, which keeps the unit tests free of a whole fake datastore. */
 interface SecretStore {
   encryptionKey?: string | null;
 }
 
+/** Callers reach this from several module graphs, and a handle that turns out to
+ *  carry no key at all degrades to plaintext rather than throwing. */
+type Handle = SecretStore | null | undefined;
+
 const derived = new WeakMap<object, { raw: string; key: CryptoKey }>();
 
-async function keyFor(db: unknown): Promise<CryptoKey | null> {
-  const raw = (db as SecretStore)?.encryptionKey ?? null;
-  if (!raw || typeof db !== "object" || db === null) return null;
+async function keyFor(db: Handle): Promise<CryptoKey | null> {
+  const raw = db?.encryptionKey ?? null;
+  if (!db || !raw || typeof db !== "object") return null;
   const cached = derived.get(db);
   if (cached && cached.raw === raw) return cached.key;
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
@@ -42,7 +50,7 @@ async function keyFor(db: unknown): Promise<CryptoKey | null> {
   return key;
 }
 
-export async function encryptSecret(db: unknown, plaintext: string): Promise<string> {
+export async function encryptSecret(db: Handle, plaintext: string): Promise<string> {
   const key = await keyFor(db);
   if (!key || plaintext === "") return plaintext;
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -55,7 +63,7 @@ export async function encryptSecret(db: unknown, plaintext: string): Promise<str
   return PREFIX + toBase64(packed);
 }
 
-export async function decryptSecret(db: unknown, value: string): Promise<string> {
+export async function decryptSecret(db: Handle, value: string): Promise<string> {
   if (!value.startsWith(PREFIX)) return value;
   const key = await keyFor(db);
   if (!key) return value; // no key configured — cannot decrypt; surface as-is

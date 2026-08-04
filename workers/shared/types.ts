@@ -73,5 +73,6 @@ export interface BackfillSummary {
 
 /** Bindings shared by the proxy worker, the native app worker, and the panel. */
 export interface PocEnv {
-  DB: D1Database;
+  DB: Datastore;
 }
+import type { Datastore } from "./datastore";

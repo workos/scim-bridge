@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
-import { SqliteD1 } from "../server/db/d1-sqlite";
-import { runMigrations } from "../server/db/migrate";
+import { SqliteDatastore, SqliteMigrator } from "../server/db/sqlite";
+import { runMigrationsSync } from "../server/db/migrate";
 import type { Directory, Mode, PocEnv } from "../workers/shared/types";
 
 /**
@@ -13,12 +13,12 @@ import type { Directory, Mode, PocEnv } from "../workers/shared/types";
  * two upstreams and the datastore file location differ from production.
  */
 
-/** In-memory D1-compatible database with all migrations applied. */
+/** In-memory datastore with all migrations applied. */
 export function createTestDb(): PocEnv["DB"] {
   const sqlite = new Database(":memory:");
   sqlite.pragma("foreign_keys = ON");
-  runMigrations(sqlite, new URL("../migrations", import.meta.url).pathname);
-  return new SqliteD1(sqlite) as unknown as PocEnv["DB"];
+  runMigrationsSync(new SqliteMigrator(sqlite), new URL("../migrations", import.meta.url).pathname);
+  return new SqliteDatastore(sqlite);
 }
 
 export function createEnv(): PocEnv {

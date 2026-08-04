@@ -1,4 +1,5 @@
 import { getConfig } from "../shared/db";
+import type { Datastore } from "../shared/datastore";
 import type { PocEnv } from "../shared/types";
 import { handleDsyncWebhook, timingSafeEqual } from "./listener";
 import { captureMockBefore, emitMockEvents, parseMockScimPath } from "./mock-emitter";
@@ -82,7 +83,7 @@ export default {
 
 async function requireBearer(
   request: Request,
-  db: D1Database,
+  db: Datastore,
   configKey: string,
 ): Promise<Response | null> {
   const header = request.headers.get("Authorization") ?? "";

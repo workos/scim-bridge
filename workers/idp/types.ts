@@ -1,5 +1,5 @@
 export interface IdpEnv {
-  DB: D1Database;
+  DB: Datastore;
 }
 
 export interface IdpUser {
@@ -50,3 +50,4 @@ export interface IdpAutoState {
 }
 
 export type Origin = IdpActivity["origin"];
+import type { Datastore } from "../shared/datastore";

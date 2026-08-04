@@ -1,38 +1,42 @@
-import type Database from "better-sqlite3";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { DatastoreMigrator } from "../../workers/shared/datastore";
+import type { SqliteMigrator } from "./sqlite";
 
 /**
- * Apply `migrations/*.sql` in filename order, once each, tracked in a
- * `_migrations` table. Runs on every boot; already-applied files are skipped,
- * so the container is safe to restart and safe to ship new migrations with.
+ * Apply a directory of `*.sql` migrations in filename order, once each, tracked
+ * in a `_migrations` ledger. Runs on every boot; already-applied files are
+ * skipped, so the container is safe to restart and safe to ship new migrations
+ * with.
  *
- * These are the same D1 migration files used by the Cloudflare deploy — D1 is
- * SQLite, so they run verbatim here.
+ * This module only decides *which* files run and in what order — reading the
+ * ledger and applying a file belong to the driver's `DatastoreMigrator`, since
+ * the ledger SQL and the migration files are both dialect-specific.
  */
-export function runMigrations(db: Database.Database, dir: string): string[] {
-  db.exec(
-    "CREATE TABLE IF NOT EXISTS _migrations (" +
-      "name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')))",
-  );
-  const applied = new Set(
-    (db.prepare("SELECT name FROM _migrations").all() as { name: string }[]).map((r) => r.name),
-  );
-  const files = readdirSync(dir)
-    .filter((f) => f.endsWith(".sql"))
-    .sort();
 
-  const record = db.prepare("INSERT INTO _migrations (name) VALUES (?)");
-  const ran: string[] = [];
-  for (const file of files) {
-    if (applied.has(file)) continue;
-    const sql = readFileSync(join(dir, file), "utf8");
-    const apply = db.transaction(() => {
-      db.exec(sql);
-      record.run(file);
-    });
-    apply();
-    ran.push(file);
+/** The migration files not yet in the ledger, in filename order. */
+function pending(dir: string, applied: Set<string>): { name: string; sql: string }[] {
+  return readdirSync(dir)
+    .filter((file) => file.endsWith(".sql"))
+    .sort()
+    .filter((file) => !applied.has(file))
+    .map((name) => ({ name, sql: readFileSync(join(dir, name), "utf8") }));
+}
+
+export async function runMigrations(migrator: DatastoreMigrator, dir: string): Promise<string[]> {
+  const files = pending(dir, await migrator.appliedMigrations());
+  for (const { name, sql } of files) {
+    await migrator.applyMigration(name, sql);
   }
-  return ran;
+  return files.map((file) => file.name);
+}
+
+/** The same walk without awaiting, for the synchronous SQLite driver: the test
+ *  harness builds a migrated in-memory database inside synchronous helpers. */
+export function runMigrationsSync(migrator: SqliteMigrator, dir: string): string[] {
+  const files = pending(dir, migrator.appliedSync());
+  for (const { name, sql } of files) {
+    migrator.applySync(name, sql);
+  }
+  return files.map((file) => file.name);
 }

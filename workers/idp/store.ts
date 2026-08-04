@@ -1,7 +1,8 @@
+import type { Datastore } from "../shared/datastore";
 import type { IdpActivity, IdpAutoState, IdpGroup, IdpUser, Origin } from "./types";
 import { withD1Retry } from "../shared/db";
 
-export async function listUsers(db: D1Database, directoryId: string): Promise<IdpUser[]> {
+export async function listUsers(db: Datastore, directoryId: string): Promise<IdpUser[]> {
   const { results } = await withD1Retry(() =>
     db
       .prepare("SELECT * FROM idp_users WHERE directory_id = ? ORDER BY created_at")
@@ -11,7 +12,7 @@ export async function listUsers(db: D1Database, directoryId: string): Promise<Id
   return results;
 }
 
-export async function listGroups(db: D1Database, directoryId: string): Promise<IdpGroup[]> {
+export async function listGroups(db: Datastore, directoryId: string): Promise<IdpGroup[]> {
   const { results } = await withD1Retry(() =>
     db
       .prepare("SELECT * FROM idp_groups WHERE directory_id = ? ORDER BY created_at")
@@ -22,7 +23,7 @@ export async function listGroups(db: D1Database, directoryId: string): Promise<I
 }
 
 export async function listMembers(
-  db: D1Database,
+  db: Datastore,
   directoryId: string,
 ): Promise<{ group_id: string; user_id: string }[]> {
   const { results } = await withD1Retry(() =>
@@ -37,20 +38,20 @@ export async function listMembers(
   return results;
 }
 
-export async function getUser(db: D1Database, id: string): Promise<IdpUser | null> {
+export async function getUser(db: Datastore, id: string): Promise<IdpUser | null> {
   return withD1Retry(() =>
     db.prepare("SELECT * FROM idp_users WHERE id = ?").bind(id).first<IdpUser>(),
   );
 }
 
-export async function getGroup(db: D1Database, id: string): Promise<IdpGroup | null> {
+export async function getGroup(db: Datastore, id: string): Promise<IdpGroup | null> {
   return withD1Retry(() =>
     db.prepare("SELECT * FROM idp_groups WHERE id = ?").bind(id).first<IdpGroup>(),
   );
 }
 
 export async function userByUserName(
-  db: D1Database,
+  db: Datastore,
   directoryId: string,
   userName: string,
 ): Promise<IdpUser | null> {
@@ -63,7 +64,7 @@ export async function userByUserName(
 }
 
 export async function groupByDisplayName(
-  db: D1Database,
+  db: Datastore,
   directoryId: string,
   displayName: string,
 ): Promise<IdpGroup | null> {
@@ -76,7 +77,7 @@ export async function groupByDisplayName(
 }
 
 export async function insertUser(
-  db: D1Database,
+  db: Datastore,
   user: Pick<
     IdpUser,
     "directory_id" | "user_name" | "external_id" | "given_name" | "family_name" | "active"
@@ -102,7 +103,7 @@ export async function insertUser(
 }
 
 export async function insertGroup(
-  db: D1Database,
+  db: Datastore,
   group: Pick<IdpGroup, "directory_id" | "display_name" | "external_id">,
 ): Promise<IdpGroup> {
   return withD1Retry(
@@ -117,7 +118,7 @@ export async function insertGroup(
 }
 
 export async function setUserScimId(
-  db: D1Database,
+  db: Datastore,
   id: string,
   scimId: string | null,
   status: number,
@@ -133,7 +134,7 @@ export async function setUserScimId(
 }
 
 export async function setGroupScimId(
-  db: D1Database,
+  db: Datastore,
   id: string,
   scimId: string | null,
   status: number,
@@ -149,7 +150,7 @@ export async function setGroupScimId(
 }
 
 export async function setUserActive(
-  db: D1Database,
+  db: Datastore,
   id: string,
   active: number,
   status: number,
@@ -165,7 +166,7 @@ export async function setUserActive(
 }
 
 export async function setUserName(
-  db: D1Database,
+  db: Datastore,
   id: string,
   givenName: string,
   familyName: string,
@@ -182,7 +183,7 @@ export async function setUserName(
 }
 
 export async function renameGroup(
-  db: D1Database,
+  db: Datastore,
   id: string,
   displayName: string,
   status: number,
@@ -197,7 +198,7 @@ export async function renameGroup(
   );
 }
 
-export async function deleteUser(db: D1Database, id: string): Promise<void> {
+export async function deleteUser(db: Datastore, id: string): Promise<void> {
   await withD1Retry(() =>
     db.batch([
       db.prepare("DELETE FROM idp_group_members WHERE user_id = ?").bind(id),
@@ -206,7 +207,7 @@ export async function deleteUser(db: D1Database, id: string): Promise<void> {
   );
 }
 
-export async function deleteGroup(db: D1Database, id: string): Promise<void> {
+export async function deleteGroup(db: Datastore, id: string): Promise<void> {
   await withD1Retry(() =>
     db.batch([
       db.prepare("DELETE FROM idp_group_members WHERE group_id = ?").bind(id),
@@ -215,7 +216,7 @@ export async function deleteGroup(db: D1Database, id: string): Promise<void> {
   );
 }
 
-export async function addMember(db: D1Database, groupId: string, userId: string): Promise<void> {
+export async function addMember(db: Datastore, groupId: string, userId: string): Promise<void> {
   await withD1Retry(() =>
     db
       .prepare("INSERT OR IGNORE INTO idp_group_members (group_id, user_id) VALUES (?, ?)")
@@ -224,7 +225,7 @@ export async function addMember(db: D1Database, groupId: string, userId: string)
   );
 }
 
-export async function removeMember(db: D1Database, groupId: string, userId: string): Promise<void> {
+export async function removeMember(db: Datastore, groupId: string, userId: string): Promise<void> {
   await withD1Retry(() =>
     db
       .prepare("DELETE FROM idp_group_members WHERE group_id = ? AND user_id = ?")
@@ -233,7 +234,7 @@ export async function removeMember(db: D1Database, groupId: string, userId: stri
   );
 }
 
-export async function memberIds(db: D1Database, groupId: string): Promise<string[]> {
+export async function memberIds(db: Datastore, groupId: string): Promise<string[]> {
   const { results } = await withD1Retry(() =>
     db
       .prepare("SELECT user_id FROM idp_group_members WHERE group_id = ?")
@@ -244,7 +245,7 @@ export async function memberIds(db: D1Database, groupId: string): Promise<string
 }
 
 export async function logActivity(
-  db: D1Database,
+  db: Datastore,
   entry: {
     directory_id: string;
     origin: Origin;
@@ -279,7 +280,7 @@ export async function logActivity(
 }
 
 export async function getAutoState(
-  db: D1Database,
+  db: Datastore,
   directoryId: string,
 ): Promise<IdpAutoState | null> {
   return withD1Retry(() =>
@@ -291,7 +292,7 @@ export async function getAutoState(
 }
 
 export async function setAutoState(
-  db: D1Database,
+  db: Datastore,
   directoryId: string,
   patch: { running?: boolean; interval_ms?: number; tickDelta?: number },
 ): Promise<void> {
@@ -313,7 +314,7 @@ export async function setAutoState(
 }
 
 export async function activity(
-  db: D1Database,
+  db: Datastore,
   directoryId: string,
   limit = 50,
 ): Promise<IdpActivity[]> {

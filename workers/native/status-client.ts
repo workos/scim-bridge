@@ -1,4 +1,5 @@
 import { getConfig } from "../shared/db";
+import type { Datastore } from "../shared/datastore";
 import type { Directory } from "../shared/types";
 import type { DirectoryStatus } from "../proxy/status";
 
@@ -30,7 +31,7 @@ const failedUntil = new Map<string, number>();
  * falls back to the directory row it already holds.
  */
 export async function fetchDirectoryStatus(
-  db: D1Database,
+  db: Datastore,
   directory: Directory,
 ): Promise<DirectoryStatus | null> {
   const now = Date.now();
