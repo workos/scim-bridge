@@ -11,6 +11,7 @@ import {
   mirrorUpsert,
   parseJson,
   scimFetch,
+  type IdTranslationMaps,
   type UpstreamResult,
 } from "./scim";
 
@@ -205,7 +206,16 @@ export async function runReconcileFromWorkos(
     summary.errors,
   );
   for (const resource of users) {
-    await pushToNative(db, directory, "Users", resource, toNative, summary.users, summary.errors);
+    await pushToNative(
+      db,
+      directory,
+      "Users",
+      resource,
+      toNative,
+      maps,
+      summary.users,
+      summary.errors,
+    );
   }
 
   const groups = await snapshot(
@@ -224,7 +234,16 @@ export async function runReconcileFromWorkos(
           : member,
       );
     }
-    await pushToNative(db, directory, "Groups", body, toNative, summary.groups, summary.errors);
+    await pushToNative(
+      db,
+      directory,
+      "Groups",
+      body,
+      toNative,
+      maps,
+      summary.groups,
+      summary.errors,
+    );
   }
 
   return summary;
@@ -236,6 +255,7 @@ async function pushToNative(
   kind: ResourceType,
   resource: Record<string, unknown>,
   toNative: (kind: ResourceType, id: string) => string,
+  maps: IdTranslationMaps,
   counts: ResourceCounts,
   errors: string[],
 ): Promise<void> {
@@ -268,7 +288,7 @@ async function pushToNative(
   // functionally equivalent to a shared id. Missing mapping was the real bug.
   let drift: DriftRepair | null = null;
   if (result.status === 409) {
-    drift = await repairDrift(db, directory, kind, workosId, nativeId, resource, errors);
+    drift = await repairDrift(db, directory, kind, workosId, nativeId, resource, maps, errors);
     if (drift?.result) result = drift.result;
   }
 
@@ -337,12 +357,13 @@ interface DriftRepair {
  * reported as an unresolved failure.
  */
 async function repairDrift(
-  db: D1Database,
+  db: Datastore,
   directory: Directory,
   kind: ResourceType,
   workosId: string,
   nativeId: string,
   resource: Record<string, unknown>,
+  maps: IdTranslationMaps,
   errors: string[],
 ): Promise<DriftRepair | null> {
   const attr = kind === "Users" ? "userName" : "displayName";
@@ -374,6 +395,12 @@ async function repairDrift(
       workos_id: workosId,
       strategy: "fallback-post",
     });
+    // Reflect the repair in the live translation maps so a group pushed later in
+    // this same reconcile addresses a repaired user by its drifted native id
+    // (the translator reads these maps by reference); the DB row alone wouldn't
+    // be observed until the next reconcile.
+    maps.workosToNative[kind].set(workosId, driftedId);
+    maps.nativeToWorkos[kind].set(driftedId, workosId);
   }
   return { nativeId: driftedId, attr, value, result };
 }
@@ -397,9 +424,19 @@ async function findNativeIdByAttr(
   if (!isSuccess(page.status)) {
     throw new Error(`native returned ${page.status}`);
   }
+  // Confirm the returned row actually carries the attribute we filtered on: a
+  // native app that ignores an unsupported ?filter would return its whole first
+  // page, and blindly taking Resources[0] could overwrite an unrelated person.
   const body = parseJson(page.bodyText);
-  const first = Array.isArray(body?.Resources) ? body.Resources.find(isRecord) : null;
-  return first && typeof first.id === "string" ? first.id : null;
+  const match = Array.isArray(body?.Resources)
+    ? body.Resources.find(
+        (entry) =>
+          isRecord(entry) &&
+          typeof entry[attr] === "string" &&
+          (entry[attr] as string).toLowerCase() === value.toLowerCase(),
+      )
+    : null;
+  return isRecord(match) && typeof match.id === "string" ? match.id : null;
 }
 
 function describeFailure(status: number): string {

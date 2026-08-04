@@ -689,6 +689,36 @@ describe("runReconcileFromWorkos", () => {
     ]);
   });
 
+  it("addresses a same-run repaired user by its drifted id in a later group's members", async () => {
+    const env = createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "workos-only" });
+    fake = installFakeUpstreams();
+    // A user drifts and is repaired to idp-1 during the user pass; a group pushed
+    // afterwards lists that user by its WorkOS shared id. The member value must
+    // come out as the drifted native id — otherwise the group PUT replaces the
+    // membership set with a non-existent id and silently drops the real user.
+    fake.route("workos", "GET", "/Users", listPage([{ id: "shared-1", userName: "one@x.test" }]));
+    fake.route(
+      "workos",
+      "GET",
+      "/Groups",
+      listPage([{ id: "shared-g1", displayName: "Eng", members: [{ value: "shared-1" }] }]),
+    );
+    fake.route("native", "PUT", "/Users/shared-1", scimJson(409, { detail: "userName exists" }));
+    fake.route("native", "GET", "/Users", () =>
+      listPage([{ id: "idp-1", userName: "one@x.test" }]),
+    );
+    fake.route("native", "PUT", "/Users/idp-1", (call) => scimJson(200, call.json()));
+    fake.route("native", "PUT", "/Groups/shared-g1", (call) => scimJson(200, call.json()));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    expect(summary.users).toEqual({ total: 1, mirrored: 1, failed: 0 });
+    expect(summary.groups).toEqual({ total: 1, mirrored: 1, failed: 0 });
+    const groupPut = fake.callsTo("native").find((c) => c.path.startsWith("/Groups/"));
+    expect(groupPut?.json().members).toEqual([{ value: "idp-1" }]);
+  });
+
   it("reports an unresolvable 409 distinctly and leaves it failed", async () => {
     const env = createEnv();
     const directory = await seedDirectory(env.DB, { mode: "workos-only" });
