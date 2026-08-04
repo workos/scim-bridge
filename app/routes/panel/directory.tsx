@@ -1,4 +1,5 @@
-import type { LoaderFunctionArgs } from "react-router";
+import type { Route } from "./+types/directory";
+
 import { Link, Outlet, useLoaderData, useLocation } from "react-router";
 import { getDirectoryById } from "../../../workers/shared/db";
 import { Flex } from "../../vendor/design-system/components/flex";
@@ -7,7 +8,7 @@ import { Link as DsLink } from "../../vendor/design-system/components/link";
 import { TabNav } from "../../vendor/design-system/components/tab-nav";
 import { ModeBadge } from "./ui";
 
-export async function loader({ context, params }: LoaderFunctionArgs) {
+export async function loader({ context, params }: Route.LoaderArgs) {
   const directory = await getDirectoryById(context.cloudflare.env.DB, params.id ?? "");
   if (!directory) {
     throw new Response("Directory not found", { status: 404 });

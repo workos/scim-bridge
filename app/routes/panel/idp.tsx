@@ -1,5 +1,6 @@
+import type { Route } from "./+types/idp";
 import { useEffect } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+
 import {
   Form,
   redirect,
@@ -81,7 +82,7 @@ interface IdpActionData {
   error?: string;
 }
 
-export async function loader({ context }: LoaderFunctionArgs) {
+export async function loader({ context }: Route.LoaderArgs) {
   const { env } = context.cloudflare;
   const directories = await listDirectories(env.DB);
   const directory = directories[0] ?? null;
@@ -160,7 +161,7 @@ export async function loader({ context }: LoaderFunctionArgs) {
 export async function action({
   context,
   request,
-}: ActionFunctionArgs): Promise<Response | IdpActionData> {
+}: Route.ActionArgs): Promise<Response | IdpActionData> {
   const { env } = context.cloudflare;
   const form = await request.formData();
   const intent = String(form.get("intent") ?? "");
