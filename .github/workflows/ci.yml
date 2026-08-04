@@ -34,6 +34,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Every dependency must come from the public registry: this repo is
+      # published, and an internal proxy URL installs for nobody else (#45).
+      - run: npm run check:registry
       - run: npm run typecheck
       # Proves the gate above can actually fail (ENT-6754: for months it could not).
       - run: npm run typecheck:gate
