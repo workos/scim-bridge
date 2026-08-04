@@ -50,7 +50,11 @@ async function createPostgresDb(): Promise<PocEnv["DB"]> {
   // A schema per database rather than one per file with truncation between
   // tests: two of the suites build two independent databases inside a single
   // test, and an isolation model that quietly breaks those is worse than the
-  // schema-creation cost (measured in the PR).
+  // schema-creation cost (measured in the PR). It also sidesteps the trap in the
+  // truncating design — TRUNCATE leaves sequences where they were unless asked
+  // (`RESTART IDENTITY`), so tests that assert on an autoincrement id would pass
+  // in file order and fail when run alone. A new schema has new sequences, which
+  // `tests/helpers.test.ts` pins rather than assumes.
   const schema = `t${process.pid}_${(schemaCounter += 1)}`;
   const setup = openPostgres(url);
   await setup.query(`CREATE SCHEMA ${schema}`);
