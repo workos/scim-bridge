@@ -3,7 +3,7 @@ import type { BackfillSummary, Directory, ResourceType } from "./types";
 import {
   getMapping,
   insertProxyLog,
-  listForeignMappingsByNativeId,
+  listOtherMappingsByNativeId,
   shouldPersistLogs,
   upsertMapping,
 } from "./db";
@@ -15,6 +15,7 @@ import {
   loadIdMaps,
   makeTranslator,
   mirrorUpsert,
+  nativeNamespaceKey,
   parseJson,
   scimFetch,
   type IdTranslationMaps,
@@ -449,10 +450,11 @@ async function unattributedReason(
   driftedId: string,
   resource: Record<string, unknown>,
 ): Promise<string | null> {
-  const foreign = await listForeignMappingsByNativeId(db, directory, kind, driftedId);
-  if (foreign.length > 0) {
-    return `is already mapped by directory ${foreign[0].directory_id}`;
-  }
+  const others = await listOtherMappingsByNativeId(db, directory, kind, driftedId);
+  const foreign = others.find((mapping) =>
+    sharesNamespace(directory.native_url, mapping.native_url),
+  );
+  if (foreign) return `is already mapped by directory ${foreign.directory_id}`;
 
   const mine = await getMapping(db, directory.id, kind, driftedId);
   if (mine) {
@@ -467,6 +469,19 @@ async function unattributedReason(
   }
   if (ours !== driftedId) return `is unmapped and is not this directory's externalId ${ours}`;
   return null;
+}
+
+/**
+ * Whether two directories' native base URLs can address the same native app, and
+ * so whether their ids can collide. Compared canonically, because equivalent URLs
+ * are stored verbatim (`https://x:443/scim/v2` and `https://X/scim/v2/` are one
+ * endpoint). Fails closed: a URL that won't parse is treated as possibly shared,
+ * which only ever refuses a repair.
+ */
+function sharesNamespace(ours: string, theirs: string): boolean {
+  const a = nativeNamespaceKey(ours);
+  const b = nativeNamespaceKey(theirs);
+  return a === null || b === null ? true : a === b;
 }
 
 /** GET native filtered on a unique attribute, returning the first match's id. */

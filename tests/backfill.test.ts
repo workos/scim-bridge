@@ -738,6 +738,47 @@ describe("runReconcileFromWorkos", () => {
     expect(await mappingRows(env, directory.id)).toEqual([]);
   });
 
+  it("refuses to repair a colliding row mapped through an equivalent native url", async () => {
+    const env = await createEnv();
+    // Same native app, written differently: explicit default port and a trailing
+    // slash. Namespace comparison is canonical, so the foreign mapping still wins.
+    const other = await seedDirectory(env.DB, {
+      name: "Org B",
+      native_url: "https://Native.test:443/scim/v2/",
+    });
+    const directory = await seedDirectory(env.DB, { name: "Org A", mode: "workos-only" });
+    await upsertMapping(env.DB, {
+      directory_id: other.id,
+      resource_type: "Users",
+      native_id: "victim-1",
+      workos_id: "orgb-1",
+      strategy: "migrated-id",
+    });
+    fake = installFakeUpstreams();
+    fake.route(
+      "workos",
+      "GET",
+      "/Users",
+      listPage([{ id: "attacker-1", userName: "one@x.test", externalId: "victim-1" }]),
+    );
+    fake.route("workos", "GET", "/Groups", listPage([]));
+    fake.route("native", "PUT", "/Users/attacker-1", scimJson(409, { detail: "userName exists" }));
+    fake.route("native", "GET", "/Users", () =>
+      listPage([{ id: "victim-1", userName: "one@x.test" }]),
+    );
+    fake.route("native", "PUT", "/Users/victim-1", (call) => scimJson(200, call.json()));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    expect(fake.callsTo("native").some((c) => c.path.startsWith("/Users/victim-1"))).toBe(false);
+    expect(summary.users).toEqual({ total: 1, mirrored: 0, failed: 1 });
+    expect(summary.errors[0]).toBe(
+      `Users/attacker-1: userName "one@x.test" is native id victim-1, which is already mapped by ` +
+        `directory ${other.id}; drift left unrepaired`,
+    );
+    expect(await mappingRows(env, directory.id)).toEqual([]);
+  });
+
   it("repairs drift when another directory maps the same id in a different native namespace", async () => {
     const env = await createEnv();
     // Same native id, unrelated native endpoints: not a namespace collision, so

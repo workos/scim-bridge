@@ -85,6 +85,29 @@ export function joinScimUrl(base: string, path: string): string {
   return base.replace(/\/+$/, "") + path;
 }
 
+/**
+ * Canonical key for the native SCIM namespace a base URL addresses, so two
+ * directories configured with equivalent-but-differently-written URLs (default
+ * port written out, upper-case host, trailing slash) are recognised as the same
+ * native app. Returns null for a URL that can't be parsed — callers that use
+ * this to decide whether resources can collide must treat that as "might be the
+ * same namespace" rather than assuming isolation.
+ */
+export function nativeNamespaceKey(base: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(base);
+  } catch {
+    return null;
+  }
+  const port = url.port && url.port !== defaultPort(url.protocol) ? `:${url.port}` : "";
+  return `${url.protocol.toLowerCase()}//${url.hostname.toLowerCase()}${port}${url.pathname.replace(/\/+$/, "")}`;
+}
+
+function defaultPort(protocol: string): string {
+  return protocol === "https:" ? "443" : protocol === "http:" ? "80" : "";
+}
+
 export interface ScimPath {
   kind: ResourceType | null;
   id: string | null;
