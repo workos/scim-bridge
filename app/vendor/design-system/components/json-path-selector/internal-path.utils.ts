@@ -1,3 +1,5 @@
+// @ts-nocheck — vendored from workos/packages/design-system by
+// `npm run sync-design-system`, which overwrites this file. Edit it upstream.
 /**
  * Internal path utilities for JsonPathSelector component.
  * These functions convert between key arrays and internal string representation
