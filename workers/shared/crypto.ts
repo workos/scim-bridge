@@ -20,6 +20,28 @@
  * Encryption is the wrong tool for a value that is only ever compared: AES-GCM is
  * randomized, so an encrypted token could not be matched against the one the IdP
  * presents, which is why this column was plaintext until ENT-6742.
+ *
+ * The digest is UNSALTED, and that is deliberate rather than an oversight — the
+ * paragraph below exists because `sha256(secret)` with no salt is a bug in the case
+ * everyone has seen, and this is not that case.
+ *
+ * A salted or otherwise randomized digest can only be *verified* against a row you
+ * have already found. The proxy has no row yet: a SCIM request arrives carrying a
+ * bearer token and nothing else, and the token IS how the directory is located
+ * (`WHERE proxy_token_hash = ?`, one indexed lookup on every request). Per-row salt
+ * would mean reading every directory and hashing the presented token once per row.
+ *
+ * Unsalted is safe here only because of a property worth stating instead of
+ * assuming: a proxy token is `randomHex(24)` from `crypto.getRandomValues` — 192
+ * bits of CSPRNG output, 48 hex characters (see `shared/ids.ts`). There is no
+ * dictionary, no reuse across sites, and no human in the loop, so the attacks that
+ * salting and stretching (bcrypt/scrypt/argon2) defend against do not apply: those
+ * exist because passwords are low-entropy and guessable, and a rainbow table is
+ * only worth building against a value someone might plausibly have chosen.
+ *
+ * The one dent in that reasoning: ENT-6741 lets an operator import their IdP's
+ * existing token, which could be weak. It is still their secret, chosen for a system
+ * that also stored it, and the alternative is refusing the import.
  */
 
 const PREFIX = "enc:v1:";
@@ -33,15 +55,8 @@ const PREFIX = "enc:v1:";
  * gets no usable credential, and a token still authenticates by hashing what was
  * presented and looking that up.
  *
- * SHA-256 with no salt or stretching, deliberately. Salting would break the single
- * indexed lookup that routes every SCIM request — there is no row to fetch the
- * salt from until you know which row it is. Stretching (bcrypt/scrypt) defends
- * low-entropy secrets against offline guessing; these are 24 random bytes from
- * `newProxyToken`, so there is nothing to guess. That reasoning holds ONLY while
- * the token is machine-generated at full entropy: ENT-6741 lets an operator import
- * their IdP's existing token, and one of those could be weak. It is still their
- * secret, chosen for a system that also stores it, and the alternative is refusing
- * the import.
+ * SHA-256, unsalted and unstretched — see the module docblock for why that is the
+ * right call for this particular secret and not a copy of the password mistake.
  *
  * Stored `sha256:v1:<hex>` rather than bare hex, mirroring `enc:v1:`. The prefix
  * is what makes "has this row been hashed yet?" answerable — the boot backfill for
@@ -74,6 +89,27 @@ export async function hashProxyToken(token: string): Promise<string> {
  */
 export function proxyTokenHint(token: string): string {
   return token.slice(-4);
+}
+
+/**
+ * Compare two credential-shaped strings without leaking where they differ.
+ *
+ * Moved here from `workers/native/listener.ts` (ENT-6742): it arrived with the
+ * webhook signature check, and the proxy-token compare is a second caller in a
+ * different subsystem, so it belongs beside the other credential primitives. Kept
+ * as a hand-rolled loop rather than `node:crypto`'s `timingSafeEqual`, because this
+ * module is imported by the workers too, and only `crypto.getRandomValues` /
+ * `crypto.subtle` are available identically on Node and Cloudflare Workers.
+ *
+ * Length is compared first and non-constant-time, which leaks length only.
+ */
+export function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
 }
 
 /** The slice of a handle this module needs: somewhere to find the raw key.
