@@ -1,6 +1,7 @@
 import type { Directory, IdMapping, ResourceType } from "./types";
 import { MIGRATED_ID_HEADER } from "./types";
 import { getMapping, listDirectories, upsertMapping, withDatastoreRetry } from "./db";
+import type { NewMapping } from "./db";
 import type { Datastore } from "./datastore";
 
 export const SCIM_PREFIX = "/scim/v2";
@@ -445,12 +446,26 @@ async function putWorkos(
  * POST mints its own id; the diverging echoed id is detected and recorded as a
  * `fallback-post` mapping so ids still translate in both directions.
  */
+/**
+ * Somewhere to queue id mappings instead of writing them one at a time.
+ *
+ * The live mirror passes nothing and writes immediately, because it handles one
+ * resource per request and has nothing to batch with. The backfill passes an array
+ * and flushes it per page (ENT-6761) — same rows, same order, one round trip.
+ *
+ * Deliberately a plain array rather than a callback: the caller needs to see what is
+ * pending in order to report which resources a failed flush affected, and an array of
+ * mapping rows already carries that identity.
+ */
+export type MappingSink = NewMapping[];
+
 export async function mirrorUpsert(
   db: Datastore,
   directory: Directory,
   kind: ResourceType,
   nativeId: string,
   rawResource: Record<string, unknown>,
+  sink?: MappingSink,
 ): Promise<MirrorResult> {
   // Every WorkOS-bound resource body funnels through here — live mirror,
   // backfill replay, and the workos-only create/replace legs — and does so after
@@ -475,9 +490,10 @@ export async function mirrorUpsert(
         useHeader ? nativeId : undefined,
       );
       if (isSuccess(put.status)) {
-        await upsertMapping(
+        await recordMapping(
           db,
           mappingRow(directory, kind, nativeId, existing.workos_id, existing.strategy),
+          sink,
         );
         return mirrorOk(label, put, acc);
       }
@@ -492,7 +508,11 @@ export async function mirrorUpsert(
       const label = `PUT /${kind}/${nativeId} +${MIGRATED_ID_HEADER}`;
       const put = await putWorkos(directory, kind, nativeId, resource, acc, nativeId);
       if (isSuccess(put.status)) {
-        await upsertMapping(db, mappingRow(directory, kind, nativeId, nativeId, "migrated-id"));
+        await recordMapping(
+          db,
+          mappingRow(directory, kind, nativeId, nativeId, "migrated-id"),
+          sink,
+        );
         return mirrorOk(label, put, acc);
       }
       if (put.status !== 404) {
@@ -500,7 +520,7 @@ export async function mirrorUpsert(
       }
     }
 
-    return createViaPost(db, directory, kind, nativeId, resource, acc);
+    return createViaPost(db, directory, kind, nativeId, resource, acc, sink);
   } catch (error) {
     return {
       ok: false,
@@ -526,6 +546,7 @@ async function createViaPost(
   nativeId: string,
   resource: Record<string, unknown>,
   acc: Elapsed,
+  sink?: MappingSink,
 ): Promise<MirrorResult> {
   const label = `POST /${kind} +${MIGRATED_ID_HEADER}`;
   const { id: _omitted, ...stripped } = resource;
@@ -546,12 +567,12 @@ async function createViaPost(
     // The echoed id decides the contract outcome: identical id ⇒ WorkOS adopted
     // the migrated id; a different id ⇒ it minted its own (contract not honored).
     const strategy = workosId === nativeId ? "migrated-id" : "fallback-post";
-    await upsertMapping(db, mappingRow(directory, kind, nativeId, workosId, strategy));
+    await recordMapping(db, mappingRow(directory, kind, nativeId, workosId, strategy), sink);
     return mirrorOk(label, create, acc);
   }
 
   if (create.status === 409) {
-    return resolveCreateRace(db, directory, kind, nativeId, resource, create, acc);
+    return resolveCreateRace(db, directory, kind, nativeId, resource, create, acc, sink);
   }
 
   return mirrorFail(label, create, acc, `WorkOS POST returned ${create.status}`);
@@ -571,11 +592,12 @@ async function resolveCreateRace(
   resource: Record<string, unknown>,
   create: UpstreamResult,
   acc: Elapsed,
+  sink?: MappingSink,
 ): Promise<MirrorResult> {
   const reputLabel = `PUT /${kind}/${nativeId} +${MIGRATED_ID_HEADER} (409 retry)`;
   const reput = await putWorkos(directory, kind, nativeId, resource, acc, nativeId);
   if (isSuccess(reput.status)) {
-    await upsertMapping(db, mappingRow(directory, kind, nativeId, nativeId, "migrated-id"));
+    await recordMapping(db, mappingRow(directory, kind, nativeId, nativeId, "migrated-id"), sink);
     return mirrorOk(reputLabel, reput, acc);
   }
   if (reput.status !== 404) {
@@ -603,7 +625,11 @@ async function resolveCreateRace(
       const syncLabel = `PUT /${kind}/${workosId} (409 recovery)`;
       const sync = await putWorkos(directory, kind, workosId, resource, acc);
       if (isSuccess(sync.status)) {
-        await upsertMapping(db, mappingRow(directory, kind, nativeId, workosId, "fallback-post"));
+        await recordMapping(
+          db,
+          mappingRow(directory, kind, nativeId, workosId, "fallback-post"),
+          sink,
+        );
         return mirrorOk(syncLabel, sync, acc);
       }
       return mirrorFail(syncLabel, sync, acc, `WorkOS 409-recovery PUT returned ${sync.status}`);
@@ -615,6 +641,19 @@ async function resolveCreateRace(
     acc,
     `WorkOS POST hit 409 and the ${attribute} lookup did not recover an id`,
   );
+}
+
+/** Queue the mapping when the caller is batching, write it when it is not. */
+async function recordMapping(
+  db: Datastore,
+  mapping: NewMapping,
+  sink: MappingSink | undefined,
+): Promise<void> {
+  if (sink) {
+    sink.push(mapping);
+    return;
+  }
+  await upsertMapping(db, mapping);
 }
 
 function mappingRow(

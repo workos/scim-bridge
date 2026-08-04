@@ -63,6 +63,35 @@ function trail(fake: FakeUpstreams) {
   return fake.calls.map((c) => `${c.target} ${c.method} ${c.path.split("?")[0]}`);
 }
 
+/**
+ * Wraps a datastore to record how mapping writes reach it: one statement at a time,
+ * or together in a `batch()` (ENT-6761).
+ */
+function countingWrites(inner: PocEnv["DB"]) {
+  const counts = { singleMappingWrites: 0, batches: 0, batchedStatements: 0 };
+  const db = {
+    get encryptionKey() {
+      return inner.encryptionKey;
+    },
+    set encryptionKey(value: string | null) {
+      inner.encryptionKey = value;
+    },
+    prepare(sql: string) {
+      if (sql.trim().startsWith("INSERT INTO id_mappings")) counts.singleMappingWrites += 1;
+      return inner.prepare(sql);
+    },
+    batch(statements: unknown[]) {
+      counts.batches += 1;
+      counts.batchedStatements += statements.length;
+      // Every statement in a batch was also counted by `prepare` above; the batch
+      // is what makes them one round trip, so discount them from the single count.
+      counts.singleMappingWrites -= statements.length;
+      return (inner as unknown as { batch: (s: unknown[]) => Promise<unknown> }).batch(statements);
+    },
+  } as unknown as PocEnv["DB"];
+  return { db, counts };
+}
+
 describe("runBackfill", () => {
   let fake: FakeUpstreams | undefined;
   afterEach(() => fake?.restore());
@@ -126,6 +155,76 @@ describe("runBackfill", () => {
 
     // log_persistence defaults off: nothing lands in proxy_log.
     expect(await proxyLogRows(env)).toEqual([]);
+  });
+
+  it("writes a page of id mappings in one batch, not one statement per resource", async () => {
+    // The point of ENT-6761. Measured on the ENT-6758 spike: 7 ms per statement
+    // against a Durable Object versus 0.21 ms when they arrive together, and one
+    // implicit transaction per statement on SQLite either way.
+    const env = await createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+    fake = installFakeUpstreams();
+    installWorkosScim(fake);
+    const users = Array.from({ length: 12 }, (_, i) => ({ id: `u${i}`, userName: `u${i}@a.test` }));
+    fake.route("native", "GET", "/Users", () => listPage(users));
+    fake.route("native", "GET", "/Groups", () =>
+      listPage([{ id: "g1", displayName: "Eng", members: users.map((u) => ({ value: u.id })) }]),
+    );
+    const { db, counts } = countingWrites(env.DB);
+
+    const summary = await runBackfill(db, directory);
+
+    expect(summary.users.mirrored).toBe(12);
+    expect(summary.groups.mirrored).toBe(1);
+    // Two flushes: the users page before the group translation reads the maps, and
+    // the groups page at the end.
+    expect(counts.batches).toBe(2);
+    expect(counts.batchedStatements).toBe(13);
+    expect(counts.singleMappingWrites).toBe(0);
+    // And the mappings are all actually there, which is what the batching must not
+    // trade away.
+    expect(await mappingRows(env, directory.id)).toHaveLength(13);
+  });
+
+  it("reports which resources lost their mapping when a flush fails, and does not call them failed", async () => {
+    // The inverse hazard of batching: these resources ARE in WorkOS — the upstream
+    // write already succeeded — so counting them failed would send an operator
+    // hunting resources that are fine. What is lost is the mapping, and that is
+    // what the error has to say.
+    const env = await createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+    fake = installFakeUpstreams();
+    installWorkosScim(fake);
+    fake.route("native", "GET", "/Users", () =>
+      listPage([
+        { id: "u1", userName: "u1@a.test" },
+        { id: "u2", userName: "u2@a.test" },
+      ]),
+    );
+    fake.route("native", "GET", "/Groups", () => listPage([]));
+    const failing = {
+      get encryptionKey() {
+        return env.DB.encryptionKey;
+      },
+      set encryptionKey(value: string | null) {
+        env.DB.encryptionKey = value;
+      },
+      prepare: (sql: string) => env.DB.prepare(sql),
+      batch: () => Promise.reject(new Error("datastore is unavailable")),
+    } as unknown as PocEnv["DB"];
+
+    const summary = await runBackfill(failing, directory);
+
+    expect(summary.users).toMatchObject({ total: 2, mirrored: 2, failed: 0 });
+    expect(summary.errors).toEqual([
+      expect.stringContaining("Users u1: mirrored to WorkOS, but recording its id mapping failed"),
+      expect.stringContaining("Users u2: mirrored to WorkOS, but recording its id mapping failed"),
+    ]);
+    // Named per resource, and it says what to do about it.
+    expect(summary.errors[0]).toContain("datastore is unavailable");
+    expect(summary.errors[0]).toContain("Re-run the backfill");
+    // Nothing landed, so a re-run has something to reconcile.
+    expect(await mappingRows(env, directory.id)).toEqual([]);
   });
 
   it("is idempotent on a second pass: every PUT resolves, no POSTs, no duplicate mappings", async () => {
