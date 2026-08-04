@@ -33,6 +33,13 @@ if (process.env.CI && !POSTGRES_URL) {
   );
 }
 
+// Verifying by hand that Postgres ran? Read this file's own line in the runner
+// output — `datastore-conformance.test.ts (20 tests)`, one per driver per case —
+// not the suite total. The total is the number the runner prints loudest and the
+// tempting thing to assert, and it moves whenever anything else in tests/ does,
+// so it fails for reasons that have nothing to do with the driver. The invariant
+// is per-file and depends on nothing outside it.
+
 interface Driver {
   name: string;
   /** A migrated, empty datastore. */
