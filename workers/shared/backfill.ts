@@ -6,6 +6,7 @@ import {
   listOtherMappingsByNativeId,
   shouldPersistLogs,
   upsertMapping,
+  upsertMappings,
 } from "./db";
 import {
   errorMessage,
@@ -20,10 +21,18 @@ import {
   sharesNamespace,
   scimFetch,
   type IdTranslationMaps,
+  type MappingSink,
   type UpstreamResult,
 } from "./scim";
 
 const PAGE_SIZE = 100;
+
+/**
+ * Mappings queued before one batched write. 100 because that is where cost per
+ * statement flattened in the ENT-6758 measurements — 50 is nearly as good, 200 buys
+ * almost nothing, and a smaller page keeps less work at risk if a flush fails.
+ */
+const MAPPING_FLUSH_SIZE = 100;
 const ERROR_CAP = 20;
 
 type UpstreamSide = "native" | "workos";
@@ -45,6 +54,11 @@ export async function runBackfill(db: Datastore, directory: Directory): Promise<
     errors: [],
   };
 
+  // Mappings are queued here and written a page at a time (ENT-6761). The upstream
+  // SCIM calls stay one per resource — they are where the interesting failures are,
+  // and they keep their per-resource attribution.
+  const sink: MappingSink = [];
+
   const users = await snapshot(
     directory.native_url,
     directory.native_token,
@@ -53,7 +67,17 @@ export async function runBackfill(db: Datastore, directory: Directory): Promise<
     summary.errors,
   );
   for (const resource of users) {
-    await mirrorResource(db, directory, "Users", resource, resource, summary.users, summary.errors);
+    await mirrorResource(
+      db,
+      directory,
+      "Users",
+      resource,
+      resource,
+      summary.users,
+      summary.errors,
+      sink,
+    );
+    if (sink.length >= MAPPING_FLUSH_SIZE) await flushMappings(db, sink, summary.errors);
   }
 
   const groups = await snapshot(
@@ -63,6 +87,16 @@ export async function runBackfill(db: Datastore, directory: Directory): Promise<
     "native",
     summary.errors,
   );
+  // Flush before reading the maps, not after. `loadIdMaps` is what translates group
+  // members from native ids to WorkOS ids, so a user mapping still sitting in the
+  // sink would be invisible to it and every group would be mirrored with untranslated
+  // members — a silently wrong migration rather than a failure.
+  //
+  // Reordering these two lines fails "translates group members[].value through
+  // fallback-post minted ids" in tests/backfill.test.ts. Named here because that
+  // test's name is about minted ids, so the connection is not obvious from the
+  // failure alone.
+  await flushMappings(db, sink, summary.errors);
   const maps = await loadIdMaps(db, directory.id);
   const translate = makeTranslator(maps.nativeToWorkos);
   for (const resource of groups) {
@@ -74,10 +108,51 @@ export async function runBackfill(db: Datastore, directory: Directory): Promise<
           : member,
       );
     }
-    await mirrorResource(db, directory, "Groups", resource, body, summary.groups, summary.errors);
+    await mirrorResource(
+      db,
+      directory,
+      "Groups",
+      resource,
+      body,
+      summary.groups,
+      summary.errors,
+      sink,
+    );
+    if (sink.length >= MAPPING_FLUSH_SIZE) await flushMappings(db, sink, summary.errors);
   }
+  await flushMappings(db, sink, summary.errors);
 
   return summary;
+}
+
+/**
+ * Write the queued mappings, and say which resources are affected if that fails.
+ *
+ * The counts are deliberately not touched. Every resource in the sink was already
+ * mirrored to WorkOS successfully — the upstream write happened, and reporting it as
+ * failed would send an operator hunting a resource that is actually fine, which is
+ * the worse of the two possible lies. What a failed flush costs is the id mapping,
+ * so the errors name each resource and say what to do: a re-run reconciles it, via
+ * the 409 recovery path (the POST finds the resource already there and the mapping is
+ * rebuilt from WorkOS's answer).
+ */
+async function flushMappings(db: Datastore, sink: MappingSink, errors: string[]): Promise<void> {
+  if (sink.length === 0) return;
+  // Drained before the write, so a throw cannot leave the same rows queued for the
+  // next flush to retry blindly.
+  const pending = sink.splice(0);
+  try {
+    await upsertMappings(db, pending);
+  } catch (error) {
+    const detail = errorMessage(error);
+    for (const mapping of pending) {
+      pushError(
+        errors,
+        `${mapping.resource_type} ${mapping.native_id}: mirrored to WorkOS, but recording its id ` +
+          `mapping failed (${detail}). Re-run the backfill to reconcile it.`,
+      );
+    }
+  }
 }
 
 /**
@@ -149,6 +224,7 @@ async function mirrorResource(
   body: Record<string, unknown>,
   counts: ResourceCounts,
   errors: string[],
+  sink?: MappingSink,
 ): Promise<void> {
   counts.total += 1;
   const nativeId = typeof original.id === "string" ? original.id : null;
@@ -157,7 +233,7 @@ async function mirrorResource(
     pushError(errors, `${kind}: snapshot resource is missing an id`);
     return;
   }
-  const result = await mirrorUpsert(db, directory, kind, nativeId, body);
+  const result = await mirrorUpsert(db, directory, kind, nativeId, body, sink);
   try {
     if (shouldPersistLogs(directory))
       await insertProxyLog(db, {
