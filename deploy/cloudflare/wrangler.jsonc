@@ -1,0 +1,48 @@
+// Deployment template for the SCIM bridge on Cloudflare Containers.
+//
+// Copy this file, change `name` and `PUBLIC_URL`, and deploy. Everything that
+// authenticates anything is deliberately absent: see README.md for the secrets to
+// set with `wrangler secret put`, and why `DIRECTORIES_JSON` is one of them.
+//
+// There is no `account_id` here on purpose, so this file is not tied to one account.
+// Export `CLOUDFLARE_ACCOUNT_ID` in the environment you deploy from instead.
+{
+  "name": "scim-bridge",
+  "main": "src/bridge.ts",
+  "compatibility_date": "2026-06-01",
+  "workers_dev": true,
+
+  "containers": [
+    {
+      "class_name": "BridgeContainer",
+      // The image is the repository root's Dockerfile — the same image the
+      // docker-compose deployment runs.
+      "image": "../../Dockerfile",
+      // One instance, because SQLite has a single writer and the panel must read
+      // what the data plane just wrote.
+      "max_instances": 1,
+      "instance_type": "basic",
+    },
+  ],
+
+  "durable_objects": {
+    "bindings": [{ "name": "BRIDGE", "class_name": "BridgeContainer" }],
+  },
+
+  // Required: a container's lifecycle is owned by a Durable Object.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BridgeContainer"] }],
+
+  // Plaintext configuration only. Anything here is visible in the Cloudflare
+  // dashboard and in your version control, so nothing that authenticates belongs in
+  // this block — not even DIRECTORIES_JSON, which looks like config and carries
+  // per-directory bearer tokens.
+  "vars": {
+    // The URL the IdP will send SCIM to. Used to build the SCIM base URL the panel
+    // displays, so it has to be the address reachable from outside.
+    "PUBLIC_URL": "https://scim-bridge.example.workers.dev",
+    "DATABASE_PATH": "/data/scim-bridge.db",
+
+    // DEMO_MODE is deliberately not here. It mounts simulated IdP and native-app
+    // endpoints and seeds a demo directory; it must stay off in any real deployment.
+  },
+}

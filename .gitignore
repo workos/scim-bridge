@@ -38,6 +38,12 @@ yarn-error.log*
 .env*
 !.env.example
 
+# Local Cloudflare secrets. `wrangler dev` reads .dev.vars, and deploy/cloudflare's
+# README tells operators to put their panel password and DIRECTORIES_JSON there —
+# which carries every directory's proxy token, so it must never be committed.
+.dev.vars
+.dev.vars.*
+
 # typescript
 *.tsbuildinfo
 
