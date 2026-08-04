@@ -4,6 +4,7 @@ import {
   hashProxyToken,
   isHashedToken,
   proxyTokenHint,
+  timingSafeEqual,
 } from "./crypto";
 import { newDirectoryId, newProxyToken } from "./ids";
 import { TransientDatastoreError, type Datastore } from "./datastore";
@@ -104,23 +105,31 @@ async function decryptDirectory(
 /**
  * Resolve the directory a presented bearer token belongs to.
  *
- * The token is hashed and the digest is looked up, so this authenticates without
- * the database holding anything usable (ENT-6742). No constant-time compare: the
- * comparison happens inside the index on a SHA-256 digest, and timing that tells an
- * attacker something about the digest, not about the token that produced it.
+ * The token is hashed and the digest is looked up, so this authenticates without the
+ * database holding anything usable (ENT-6742).
+ *
+ * The match found by SQL is then re-checked in JS with a constant-time compare.
+ * Being straight about what that buys, because "constant-time" oversells it: the
+ * timing gain is marginal, since what SQL compared is a digest and leaking
+ * information about a SHA-256 output does not help an attacker reach the token that
+ * produced it. What the recheck actually buys is a *byte-exact* decision. `=` in SQL
+ * is collation-dependent — a Postgres deployment with a nondeterministic collation,
+ * or a column that ever becomes `CHAR`, can call two different strings equal — and
+ * an authentication decision should not rest on the column's collation. It also
+ * keeps every credential compare in this codebase going through one helper, which is
+ * the property that survives someone later changing this query.
  */
 export async function getDirectoryByToken(db: Datastore, token: string): Promise<Directory | null> {
   if (!token) return null;
   const hash = await hashProxyToken(token);
-  return decryptDirectory(
-    db,
-    await withDatastoreRetry(() =>
-      db
-        .prepare("SELECT * FROM scim_directories WHERE proxy_token_hash = ?")
-        .bind(hash)
-        .first<Directory>(),
-    ),
+  const row = await withDatastoreRetry(() =>
+    db
+      .prepare("SELECT * FROM scim_directories WHERE proxy_token_hash = ?")
+      .bind(hash)
+      .first<Directory>(),
   );
+  if (!row || !timingSafeEqual(row.proxy_token_hash, hash)) return null;
+  return decryptDirectory(db, row);
 }
 
 export async function getDirectoryById(db: Datastore, id: string): Promise<Directory | null> {

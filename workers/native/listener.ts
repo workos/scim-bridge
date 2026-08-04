@@ -1,4 +1,5 @@
 import { getConfig, listDirectories, truncateBody, withDatastoreRetry } from "../shared/db";
+import { timingSafeEqual } from "../shared/crypto";
 import { fetchDirectoryStatus } from "./status-client";
 import { NATIVE_TABLES, ScimStore } from "./store";
 import type { GroupRow, ScimResource, UserRow } from "./store";
@@ -693,15 +694,6 @@ async function verifySignature(
   const expected = [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
   if (!timingSafeEqual(expected, match[2].toLowerCase())) return "invalid";
   return Math.abs(now - Number(match[1])) <= SIGNATURE_TOLERANCE_MS ? "valid" : "stale";
-}
-
-export function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
 }
 
 function primaryEmail(emails: unknown): string | null {

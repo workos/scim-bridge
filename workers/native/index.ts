@@ -1,7 +1,8 @@
 import { getConfig } from "../shared/db";
 import type { Datastore } from "../shared/datastore";
 import type { PocEnv, WorkerHandler } from "../shared/types";
-import { handleDsyncWebhook, timingSafeEqual } from "./listener";
+import { handleDsyncWebhook } from "./listener";
+import { timingSafeEqual } from "../shared/crypto";
 import { captureMockBefore, emitMockEvents, parseMockScimPath } from "./mock-emitter";
 import { handleScim, scimError } from "./scim-server";
 import { renderStatusPage } from "./status-page";
