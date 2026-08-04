@@ -13,6 +13,19 @@
  * addition is something each driver must reproduce identically.
  */
 
+/**
+ * A failure the caller may retry: a lock, a serialization conflict, a connection
+ * the pool lost. Each driver decides what qualifies for its engine and wraps the
+ * cause, so `withD1Retry` doesn't have to pattern-match error strings it can't
+ * know.
+ */
+export class TransientDatastoreError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "TransientDatastoreError";
+  }
+}
+
 export interface DatastoreRunResult {
   results: unknown[];
   success: true;

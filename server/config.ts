@@ -4,6 +4,7 @@ import {
   listDirectories,
   reconcileDirectories,
   setConfig,
+  setConfigIfAbsent,
   setDirectoryLogPersistence,
   type EnvDirectory,
 } from "../workers/shared/db";
@@ -20,6 +21,15 @@ export const APP_ROLES = ["bridge", "native-app"] as const;
 export type AppRole = (typeof APP_ROLES)[number];
 
 /**
+ * Which datastore backs the container. `sqlite` (the default) is the documented
+ * docker-compose deployment: one file on a mounted volume. `postgres` is for the
+ * deployments that already run RDS/Aurora and want the database backed up by the
+ * machinery they already own (ENT-6753).
+ */
+export const DATABASE_DRIVERS = ["sqlite", "postgres"] as const;
+export type DatabaseDriver = (typeof DATABASE_DRIVERS)[number];
+
+/**
  * Global configuration for the container, read from environment variables.
  * Per-directory settings (native/WorkOS endpoints + tokens, mode) are imported
  * through the control panel and stored per directory; only process-wide
@@ -28,6 +38,10 @@ export type AppRole = (typeof APP_ROLES)[number];
 export interface AppConfig {
   /** Which half of the deployment this container runs. */
   role: AppRole;
+  /** Which datastore driver backs `env.DB`. */
+  databaseDriver: DatabaseDriver;
+  /** `postgres` driver: the connection string (DATABASE_URL). */
+  databaseUrl: string | null;
   /** HTTP port the server listens on. */
   port: number;
   /** Path to the SQLite database file (mount a volume here to persist). */
@@ -59,6 +73,16 @@ function bool(value: string | undefined, fallback = false): boolean {
 
 function trimTrailingSlash(url: string): string {
   return url.replace(/\/+$/, "");
+}
+
+function databaseDriver(value: string | undefined): DatabaseDriver {
+  const driver = value?.trim() || "sqlite";
+  if (!(DATABASE_DRIVERS as readonly string[]).includes(driver)) {
+    throw new Error(
+      `DATABASE_DRIVER must be one of ${DATABASE_DRIVERS.join(", ")}; received "${value}".`,
+    );
+  }
+  return driver as DatabaseDriver;
 }
 
 function appRole(value: string | undefined): AppRole {
@@ -111,6 +135,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const databasePath = env.DATABASE_PATH?.trim() || "/data/scim-bridge.db";
   const publicUrl = trimTrailingSlash(env.PUBLIC_URL?.trim() || `http://127.0.0.1:${port}`);
   const bridgeStatusUrl = env.BRIDGE_STATUS_URL?.trim();
+  const driver = databaseDriver(env.DATABASE_DRIVER);
+  const databaseUrl = env.DATABASE_URL?.trim() || null;
+  // Failing at boot beats a driver that cannot connect: the panel would serve
+  // 500s with the real cause buried in a stack trace.
+  if (driver === "postgres" && !databaseUrl) {
+    throw new Error("DATABASE_URL is required when DATABASE_DRIVER=postgres.");
+  }
   const webhookSecret = env.WEBHOOK_SECRET?.trim() || null;
   // Refuse to boot rather than serve /webhooks/dsync unauthenticated: the
   // listener skips signature verification when it has no secret, so an
@@ -126,6 +157,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   return {
     role,
+    databaseDriver: driver,
+    databaseUrl,
     port,
     databasePath,
     publicUrl,
@@ -171,10 +204,15 @@ export async function seedConfig(env: PocEnv, config: AppConfig): Promise<void> 
  * secret; the app owns them now. Only ever written when absent, so a restart
  * never rotates a token an IdP or the panel is already using.
  */
-export async function seedGeneratedTokens(env: PocEnv): Promise<void> {
+export async function seedGeneratedTokens(env: PocEnv): Promise<Record<string, string>> {
+  const landed: Record<string, string> = {};
   for (const key of ["native.scim_token", "mock_workos.scim_token"]) {
-    if (!(await getConfig(env.DB, key))) await setConfig(env.DB, key, newScimToken());
+    // Insert-if-absent and read back: with two instances booting at once (the
+    // point of the Postgres driver) a check-then-write would let the loser's
+    // token reach a directory row while the winner's sits in config.
+    landed[key] = await setConfigIfAbsent(env.DB, key, newScimToken());
   }
+  return landed;
 }
 
 /**

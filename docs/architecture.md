@@ -28,7 +28,13 @@ Shared logic lives in `workers/shared`: `scim.ts` (translation + id rewriting),
 Every `env.DB` caller talks to one narrow interface — `Datastore` in
 `workers/shared/datastore.ts`: `prepare().bind().first()/.all()/.run()`,
 `batch()` (atomic in every driver), and the at-rest encryption key. Drivers
-implement it; `server/db/sqlite.ts` is the file-backed one and the default.
+implement it: `server/db/sqlite.ts` (file-backed, the default) and
+`server/db/postgres.ts`, chosen by `DATABASE_DRIVER`. The Postgres driver rewrites
+`?` placeholders to `$n` (`server/db/placeholders.ts`, with an arity assertion on
+every execution) and its baseline schema defines a `datetime(text)` function, so
+the app's SQL — including the `YYYY-MM-DD HH:MM:SS` timestamps the status ETag and
+every `ORDER BY` depend on — runs unchanged. `tests/datastore-conformance.test.ts`
+runs one suite against every driver.
 Migrations in `migrations/*.sql` are applied on boot — `server/db/migrate.ts`
 orders the files, the driver's `DatastoreMigrator` applies them and owns the
 `_migrations` ledger, since migration SQL is dialect-specific.
