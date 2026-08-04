@@ -22,7 +22,7 @@ import {
   setDirectoryWorkosDirectoryId,
   withDatastoreRetry,
 } from "../../../workers/shared/db";
-import { storeClientToken } from "../../../workers/shared/client-tokens";
+import { publishMintedToken } from "../../../workers/shared/client-tokens";
 import type { BackfillSummary, Mode } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
 import * as AlertDialog from "../../vendor/design-system/components/alert-dialog";
@@ -181,9 +181,10 @@ export async function action({
   if (intent === "rotate-proxy-token") {
     const token = await rotateProxyToken(env.DB, directory.id);
     // The old token stopped working the moment that returned, so a bundled
-    // simulator still holding it would start failing every request. Demo mode only,
-    // for the same reason as at mint.
-    if (context.cloudflare.demoMode) await storeClientToken(env.DB, directory.id, token);
+    // simulator still holding it would start failing every request.
+    await publishMintedToken(env.DB, directory.id, token, {
+      demoMode: context.cloudflare.demoMode,
+    });
     // Returned rather than redirected: a redirect would drop the plaintext, and
     // this response is the only place it exists (ENT-6742).
     return { rotatedToken: token };

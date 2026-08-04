@@ -7,7 +7,11 @@ import {
   setConfig,
 } from "../workers/shared/db";
 import { hashProxyToken } from "../workers/shared/crypto";
-import { forgetClientTokens } from "../workers/shared/client-tokens";
+import {
+  clientTokenFor,
+  forgetClientTokens,
+  publishMintedToken,
+} from "../workers/shared/client-tokens";
 import { createUser } from "../workers/idp/client";
 import { fetchDirectoryStatus } from "../workers/native/status-client";
 import { newDirectoryId } from "../workers/shared/ids";
@@ -263,6 +267,45 @@ describe("proxy token hashing", () => {
       } finally {
         fake.restore();
       }
+    });
+  });
+
+  /**
+   * `publishMintedToken` is the one decision point for the panel's three mint paths.
+   * Both directions are checked because both are real: the demo/e2e simulator dies
+   * without the copy, and production leaks the plaintext with it. The route wiring
+   * itself is covered in tests/directory-import.test.ts, the one suite allowed to
+   * import a panel route.
+   */
+  describe("where the plaintext copy is written", () => {
+    async function plaintextRows(env: PocEnv): Promise<{ key: string; value: string }[]> {
+      const { results } = await env.DB.prepare("SELECT key, value FROM poc_config").all<{
+        key: string;
+        value: string;
+      }>();
+      return results;
+    }
+
+    it("hands a bundled simulator the token in demo mode", async () => {
+      const env = await createEnv();
+      const { id, proxy_token } = await insertDirectory(env.DB, { name: "Acme" });
+
+      await publishMintedToken(env.DB, id, proxy_token, { demoMode: true });
+
+      expect(await clientTokenFor(env.DB, id)).toBe(proxy_token);
+    });
+
+    it("writes nothing at all outside demo mode", async () => {
+      const env = await createEnv();
+      const { id, proxy_token } = await insertDirectory(env.DB, { name: "Acme" });
+      forgetClientTokens();
+
+      await publishMintedToken(env.DB, id, proxy_token, { demoMode: false });
+
+      expect(await clientTokenFor(env.DB, id)).toBeNull();
+      // Not just "the idp. key is absent" — no row anywhere holds the token.
+      const values = (await plaintextRows(env)).map((row) => row.value);
+      expect(values).not.toContain(proxy_token);
     });
   });
 });

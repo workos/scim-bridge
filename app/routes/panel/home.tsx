@@ -10,7 +10,7 @@ import {
   setDirectoriesLogPersistence,
   setDirectoryMode,
 } from "../../../workers/shared/db";
-import { storeClientToken } from "../../../workers/shared/client-tokens";
+import { publishMintedToken } from "../../../workers/shared/client-tokens";
 import { MODES, type Mode } from "../../../workers/shared/types";
 import { Button } from "../../vendor/design-system/components/button";
 import { Callout } from "../../vendor/design-system/components/callout";
@@ -162,10 +162,8 @@ export async function action({ context, request }: Route.ActionArgs) {
     // it at mint is the held half of the ticket, so this keeps today's redirect and
     // the operator recovers the token by rotating on the directory page.
     //
-    // Demo mode only: the bundled IdP simulator is the thing presenting this token,
-    // so it needs a copy. With no simulator the presenter is a real IdP holding its
-    // own, and writing the plaintext down here would undo the point of hashing it.
-    if (demoMode) await storeClientToken(env.DB, created.id, created.proxy_token);
+    // Only a bundled simulator gets a plaintext copy; see publishMintedToken.
+    await publishMintedToken(env.DB, created.id, created.proxy_token, { demoMode });
     return redirect(`/panel/directories/${created.id}`);
   }
 
@@ -188,7 +186,7 @@ export async function action({ context, request }: Route.ActionArgs) {
       }
       try {
         const created = await insertDirectory(env.DB, r);
-        if (demoMode) await storeClientToken(env.DB, created.id, created.proxy_token);
+        await publishMintedToken(env.DB, created.id, created.proxy_token, { demoMode });
         imported++;
       } catch (error) {
         importErrors.push(`Row ${i + 1} (${r.name}): ${directoryError(error)}`);

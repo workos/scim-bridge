@@ -63,3 +63,28 @@ export async function storeClientToken(
 export async function clientTokenFor(db: Datastore, directoryId: string): Promise<string | null> {
   return remembered.get(directoryId) ?? (await getConfig(db, configKey(directoryId)));
 }
+
+/**
+ * Hand a freshly minted token to whoever will present it — which is nobody, unless
+ * a simulator is bundled into this deployment.
+ *
+ * The single decision point for the panel's three mint paths (create, bulk import,
+ * rotate), so "when do we keep a plaintext copy?" is answered in one place rather
+ * than in three route files that can drift apart. It is also why this lives here
+ * and not inline in a route: the two failure modes are opposite and both bad, so
+ * they are worth testing directly.
+ *
+ * - demo mode without this: the simulator keeps presenting a retired token and
+ *   every provisioning action 401s
+ * - production *with* it: the plaintext is back in the database under a different
+ *   name, and hashing the column bought nothing
+ */
+export async function publishMintedToken(
+  db: Datastore,
+  directoryId: string,
+  token: string,
+  options: { demoMode: boolean },
+): Promise<void> {
+  if (!options.demoMode) return;
+  await storeClientToken(db, directoryId, token);
+}

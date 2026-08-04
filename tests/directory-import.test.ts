@@ -4,6 +4,7 @@ import { action } from "../app/routes/panel/home";
 import proxyWorker from "../workers/proxy/index";
 import { getDirectoryByToken, insertDirectory, listDirectories } from "../workers/shared/db";
 import { hashProxyToken } from "../workers/shared/crypto";
+import { clientTokenFor } from "../workers/shared/client-tokens";
 import type { Directory, PocEnv } from "../workers/shared/types";
 import {
   NATIVE_URL,
@@ -30,13 +31,14 @@ interface ImportResult {
 async function submit(
   env: PocEnv,
   fields: Record<string, string>,
+  demoMode = false,
 ): Promise<ImportResult | Response> {
   return (await action({
     request: new Request("https://bridge.test/panel", {
       method: "POST",
       body: new URLSearchParams(fields),
     }),
-    context: { cloudflare: { env, ctx: createCtx(), demoMode: false } },
+    context: { cloudflare: { env, ctx: createCtx(), demoMode } },
     params: {},
   } as unknown as ActionFunctionArgs)) as ImportResult | Response;
 }
@@ -297,6 +299,39 @@ describe("directory import", () => {
       expect(res.status).toBe(201);
       expect(fake.callsTo("native")).toHaveLength(1);
       expect(fake.callsTo("native")[0].headers.get("Authorization")).toBe("Bearer native-secret");
+    });
+  });
+
+  /**
+   * Where the import route leaves a readable copy of the token (ENT-6742). The
+   * policy itself is `publishMintedToken`, unit-tested in proxy-token-hashing; what
+   * this pins is that the *route* asks it, and passes the real `demoMode` rather
+   * than a constant — the mistake that would put every production token back in the
+   * database in readable form.
+   */
+  describe("the plaintext copy an import leaves behind", () => {
+    async function configValues(env: PocEnv): Promise<string[]> {
+      const { results } = await env.DB.prepare("SELECT value FROM poc_config").all<{
+        value: string;
+      }>();
+      return results.map((row) => row.value);
+    }
+
+    it("keeps none outside demo mode", async () => {
+      const env = await createEnv();
+
+      await submit(env, { intent: "create-directory", name: "Acme", proxy_token: IDP_TOKEN });
+
+      expect(await configValues(env)).not.toContain(IDP_TOKEN);
+    });
+
+    it("keeps one for the bundled simulator in demo mode", async () => {
+      const env = await createEnv();
+
+      await submit(env, { intent: "create-directory", name: "Acme", proxy_token: IDP_TOKEN }, true);
+
+      const row = await only(env);
+      expect(await clientTokenFor(env.DB, row.id)).toBe(IDP_TOKEN);
     });
   });
 });
