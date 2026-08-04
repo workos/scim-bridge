@@ -716,6 +716,25 @@ describe("migrated-id dance", () => {
       ]);
     });
 
+    it("still mints from externalId when the only other directory has no native url", async () => {
+      // A half-configured directory addresses no native app, so it holds no rows
+      // the tenant's externalId could be aimed at.
+      const { env, directory, fake } = await setup({ mode: "workos-only" });
+      await seedDirectory(env.DB, { name: "Unconfigured", native_url: "" });
+      fake.route("workos", "PUT", "/Users/ext-1", scimJson(404, { detail: "nope" }), {
+        once: true,
+      });
+      fake.route("workos", "POST", "/Users", scimJson(201, { id: "ext-1", userName: "a@b.c" }));
+
+      const res = await send(env, directory, "POST", "/scim/v2/Users", {
+        externalId: "ext-1",
+        userName: "a@b.c",
+      });
+
+      expect(res.status).toBe(201);
+      expect(await res.json()).toEqual({ id: "ext-1", userName: "a@b.c" });
+    });
+
     it("mints a random id when the create has no externalId", async () => {
       const { env, directory, fake } = await setup({ mode: "workos-only" });
       fake.route("workos", "PUT", /^\/Users\//, scimJson(404, { detail: "nope" }), { once: true });

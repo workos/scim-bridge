@@ -135,7 +135,12 @@ export async function nativeNamespaceIsShared(
 ): Promise<boolean> {
   const directories = await listDirectories(db);
   return directories.some(
-    (other) => other.id !== directory.id && sharesNamespace(directory.native_url, other.native_url),
+    (other) =>
+      other.id !== directory.id &&
+      // A directory with no native url configured yet addresses no native app,
+      // so it holds no rows to protect. Everything else compares fail-closed.
+      other.native_url !== "" &&
+      sharesNamespace(directory.native_url, other.native_url),
   );
 }
 
