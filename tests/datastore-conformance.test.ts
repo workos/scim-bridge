@@ -22,6 +22,17 @@ const POSTGRES_URL = process.env.TEST_DATABASE_URL;
 const MIGRATIONS = new URL("../migrations", import.meta.url).pathname;
 const PG_MIGRATIONS = new URL("../migrations/postgres", import.meta.url).pathname;
 
+// Skipping is right locally — most changes don't need a database running — but in
+// CI it is indistinguishable from passing, and a driver nobody exercises is a
+// driver that rots. CI supplies the service, so a missing URL there means the
+// workflow broke, not that Postgres is optional.
+if (process.env.CI && !POSTGRES_URL) {
+  throw new Error(
+    "TEST_DATABASE_URL is unset in CI: the Postgres driver would be silently skipped. " +
+      "Check the postgres service container in .github/workflows/ci.yml.",
+  );
+}
+
 interface Driver {
   name: string;
   /** A migrated, empty datastore. */
