@@ -1,3 +1,5 @@
+// @ts-nocheck — vendored from workos/packages/design-system by
+// `npm run sync-design-system`, which overwrites this file. Edit it upstream.
 "use client";
 import { ExclamationCircledIcon } from "@radix-ui/react-icons";
 import * as ThemesAlertDialog from "@radix-ui/themes/dist/esm/components/alert-dialog.js";

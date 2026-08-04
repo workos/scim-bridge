@@ -1,3 +1,5 @@
+// @ts-nocheck — vendored from workos/packages/design-system by
+// `npm run sync-design-system`, which overwrites this file. Edit it upstream.
 // Polyfill for 'scrollend' event support
 // Adapted from https://github.com/argyleink/scrollyfills/blob/main/src/scrollend.js
 // (c) 2023 Adam Argyle, ISC license

@@ -1,3 +1,5 @@
+// @ts-nocheck — vendored from workos/packages/design-system by
+// `npm run sync-design-system`, which overwrites this file. Edit it upstream.
 import { ThickCheckIcon } from "@radix-ui/themes/components/icons";
 import * as ThemesSelect from "@radix-ui/themes/dist/esm/components/select.js";
 import { Select as SelectPrimitive } from "radix-ui";
