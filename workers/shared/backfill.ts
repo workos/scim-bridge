@@ -3,7 +3,7 @@ import type { BackfillSummary, Directory, ResourceType } from "./types";
 import {
   getMapping,
   insertProxyLog,
-  listMappingsByNativeId,
+  listForeignMappingsByNativeId,
   shouldPersistLogs,
   upsertMapping,
 } from "./db";
@@ -364,9 +364,8 @@ interface DriftRepair {
  *
  * `userName`/`displayName` are unique per native namespace, not per directory, so
  * in a deployment that fronts several directories into one native SCIM namespace
- * a match on the attribute is not evidence that the row is this directory's. It
- * must also be attributable to this directory — already mapped by it, or carrying
- * the same `externalId` as the WorkOS resource — and not mapped by another one.
+ * a match on the attribute is not evidence that the row is this directory's — see
+ * `unattributedReason`.
  */
 async function repairDrift(
   db: Datastore,
@@ -383,27 +382,16 @@ async function repairDrift(
   if (!value) return null;
 
   let driftedId: string;
-  let matched: Record<string, unknown>;
   try {
-    const resolved = await findNativeRowByAttr(directory, kind, attr, value);
-    const resolvedId = resolved && typeof resolved.id === "string" ? resolved.id : null;
-    if (!resolved || !resolvedId || resolvedId === nativeId) return null;
-    driftedId = resolvedId;
-    matched = resolved;
+    const resolved = await findNativeIdByAttr(directory, kind, attr, value);
+    if (!resolved || resolved === nativeId) return null;
+    driftedId = resolved;
   } catch (error) {
     pushError(errors, `${kind}/${nativeId}: resolving drift by ${attr}: ${errorMessage(error)}`);
     return null;
   }
 
-  const unowned = await unattributedReason(
-    db,
-    directory,
-    kind,
-    workosId,
-    driftedId,
-    matched,
-    resource,
-  );
+  const unowned = await unattributedReason(db, directory, kind, workosId, driftedId, resource);
   if (unowned) {
     pushError(
       errors,
@@ -440,10 +428,18 @@ async function repairDrift(
 
 /**
  * Why the matched native row can't be treated as this directory's resource, or
- * null when it can. Attribution is positive: the mapping table already binds the
- * row to this directory, or the row's `externalId` is the one WorkOS holds. A row
- * another directory maps is never written — that would be one tenant's reconcile
- * overwriting another tenant's resource.
+ * null when it can. Attribution is positive — one of:
+ *
+ * - the mapping table already binds the row to this directory and this WorkOS id;
+ * - the row's id *is* the `externalId` WorkOS holds for the resource, which is the
+ *   signature of the drift this repair exists for: the listener created the row
+ *   under the IdP id (`idp_id` == `externalId`) while WorkOS kept the shared id.
+ *
+ * A row another directory in the same native namespace maps is never written —
+ * that would be one tenant's reconcile overwriting another tenant's resource.
+ * `externalId` equality between the two *resources* is deliberately not enough:
+ * a directory admin controls their own `externalId`s, so they could mint one
+ * matching the victim's and re-open the cross-directory write.
  */
 async function unattributedReason(
   db: Datastore,
@@ -451,12 +447,12 @@ async function unattributedReason(
   kind: ResourceType,
   workosId: string,
   driftedId: string,
-  matched: Record<string, unknown>,
   resource: Record<string, unknown>,
 ): Promise<string | null> {
-  const mappings = await listMappingsByNativeId(db, kind, driftedId);
-  const foreign = mappings.find((mapping) => mapping.directory_id !== directory.id);
-  if (foreign) return `is already mapped by directory ${foreign.directory_id}`;
+  const foreign = await listForeignMappingsByNativeId(db, directory, kind, driftedId);
+  if (foreign.length > 0) {
+    return `is already mapped by directory ${foreign[0].directory_id}`;
+  }
 
   const mine = await getMapping(db, directory.id, kind, driftedId);
   if (mine) {
@@ -465,25 +461,21 @@ async function unattributedReason(
       : `this directory already maps it to WorkOS ${mine.workos_id}`;
   }
 
-  const theirs = externalId(matched);
-  const ours = externalId(resource);
-  if (!theirs || !ours) return "has no externalId to attribute it to this directory";
-  if (theirs !== ours) return `carries externalId ${theirs}, not ${ours}`;
+  const ours = resource.externalId;
+  if (typeof ours !== "string" || !ours) {
+    return "is unmapped, and the WorkOS resource has no externalId to attribute it by";
+  }
+  if (ours !== driftedId) return `is unmapped and is not this directory's externalId ${ours}`;
   return null;
 }
 
-function externalId(resource: Record<string, unknown>): string | null {
-  const value = resource.externalId;
-  return typeof value === "string" && value ? value : null;
-}
-
-/** GET native filtered on a unique attribute, returning the first matching row. */
-async function findNativeRowByAttr(
+/** GET native filtered on a unique attribute, returning the first match's id. */
+async function findNativeIdByAttr(
   directory: Directory,
   kind: ResourceType,
   attr: "userName" | "displayName",
   value: string,
-): Promise<Record<string, unknown> | null> {
+): Promise<string | null> {
   const escaped = value.replace(/([\\"])/g, "\\$1");
   const filter = encodeURIComponent(`${attr} eq "${escaped}"`);
   const page = await scimFetch(
@@ -508,7 +500,7 @@ async function findNativeRowByAttr(
           (entry[attr] as string).toLowerCase() === value.toLowerCase(),
       )
     : null;
-  return isRecord(match) ? match : null;
+  return isRecord(match) && typeof match.id === "string" ? match.id : null;
 }
 
 function describeFailure(status: number): string {

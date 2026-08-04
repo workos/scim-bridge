@@ -143,6 +143,14 @@ shared id (e.g. an offboard-then-rehire re-created the row under `idp_id`). Run
 - A line ending `native returned 409 (… drift unresolved)` means the collision
   couldn't be attributed to a row (the userName/displayName didn't resolve);
   investigate that resource by hand.
+- A line ending `drift left unrepaired` means the collision _did_ resolve to a
+  row, but that row isn't attributable to this directory: another directory in the
+  same native namespace maps it, or it is unmapped and its id isn't the
+  `externalId` WorkOS holds (the shape listener-adopted drift always takes).
+  `userName`/`displayName` are unique per native namespace, not per directory, so
+  in a deployment that bridges several directories into one namespace a match can
+  be another tenant's resource; reconcile refuses to write it. Line the ids up by
+  hand only once you've confirmed which directory the row belongs to.
 - A line ending `drift left unrepaired` means the collision *did* resolve to a
   row, but that row isn't attributable to this directory — another directory maps
   it, or its `externalId` isn't the one WorkOS holds. `userName`/`displayName` are

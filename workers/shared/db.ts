@@ -347,16 +347,26 @@ export async function getMappingByWorkosId(
   );
 }
 
-/** Every mapping of this native id, across all directories. */
-export async function listMappingsByNativeId(
+/**
+ * Mappings of this native id held by *other* directories that share this
+ * directory's native namespace. Scoped by `native_url`, because ids only collide
+ * meaningfully within one native app: two directories pointed at different native
+ * endpoints can mint the same id for unrelated resources.
+ */
+export async function listForeignMappingsByNativeId(
   db: Datastore,
+  directory: Directory,
   resourceType: ResourceType,
   nativeId: string,
 ): Promise<IdMapping[]> {
   const { results } = await withD1Retry(() =>
     db
-      .prepare("SELECT * FROM id_mappings WHERE resource_type = ? AND native_id = ?")
-      .bind(resourceType, nativeId)
+      .prepare(
+        "SELECT m.* FROM id_mappings m JOIN scim_directories d ON d.id = m.directory_id " +
+          "WHERE m.resource_type = ? AND m.native_id = ? AND m.directory_id != ? " +
+          "AND rtrim(d.native_url, '/') = rtrim(?, '/')",
+      )
+      .bind(resourceType, nativeId, directory.id, directory.native_url)
       .all<IdMapping>(),
   );
   return results;
