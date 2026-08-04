@@ -27,7 +27,7 @@
     "@codemirror/state": "^6.4.1",
     "@fontsource-variable/geist": "^5.2.8",
     "@fontsource-variable/geist-mono": "^5.2.7",
-    "@hono/node-server": "^1.13.7",
+    "@hono/node-server": "^2.0.10",
     "@hookform/resolvers": "^3.1.0",
     "@lezer/highlight": "^1.2.1",
     "@radix-ui/react-icons": "^2.0.0-rc.1776195498999",
