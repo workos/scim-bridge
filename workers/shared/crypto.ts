@@ -71,11 +71,14 @@ export function isHashedToken(value: string): boolean {
 }
 
 export async function hashProxyToken(token: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
-  const hex = Array.from(new Uint8Array(digest))
+  return HASH_PREFIX + (await sha256Hex(token));
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
-  return HASH_PREFIX + hex;
 }
 
 /**
@@ -103,6 +106,26 @@ export function proxyTokenHint(token: string): string {
  *
  * Length is compared first and non-constant-time, which leaks length only.
  */
+/**
+ * Compare two secrets of *any* length without the comparison telling an observer
+ * how they differ — including how long the right answer is.
+ *
+ * `timingSafeEqual` below returns as soon as the lengths differ, which is fine for
+ * a digest (both sides are 64 hex characters by construction) and not fine for a
+ * password, where a wrong guess is very often the wrong length. Feeding it raw
+ * values would also throw in some runtimes' native equivalents.
+ *
+ * So both sides are hashed first and the digests are compared: fixed 64 characters
+ * whatever went in, so the loop runs the same number of iterations for a one-character
+ * password and a thousand-character one, and the length early-exit can never fire.
+ * SHA-256 is sound for this because the only thing being asked of it is that two
+ * different inputs do not collide.
+ */
+export async function secretsMatch(a: string, b: string): Promise<boolean> {
+  const [left, right] = await Promise.all([sha256Hex(a), sha256Hex(b)]);
+  return timingSafeEqual(left, right);
+}
+
 export function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;

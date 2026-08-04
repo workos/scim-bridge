@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { decryptSecret, encryptSecret } from "../workers/shared/crypto";
+import { decryptSecret, encryptSecret, secretsMatch } from "../workers/shared/crypto";
 import { upsertMapping } from "../workers/shared/db";
 import {
   newDirectoryId,
@@ -836,5 +836,52 @@ describe("loadIdMaps", () => {
     const maps = await loadIdMaps(env.DB, mine.id);
     expect(maps.nativeToWorkos.Users.size).toBe(0);
     expect(maps.workosToNative.Users.size).toBe(0);
+  });
+});
+
+/**
+ * `secretsMatch` guards the panel's Basic-auth pair, so a bug here is an auth
+ * bypass rather than a wrong answer.
+ *
+ * What these pin is *correctness*, not constant-timeness. The timing property is
+ * not observable from a test — restoring the `===` this replaced keeps every panel
+ * auth case green, which I checked. So the value here is that the helper it routes
+ * through cannot quietly start accepting the wrong thing: it hashes both sides and
+ * compares the digests, and a "simplification" that compared a prefix, or that
+ * treated two empty inputs as a match in the wrong place, would land right here.
+ */
+describe("secretsMatch", () => {
+  it("matches a value against itself and nothing else", async () => {
+    expect(await secretsMatch("hunter2", "hunter2")).toBe(true);
+    expect(await secretsMatch("hunter2", "hunter3")).toBe(false);
+  });
+
+  it("is exact about case, whitespace and unicode", async () => {
+    // A panel password is not case-insensitive and must not become so by way of a
+    // comparison that normalises.
+    expect(await secretsMatch("Hunter2", "hunter2")).toBe(false);
+    expect(await secretsMatch("hunter2", "hunter2 ")).toBe(false);
+    expect(await secretsMatch("hunter2", " hunter2")).toBe(false);
+    expect(await secretsMatch("🔑", "🔑")).toBe(true);
+    expect(await secretsMatch("🔑", "🔒")).toBe(false);
+  });
+
+  it("compares a prefix of the input as unequal, at both ends", async () => {
+    // Covers truncation of the *inputs* — a comparison that stopped at the shorter
+    // of the two. It does NOT cover truncation of the digests: comparing only the
+    // first n hex characters still distinguishes every pair here, so that change
+    // would pass. No test can reasonably catch it (the inputs that would expose it
+    // are a SHA-256 prefix collision), so it is guarded by review, not by this.
+    expect(await secretsMatch("hunter", "hunter2")).toBe(false);
+    expect(await secretsMatch("hunter2", "hunter")).toBe(false);
+    expect(await secretsMatch("", "hunter2")).toBe(false);
+    expect(await secretsMatch("hunter2", "")).toBe(false);
+  });
+
+  it("handles wildly mismatched lengths without throwing", async () => {
+    // Why both sides are hashed before comparing: a native timingSafeEqual throws
+    // on length-mismatched inputs, and a wrong password is usually a wrong length.
+    expect(await secretsMatch("a", "b".repeat(10_000))).toBe(false);
+    expect(await secretsMatch("a".repeat(10_000), "a".repeat(10_000))).toBe(true);
   });
 });
