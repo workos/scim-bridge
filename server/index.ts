@@ -17,6 +17,7 @@ import {
   seedNativeAppDirectories,
 } from "./config";
 import { openDatabase, SqliteDatastore, SqliteMigrator } from "./db/sqlite";
+import { inspectStorage } from "./db/storage-durability";
 import { openPostgres, PostgresDatastore, PostgresMigrator } from "./db/postgres";
 import { runMigrations } from "./db/migrate";
 import type { Datastore, DatastoreMigrator } from "../workers/shared/datastore";
@@ -75,6 +76,15 @@ function openDatastore(): {
       migrationsDir: POSTGRES_MIGRATIONS_DIR,
     };
   }
+  // Where the database actually is, and whether it will still be there after a
+  // restart. Both printed at boot: "which file am I using" should not require a
+  // shell, and a disk that vanishes should not be discovered by losing data.
+  const storage = inspectStorage(config.databasePath);
+  console.log(
+    `SQLite database: ${storage.path}` +
+      (storage.filesystem ? ` (${storage.filesystem} on ${storage.mountPoint})` : ""),
+  );
+  if (storage.warning) console.warn(`WARNING: ${storage.warning}`);
   const sqlite = openDatabase(config.databasePath);
   return {
     store: new SqliteDatastore(sqlite),

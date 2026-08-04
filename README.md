@@ -163,6 +163,11 @@ run it on Postgres".
 
 scim-bridge is a single Node process:
 
+> **Storage:** the database holds every directory, its migration mode and its id
+> mappings, so `DATABASE_PATH` must be on a volume that survives a restart (or use
+> `DATABASE_DRIVER=postgres`). Boot warns when it is not. See
+> [docs/runbook.md#durable-storage](docs/runbook.md#durable-storage).
+
 - **`server/`** — a [Hono](https://hono.dev) server that routes `/scim/v2/*` to
   the proxy, serves the React Router control panel for everything else, applies
   migrations on boot, and provides the datastore driver the app code talks to
@@ -172,8 +177,9 @@ scim-bridge is a single Node process:
 - **`app/`** — the React Router control panel (vendored WorkOS design system).
 - **`workers/native`, `workers/idp`** — the demo simulators (DEMO_MODE only).
 
-It also deploys to Cloudflare Workers + D1; the D1 migration files under
-`migrations/` are shared by both runtimes.
+The datastore is a configured choice: a SQLite file (default) or Postgres, behind
+one narrow interface — see [docs/runbook.md#durable-storage](docs/runbook.md#durable-storage)
+for which to pick and why.
 
 ## License
 
