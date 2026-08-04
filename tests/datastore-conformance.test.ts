@@ -7,11 +7,14 @@ import {
   getConfig,
   listDirectories,
   setConfigIfAbsent,
+  upsertMappings,
   withDatastoreRetry,
+  type NewMapping,
 } from "../workers/shared/db";
 import { TransientDatastoreError, type Datastore } from "../workers/shared/datastore";
 import { seedGeneratedTokens } from "../server/config";
 import { insertDirectory } from "../workers/shared/db";
+import type { ResourceType } from "../workers/shared/types";
 
 /**
  * One suite, every driver. This is what makes "one narrow interface, two
@@ -88,6 +91,17 @@ afterAll(async () => {
   for (const pool of pools) await pool.close();
 });
 
+/** A mapping row for the cases below; only the ids vary. */
+function mapping(directoryId: string, nativeId: string, workosId: string): NewMapping {
+  return {
+    directory_id: directoryId,
+    resource_type: "Users",
+    native_id: nativeId,
+    workos_id: workosId,
+    strategy: "migrated-id",
+  };
+}
+
 describe.each(drivers)("$name driver", ({ open }) => {
   it("returns null from first() on a miss, and the row on a hit", async () => {
     const db = await open();
@@ -151,6 +165,55 @@ describe.each(drivers)("$name driver", ({ open }) => {
     // The first statement must have rolled back with the second.
     expect(await getConfig(db, "a")).toBeNull();
     expect(await getConfig(db, "before")).toBe("1");
+  });
+
+  it("leaves no mapping behind when one write in the batch fails", async () => {
+    // What ENT-6761's backfill flush relies on, asserted per engine rather than
+    // assumed to be the same. `INSERT OR IGNORE` reached production once because
+    // nobody asked whether app SQL meant the same thing on both engines; a batch
+    // that half-applied would be worse — some resources would have mappings and
+    // others would not, with the summary reporting all of them mirrored.
+    const db = await open();
+    const { id } = await insertDirectory(db, { name: "Acme" });
+    await upsertMappings(db, [mapping(id, "u_first", "wos_first")]);
+
+    await expect(
+      upsertMappings(db, [
+        mapping(id, "u_good", "wos_good"),
+        // resource_type is CHECK-constrained, so this statement cannot apply.
+        { ...mapping(id, "u_bad", "wos_bad"), resource_type: "Nonsense" as ResourceType },
+      ]),
+    ).rejects.toThrow();
+
+    const { results } = await db
+      .prepare("SELECT native_id FROM id_mappings WHERE directory_id = ? ORDER BY native_id")
+      .bind(id)
+      .all<{ native_id: string }>();
+    // The good statement rolled back with the bad one, and the row written by an
+    // earlier successful batch is untouched.
+    expect(results.map((row) => row.native_id)).toEqual(["u_first"]);
+  });
+
+  it("applies a later mapping over an earlier one inside the same batch", async () => {
+    // The backfill queues rows in the order the mirror path produced them, and a
+    // correction can follow a first write for the same resource. Batching must not
+    // reorder them: the last write for a key has to win, exactly as it would if the
+    // statements had been issued one at a time.
+    const db = await open();
+    const { id } = await insertDirectory(db, { name: "Acme" });
+
+    await upsertMappings(db, [
+      { ...mapping(id, "u1", "wos_stale"), strategy: "migrated-id" },
+      { ...mapping(id, "u1", "wos_fresh"), strategy: "fallback-post" },
+    ]);
+
+    const row = await db
+      .prepare(
+        "SELECT workos_id, strategy FROM id_mappings WHERE directory_id = ? AND native_id = ?",
+      )
+      .bind(id, "u1")
+      .first<{ workos_id: string; strategy: string }>();
+    expect(row).toEqual({ workos_id: "wos_fresh", strategy: "fallback-post" });
   });
 
   it("keeps the SQLite timestamp shape, which the status ETag and ordering read", async () => {

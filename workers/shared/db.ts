@@ -494,29 +494,57 @@ export async function listOtherMappingsByNativeId(
   return results;
 }
 
-export async function upsertMapping(
-  db: Datastore,
-  mapping: Pick<
-    IdMapping,
-    "directory_id" | "resource_type" | "native_id" | "workos_id" | "strategy"
-  >,
-): Promise<void> {
+/** The mapping fields a caller supplies; the rest of the row has defaults. */
+export type NewMapping = Pick<
+  IdMapping,
+  "directory_id" | "resource_type" | "native_id" | "workos_id" | "strategy"
+>;
+
+/** One string, used by both the single and the batched write, so the two cannot
+ *  drift into disagreeing about conflict handling. */
+const UPSERT_MAPPING_SQL =
+  "INSERT INTO id_mappings (directory_id, resource_type, native_id, workos_id, strategy) " +
+  "VALUES (?, ?, ?, ?, ?) " +
+  "ON CONFLICT (directory_id, resource_type, native_id) DO UPDATE SET " +
+  "workos_id = excluded.workos_id, strategy = excluded.strategy, updated_at = datetime('now')";
+
+function upsertMappingStatement(db: Datastore, mapping: NewMapping) {
+  return db
+    .prepare(UPSERT_MAPPING_SQL)
+    .bind(
+      mapping.directory_id,
+      mapping.resource_type,
+      mapping.native_id,
+      mapping.workos_id,
+      mapping.strategy,
+    );
+}
+
+export async function upsertMapping(db: Datastore, mapping: NewMapping): Promise<void> {
+  await withDatastoreRetry(() => upsertMappingStatement(db, mapping).run());
+}
+
+/**
+ * Write many mappings in one round trip.
+ *
+ * The backfill's reason for existing (ENT-6761): it mirrors a resource at a time and
+ * used to write a mapping at a time, which is one implicit transaction per statement
+ * on SQLite, one network round trip per statement on Postgres, and — measured on the
+ * ENT-6758 spike — 7 ms per statement against a Durable Object, versus 0.21 ms when
+ * the same statements arrive together.
+ *
+ * Order is significant and preserved: later rows for the same key overwrite earlier
+ * ones, exactly as sequential `upsertMapping` calls would, so a caller that queues
+ * a correction after a first write still ends up with the correction.
+ *
+ * One transaction, so a failure leaves none of them — see the conformance suite for
+ * what each engine guarantees. The caller is responsible for reporting *which*
+ * resources were affected; `id_mappings` rows carry that identity themselves.
+ */
+export async function upsertMappings(db: Datastore, mappings: NewMapping[]): Promise<void> {
+  if (mappings.length === 0) return;
   await withDatastoreRetry(() =>
-    db
-      .prepare(
-        "INSERT INTO id_mappings (directory_id, resource_type, native_id, workos_id, strategy) " +
-          "VALUES (?, ?, ?, ?, ?) " +
-          "ON CONFLICT (directory_id, resource_type, native_id) DO UPDATE SET " +
-          "workos_id = excluded.workos_id, strategy = excluded.strategy, updated_at = datetime('now')",
-      )
-      .bind(
-        mapping.directory_id,
-        mapping.resource_type,
-        mapping.native_id,
-        mapping.workos_id,
-        mapping.strategy,
-      )
-      .run(),
+    db.batch(mappings.map((mapping) => upsertMappingStatement(db, mapping))),
   );
 }
 
