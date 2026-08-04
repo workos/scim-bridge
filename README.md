@@ -151,8 +151,18 @@ npm run test:postgres    # every test on Postgres
 npm run test:engines     # asserts both runs covered the same tests
 ```
 
-CI runs all three. `test:engines` compares the JSON reports the first two leave in
-`.vitest/`, so it costs no extra runs — and it fails if a test is skipped on one
+Each worker migrates one Postgres schema and resets it between tests, so a run
+creates a handful rather than one per test. A worker killed mid-run (a timeout, a
+Ctrl-C) leaves its schema behind; to clear leftovers:
+
+```bash
+psql "$TEST_DATABASE_URL" -tAc \
+  "SELECT format('DROP SCHEMA %I CASCADE;', schema_name) FROM information_schema.schemata \
+   WHERE schema_name ~ '^t[0-9]+_[0-9]+$'" | psql "$TEST_DATABASE_URL"
+```
+
+CI runs all three test commands. `test:engines` compares the JSON reports the
+first two leave in `.vitest/`, so it costs no extra runs — and it fails if a test is skipped on one
 engine but not the other, which is how "make it pass on Postgres" becomes "don't
 run it on Postgres".
 

@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import type { Pool } from "pg";
 import { openPostgres, PostgresDatastore, PostgresMigrator } from "../server/db/postgres";
 import { SqliteDatastore, SqliteMigrator } from "../server/db/sqlite";
 import { newDirectoryId } from "../workers/shared/ids";
@@ -29,8 +30,6 @@ export type TestEngine = "sqlite" | "postgres";
 export const TEST_ENGINE: TestEngine =
   process.env.TEST_ENGINE === "postgres" ? "postgres" : "sqlite";
 
-/** Databases the current test created, torn down by tests/setup.ts afterEach. */
-const open: { close(): Promise<void> }[] = [];
 let schemaCounter = 0;
 
 /** A freshly migrated datastore on the configured engine. */
@@ -42,39 +41,108 @@ export async function createTestDb(): Promise<PocEnv["DB"]> {
   return new SqliteDatastore(sqlite);
 }
 
+interface PostgresSchema {
+  name: string;
+  pool: Pool;
+  store: PostgresDatastore;
+  /** Tables to clear between tests (everything but the migration ledger). */
+  tables: string[];
+  /** The rows the baseline seeds into poc_config, restored after each truncate. */
+  seeds: { key: string; value: string }[];
+  inUse: boolean;
+}
+
+/** Migrated schemas this worker owns, reused across tests. */
+const schemas: PostgresSchema[] = [];
+
+/**
+ * A migrated schema, reused.
+ *
+ * Migrating per database was the obvious design and measurably the wrong one: the
+ * baseline costs 130–460ms, ~300 databases a run pay it, and with one worker per
+ * core all that DDL contends on one server until tests start crossing the 5s
+ * timeout — a flake that looks like slowness rather than a bug. So each worker
+ * migrates once and resets between tests instead, which turns a ~150ms setup into
+ * a ~10ms `TRUNCATE`.
+ *
+ * A test asking for a second database while it still holds the first gets a
+ * second schema: two suites do that deliberately, and reusing one schema would
+ * have let the second reset wipe the first.
+ */
 async function createPostgresDb(): Promise<PocEnv["DB"]> {
   const url = process.env.TEST_DATABASE_URL;
   if (!url) {
     throw new Error("TEST_ENGINE=postgres needs TEST_DATABASE_URL (see README).");
   }
-  // A schema per database rather than one per file with truncation between
-  // tests: two of the suites build two independent databases inside a single
-  // test, and an isolation model that quietly breaks those is worse than the
-  // schema-creation cost (measured in the PR). It also sidesteps the trap in the
-  // truncating design — TRUNCATE leaves sequences where they were unless asked
-  // (`RESTART IDENTITY`), so tests that assert on an autoincrement id would pass
-  // in file order and fail when run alone. A new schema has new sequences, which
-  // `tests/helpers.test.ts` pins rather than assumes.
-  const schema = `t${process.pid}_${(schemaCounter += 1)}`;
+
+  const free = schemas.find((schema) => !schema.inUse);
+  if (free) {
+    await resetSchema(free);
+    free.inUse = true;
+    return free.store;
+  }
+
+  const name = `t${process.pid}_${(schemaCounter += 1)}`;
   const setup = openPostgres(url);
-  await setup.query(`CREATE SCHEMA ${schema}`);
+  await setup.query(`CREATE SCHEMA ${name}`);
   await setup.end();
-  const pool = openPostgres(`${url}?options=-csearch_path%3D${schema}`);
+  const pool = openPostgres(`${url}?options=-csearch_path%3D${name}`);
   const store = new PostgresDatastore(pool);
   await runMigrations(new PostgresMigrator(pool), PG_MIGRATIONS);
-  open.push({
-    async close() {
-      await pool.query(`DROP SCHEMA ${schema} CASCADE`).catch(() => {});
-      await store.close();
-    },
-  });
+
+  const { rows: tables } = await pool.query<{ table_name: string }>(
+    "SELECT table_name FROM information_schema.tables " +
+      "WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' AND table_name <> '_migrations'",
+  );
+  const { rows: seeds } = await pool.query<{ key: string; value: string }>(
+    "SELECT key, value FROM poc_config",
+  );
+  const schema: PostgresSchema = {
+    name,
+    pool,
+    store,
+    tables: tables.map((row) => row.table_name),
+    seeds,
+    inUse: true,
+  };
+  schemas.push(schema);
   return store;
 }
 
-/** Drop what the finished test created. Registered once, in tests/setup.ts. */
+async function resetSchema(schema: PostgresSchema): Promise<void> {
+  // RESTART IDENTITY, not just TRUNCATE: the sequences behind proxy_log,
+  // listener_events and idp_activity would otherwise carry over, and tests that
+  // assert on an id or on "the first row" would pass in file order and fail when
+  // run alone — which `tests/helpers.test.ts` checks on both engines.
+  await schema.pool.query(
+    `TRUNCATE ${schema.tables.map((table) => `"${table}"`).join(", ")} RESTART IDENTITY CASCADE`,
+  );
+  for (const seed of schema.seeds) {
+    await schema.pool.query("INSERT INTO poc_config (key, value) VALUES ($1, $2)", [
+      seed.key,
+      seed.value,
+    ]);
+  }
+}
+
+/** Release the databases the finished test held. Registered in tests/setup.ts. */
 export async function closeTestDatabases(): Promise<void> {
-  const closing = open.splice(0);
-  for (const database of closing) await database.close();
+  for (const schema of schemas) schema.inUse = false;
+}
+
+/** Drop this worker's schemas. Registered in tests/setup.ts (afterAll). */
+export async function teardownTestDatabases(): Promise<void> {
+  for (const schema of schemas.splice(0)) {
+    try {
+      await schema.pool.query(`DROP SCHEMA ${schema.name} CASCADE`);
+    } catch (error) {
+      // Report rather than swallow: a silently failed drop is how a leak hides.
+      // A killed worker (a timeout, a Ctrl-C) skips this entirely, so leftovers
+      // are still possible — see the cleanup one-liner in the README.
+      console.warn(`could not drop test schema ${schema.name}: ${(error as Error).message}`);
+    }
+    await schema.store.close();
+  }
 }
 
 export async function createEnv(): Promise<PocEnv> {
