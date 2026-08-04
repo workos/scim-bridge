@@ -210,7 +210,10 @@ export class ScimStore {
   async addMember(groupId: string, userId: string): Promise<boolean> {
     const result = await withD1Retry(() =>
       this.db
-        .prepare(`INSERT OR IGNORE INTO ${this.tables.members} (group_id, user_id) VALUES (?, ?)`)
+        .prepare(
+          `INSERT INTO ${this.tables.members} (group_id, user_id) VALUES (?, ?) ` +
+            "ON CONFLICT (group_id, user_id) DO NOTHING",
+        )
         .bind(groupId, userId)
         .run(),
     );

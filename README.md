@@ -136,15 +136,25 @@ npm run typecheck:gate  # asserts the gate rejects a deliberate type error
 npm run typecheck:app   # the control panel, which is not gated yet
 ```
 
-The test suite runs against the SQLite driver by default. To run the datastore
-conformance suite against Postgres too — the only thing that proves the driver
-holds — point `TEST_DATABASE_URL` at one:
+The test suite runs against the SQLite driver by default. Point
+`TEST_DATABASE_URL` at a Postgres server and it also runs the datastore
+conformance and schema-parity cases; add `TEST_ENGINE=postgres` and the **whole**
+suite runs on Postgres instead:
 
 ```bash
-docker run -d --rm --name sb-pg -e POSTGRES_PASSWORD=bridge -e POSTGRES_USER=bridge \
-  -e POSTGRES_DB=bridge -p 55432:5432 postgres:16-alpine
-TEST_DATABASE_URL=postgres://bridge:bridge@127.0.0.1:55432/bridge npm test
+docker run -d --rm --name sb-pg -e POSTGRES_PASSWORD=test -e POSTGRES_DB=scimtest \
+  -p 55432:5432 postgres:16
+export TEST_DATABASE_URL=postgres://postgres:test@127.0.0.1:55432/scimtest
+
+npm test                 # every test on SQLite (+ the Postgres-only cases)
+npm run test:postgres    # every test on Postgres
+npm run test:engines     # asserts both runs covered the same tests
 ```
+
+CI runs all three. `test:engines` compares the JSON reports the first two leave in
+`.vitest/`, so it costs no extra runs — and it fails if a test is skipped on one
+engine but not the other, which is how "make it pass on Postgres" becomes "don't
+run it on Postgres".
 
 `npm run dev` serves the panel with HMR; the `/scim` proxy data-plane runs under
 `npm run build && npm start` (or in Docker).

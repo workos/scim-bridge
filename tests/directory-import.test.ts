@@ -56,7 +56,7 @@ const IDP_TOKEN = "okta_scim_tok_9f3ac81be24d";
 describe("directory import", () => {
   describe("bulk CSV", () => {
     it("imports a row written against the original six columns", async () => {
-      const env = createEnv();
+      const env = await createEnv();
 
       const result = await bulkImport(
         env,
@@ -73,7 +73,7 @@ describe("directory import", () => {
     });
 
     it("imports the trailing proxy token when a row carries one", async () => {
-      const env = createEnv();
+      const env = await createEnv();
 
       const result = await bulkImport(
         env,
@@ -85,7 +85,7 @@ describe("directory import", () => {
     });
 
     it("accepts a header row and mixes rows with and without the token", async () => {
-      const env = createEnv();
+      const env = await createEnv();
 
       const result = await bulkImport(
         env,
@@ -104,7 +104,7 @@ describe("directory import", () => {
     });
 
     it("trims surrounding whitespace off an imported token", async () => {
-      const env = createEnv();
+      const env = await createEnv();
 
       await bulkImport(env, `Acme,,,,,,  ${IDP_TOKEN}  `);
 
@@ -112,7 +112,7 @@ describe("directory import", () => {
     });
 
     it("reports the row that duplicates a token and imports the rest", async () => {
-      const env = createEnv();
+      const env = await createEnv();
 
       const result = await bulkImport(
         env,
@@ -127,7 +127,7 @@ describe("directory import", () => {
     });
 
     it("reports a token that collides with a directory imported earlier", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       await insertDirectory(env.DB, { name: "Already here", proxy_token: IDP_TOKEN });
 
       const result = await bulkImport(env, `Acme,,,,,,${IDP_TOKEN}`);
@@ -139,7 +139,7 @@ describe("directory import", () => {
     });
 
     it("rejects a token short enough to be a truncated paste", async () => {
-      const env = createEnv();
+      const env = await createEnv();
 
       const result = await bulkImport(env, ["Acme,,,,,,tok_short", "Beta,,,,,"].join("\n"));
 
@@ -151,7 +151,7 @@ describe("directory import", () => {
     });
 
     it("lists a same-second bulk import by name, not by minted id", async () => {
-      const env = createEnv();
+      const env = await createEnv();
 
       // Every row lands in the same second, so created_at cannot order them and
       // the minted dir_… id is random. Without a meaningful tiebreaker the panel
@@ -162,7 +162,7 @@ describe("directory import", () => {
     });
 
     it("still reports a duplicate WorkOS directory id distinctly", async () => {
-      const env = createEnv();
+      const env = await createEnv();
 
       const result = await bulkImport(
         env,
@@ -176,7 +176,7 @@ describe("directory import", () => {
 
   describe("single-directory form", () => {
     it("keeps the supplied token and redirects to the new directory", async () => {
-      const env = createEnv();
+      const env = await createEnv();
 
       const res = (await submit(env, {
         intent: "create-directory",
@@ -191,7 +191,7 @@ describe("directory import", () => {
     });
 
     it("mints a token when the field is left blank", async () => {
-      const env = createEnv();
+      const env = await createEnv();
 
       await submit(env, { intent: "create-directory", name: "Acme — Okta", proxy_token: "" });
 
@@ -199,7 +199,7 @@ describe("directory import", () => {
     });
 
     it("rejects a duplicate token with a message naming the conflict", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       await insertDirectory(env.DB, { name: "Already here", proxy_token: IDP_TOKEN });
 
       const result = (await submit(env, {
@@ -213,7 +213,7 @@ describe("directory import", () => {
     });
 
     it("rejects a token short enough to be a truncated paste", async () => {
-      const env = createEnv();
+      const env = await createEnv();
 
       const result = (await submit(env, {
         intent: "create-directory",
@@ -231,7 +231,7 @@ describe("directory import", () => {
     afterEach(() => fake?.restore());
 
     it("routes an IdP request presenting its pre-existing token to that directory", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       await bulkImport(
         env,
         [`Acme,${NATIVE_URL},native-secret,,,,${IDP_TOKEN}`, "Beta,,,,,"].join("\n"),

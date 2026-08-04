@@ -10,7 +10,7 @@ import { createEnv, seedDirectory } from "./helpers";
  */
 describe("idp store", () => {
   it("mints an id for a user and reads the row back", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB);
 
     const user = await store.insertUser(env.DB, {
@@ -33,7 +33,7 @@ describe("idp store", () => {
   });
 
   it("mints an id for a group and reads the row back", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB);
 
     const group = await store.insertGroup(env.DB, {
@@ -48,7 +48,7 @@ describe("idp store", () => {
   });
 
   it("lists a same-second seed by name, not by minted id", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB);
     for (const name of ["zoe@example.com", "ada@example.com", "mia@example.com"]) {
       await store.insertUser(env.DB, {
@@ -83,7 +83,7 @@ describe("idp store", () => {
   });
 
   it("keeps each directory's users and groups separate", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const a = await seedDirectory(env.DB, { name: "A" });
     const b = await seedDirectory(env.DB, { name: "B" });
     await store.insertUser(env.DB, {

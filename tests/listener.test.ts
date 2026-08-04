@@ -68,7 +68,7 @@ async function deliver(
 async function seedListenerEnv(
   opts: SeedDirectoryOptions = {},
 ): Promise<{ env: PocEnv; directory: Directory }> {
-  const env = createEnv();
+  const env = await createEnv();
   await env.DB.prepare(
     "DELETE FROM poc_config WHERE key IN ('proxy.public_url', 'proxy.loopback_url')",
   ).run();
@@ -1005,7 +1005,7 @@ describe("dsync listener", () => {
     });
 
     it("stays inert when no directory is configured", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       await env.DB.prepare(
         "DELETE FROM poc_config WHERE key IN ('proxy.public_url', 'proxy.loopback_url')",
       ).run();

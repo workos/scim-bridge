@@ -221,7 +221,10 @@ export async function deleteGroup(db: Datastore, id: string): Promise<void> {
 export async function addMember(db: Datastore, groupId: string, userId: string): Promise<void> {
   await withD1Retry(() =>
     db
-      .prepare("INSERT OR IGNORE INTO idp_group_members (group_id, user_id) VALUES (?, ?)")
+      .prepare(
+        "INSERT INTO idp_group_members (group_id, user_id) VALUES (?, ?) " +
+          "ON CONFLICT (group_id, user_id) DO NOTHING",
+      )
       .bind(groupId, userId)
       .run(),
   );

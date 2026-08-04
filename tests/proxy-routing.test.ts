@@ -41,8 +41,8 @@ describe("proxy routing", () => {
   let env: PocEnv;
   let fake: FakeUpstreams;
   afterEach(() => fake.restore());
-  beforeEach(() => {
-    env = createEnv();
+  beforeEach(async () => {
+    env = await createEnv();
     fake = installFakeUpstreams();
   });
 
@@ -864,8 +864,8 @@ describe("proxy routing (regression pins)", () => {
   let env: PocEnv;
   let fake: FakeUpstreams;
   afterEach(() => fake.restore());
-  beforeEach(() => {
-    env = createEnv();
+  beforeEach(async () => {
+    env = await createEnv();
     fake = installFakeUpstreams();
   });
 

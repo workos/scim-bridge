@@ -1,29 +1,84 @@
 import Database from "better-sqlite3";
+import { openPostgres, PostgresDatastore, PostgresMigrator } from "../server/db/postgres";
 import { SqliteDatastore, SqliteMigrator } from "../server/db/sqlite";
 import { newDirectoryId } from "../workers/shared/ids";
-import { runMigrationsSync } from "../server/db/migrate";
+import { runMigrations, runMigrationsSync } from "../server/db/migrate";
 import type { Directory, Mode, PocEnv } from "../workers/shared/types";
 
 /**
  * Shared harness for the worker test suites.
  *
- * Every suite gets a real SQLite database (the same engine production runs on,
- * via the same `SqliteD1` adapter) with all `migrations/*.sql` applied, and a
- * route-based fake for global `fetch` so the proxy's native and WorkOS legs
- * can be scripted per test. Nothing here mocks the code under test — only the
- * two upstreams and the datastore file location differ from production.
+ * Every suite gets a real, freshly migrated database — the engine production
+ * runs on, through the driver production uses — and a route-based fake for global
+ * `fetch` so the proxy's native and WorkOS legs can be scripted per test.
+ * Nothing here mocks the code under test; only the two upstreams and where the
+ * data lives differ from production.
+ *
+ * `TEST_ENGINE` picks the driver, so the whole suite runs on both: `sqlite`
+ * (default, in-memory) and `postgres` (a schema per database, dropped after the
+ * test). The conformance suite covers the behaviours someone thought to write
+ * down; running everything on both engines covers the ones the code actually
+ * relies on.
  */
 
-/** In-memory datastore with all migrations applied. */
-export function createTestDb(): PocEnv["DB"] {
+const MIGRATIONS = new URL("../migrations", import.meta.url).pathname;
+const PG_MIGRATIONS = new URL("../migrations/postgres", import.meta.url).pathname;
+
+export type TestEngine = "sqlite" | "postgres";
+
+export const TEST_ENGINE: TestEngine =
+  process.env.TEST_ENGINE === "postgres" ? "postgres" : "sqlite";
+
+/** Databases the current test created, torn down by tests/setup.ts afterEach. */
+const open: { close(): Promise<void> }[] = [];
+let schemaCounter = 0;
+
+/** A freshly migrated datastore on the configured engine. */
+export async function createTestDb(): Promise<PocEnv["DB"]> {
+  if (TEST_ENGINE === "postgres") return createPostgresDb();
   const sqlite = new Database(":memory:");
   sqlite.pragma("foreign_keys = ON");
-  runMigrationsSync(new SqliteMigrator(sqlite), new URL("../migrations", import.meta.url).pathname);
+  runMigrationsSync(new SqliteMigrator(sqlite), MIGRATIONS);
   return new SqliteDatastore(sqlite);
 }
 
-export function createEnv(): PocEnv {
-  return { DB: createTestDb() };
+async function createPostgresDb(): Promise<PocEnv["DB"]> {
+  const url = process.env.TEST_DATABASE_URL;
+  if (!url) {
+    throw new Error("TEST_ENGINE=postgres needs TEST_DATABASE_URL (see README).");
+  }
+  // A schema per database rather than one per file with truncation between
+  // tests: two of the suites build two independent databases inside a single
+  // test, and an isolation model that quietly breaks those is worse than the
+  // schema-creation cost (measured in the PR). It also sidesteps the trap in the
+  // truncating design — TRUNCATE leaves sequences where they were unless asked
+  // (`RESTART IDENTITY`), so tests that assert on an autoincrement id would pass
+  // in file order and fail when run alone. A new schema has new sequences, which
+  // `tests/helpers.test.ts` pins rather than assumes.
+  const schema = `t${process.pid}_${(schemaCounter += 1)}`;
+  const setup = openPostgres(url);
+  await setup.query(`CREATE SCHEMA ${schema}`);
+  await setup.end();
+  const pool = openPostgres(`${url}?options=-csearch_path%3D${schema}`);
+  const store = new PostgresDatastore(pool);
+  await runMigrations(new PostgresMigrator(pool), PG_MIGRATIONS);
+  open.push({
+    async close() {
+      await pool.query(`DROP SCHEMA ${schema} CASCADE`).catch(() => {});
+      await store.close();
+    },
+  });
+  return store;
+}
+
+/** Drop what the finished test created. Registered once, in tests/setup.ts. */
+export async function closeTestDatabases(): Promise<void> {
+  const closing = open.splice(0);
+  for (const database of closing) await database.close();
+}
+
+export async function createEnv(): Promise<PocEnv> {
+  return { DB: await createTestDb() };
 }
 
 /** Minimal ExecutionContext: remembers waitUntil promises so tests can await them. */

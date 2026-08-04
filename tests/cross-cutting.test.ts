@@ -80,8 +80,8 @@ describe("cross-cutting seams", () => {
     let env: PocEnv;
     let fake: FakeUpstreams;
     afterEach(() => fake.restore());
-    beforeEach(() => {
-      env = createEnv();
+    beforeEach(async () => {
+      env = await createEnv();
       fake = installFakeUpstreams();
     });
 
@@ -200,8 +200,8 @@ describe("cross-cutting seams", () => {
     let env: PocEnv;
     let fake: FakeUpstreams;
     afterEach(() => fake.restore());
-    beforeEach(() => {
-      env = createEnv();
+    beforeEach(async () => {
+      env = await createEnv();
       fake = installFakeUpstreams();
     });
 
@@ -353,7 +353,7 @@ describe("cross-cutting seams", () => {
 
     it("resolves the mode through the real endpoint, revalidates with its ETag, and follows a cutover", async () => {
       vi.useFakeTimers({ toFake: ["Date"] });
-      const env = createEnv();
+      const env = await createEnv();
       await env.DB.prepare(
         "DELETE FROM poc_config WHERE key IN ('proxy.public_url', 'proxy.loopback_url')",
       ).run();
@@ -413,8 +413,8 @@ describe("cross-cutting seams", () => {
     let env: PocEnv;
     let fake: FakeUpstreams;
     afterEach(() => fake.restore());
-    beforeEach(() => {
-      env = createEnv();
+    beforeEach(async () => {
+      env = await createEnv();
       fake = installFakeUpstreams();
     });
 

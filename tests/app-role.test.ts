@@ -105,7 +105,7 @@ describe("APP_ROLE", () => {
 
   describe("boot-seeded tokens", () => {
     it("mints the bundled endpoints' tokens on first boot, once", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       // Migration 0002 used to generate these in SQL, which would give each
       // driver a different secret; a fresh database now starts without them.
       expect(await getConfig(env.DB, "native.scim_token")).toBeNull();
@@ -128,7 +128,7 @@ describe("APP_ROLE", () => {
 
   describe("env-seeded config", () => {
     it("lands the native-app secrets and the bridge URL in poc_config", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       await seedNativeAppConfig(env, nativeAppConfig({ bridgeStatusUrl: "https://bridge.test" }));
 
       expect(await getConfig(env.DB, "native.scim_token")).toBe("native-secret");
@@ -142,7 +142,7 @@ describe("APP_ROLE", () => {
     });
 
     it("does not rotate the boot-seeded token when the var is unset", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const unset = nativeAppConfig({ nativeScimToken: null, bridgeStatusUrl: null });
       // First boot mints the token; a restart with NATIVE_SCIM_TOKEN still unset
       // must leave it alone, or every restart would break the bridge's writes.
@@ -158,7 +158,7 @@ describe("APP_ROLE", () => {
 
   describe("env-seeded directories", () => {
     it("keys each row on the WorkOS directory id and is re-runnable", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const config = nativeAppConfig({
         directories: [
           { workos_directory_id: "directory_01A", proxy_token: "tok_a", name: "Acme" },
@@ -182,7 +182,7 @@ describe("APP_ROLE", () => {
     });
 
     it("updates a rotated proxy token in place", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = {
         workos_directory_id: "directory_01A",
         proxy_token: "tok_a",
@@ -200,7 +200,7 @@ describe("APP_ROLE", () => {
     });
 
     it("boots cleanly when a proxy token moves to a different directory id", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       await seedNativeAppDirectories(
         env,
         nativeAppConfig({
@@ -226,7 +226,7 @@ describe("APP_ROLE", () => {
     });
 
     it("drops a directory removed from DIRECTORIES_JSON", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       await seedNativeAppDirectories(
         env,
         nativeAppConfig({
@@ -249,7 +249,7 @@ describe("APP_ROLE", () => {
     });
 
     it("drops every row when the var is emptied", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       await seedNativeAppDirectories(env, nativeAppConfig());
       await seedNativeAppDirectories(env, nativeAppConfig({ directories: [] }));
 
@@ -265,7 +265,7 @@ describe("APP_ROLE", () => {
     });
 
     async function seedNativeApp(overrides: Partial<AppConfig> = {}): Promise<PocEnv> {
-      const env = createEnv();
+      const env = await createEnv();
       // The fake upstreams only answer the two known hosts, so the bridge is
       // reachable at the native host's base.
       const config = nativeAppConfig({ bridgeStatusUrl: NATIVE_URL, ...overrides });
