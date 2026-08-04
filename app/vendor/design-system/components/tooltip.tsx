@@ -1,14 +1,17 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-import { Tooltip as ThemesTooltip } from "@radix-ui/themes/dist/esm/components/tooltip.js";
-import * as React from "react";
+import * as React from 'react';
+import { Tooltip as ThemesTooltip } from '../radix-themes/components/tooltip.js';
 
 export type TooltipProps = React.ComponentPropsWithoutRef<typeof ThemesTooltip>;
 
-const Tooltip = React.forwardRef<React.ElementRef<typeof ThemesTooltip>, TooltipProps>(
-  (props, forwardedRef) => <ThemesTooltip ref={forwardedRef} delayDuration={300} {...props} />,
-);
+const Tooltip = React.forwardRef<
+  React.ElementRef<typeof ThemesTooltip>,
+  TooltipProps
+>((props, forwardedRef) => (
+  <ThemesTooltip ref={forwardedRef} delayDuration={300} {...props} />
+));
 
-Tooltip.displayName = "Tooltip";
+Tooltip.displayName = 'Tooltip';
 
 export { Tooltip };

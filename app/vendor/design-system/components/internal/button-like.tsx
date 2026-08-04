@@ -1,33 +1,38 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
-import { useComposedRefs } from "radix-ui/internal";
-import * as React from "react";
+'use client';
+import { useComposedRefs } from 'radix-ui/internal';
+import * as React from 'react';
 
 // This component uses type assertions carefully due to the complexity of typing
 // the `as` prop and conflicts with other props.
 // oxlint-disable typescript/consistent-type-assertions
 
-type ButtonLikeAs = "span" | "div";
+type ButtonLikeAs = 'span' | 'div';
 interface ButtonLikeElement {
   div: HTMLDivElement;
   span: HTMLSpanElement;
 }
 
-type ButtonLikeProps<T extends ButtonLikeAs> = React.ComponentPropsWithRef<T> & {
-  as?: T;
-  disabled?: boolean;
-  onKeyboardSimulatedClick?: (event: React.KeyboardEvent<ButtonLikeElement[T]>) => void;
-};
+type ButtonLikeProps<T extends ButtonLikeAs> =
+  React.ComponentPropsWithRef<T> & {
+    as?: T;
+    disabled?: boolean;
+    onKeyboardSimulatedClick?: (
+      event: React.KeyboardEvent<ButtonLikeElement[T]>,
+    ) => void;
+  };
 
-const ButtonLike = React.forwardRef(function ButtonLikeImpl<T extends ButtonLikeAs = "span">(
+const ButtonLike = React.forwardRef(function ButtonLikeImpl<
+  T extends ButtonLikeAs = 'span',
+>(
   {
     disabled,
     onClick,
     onKeyDown,
     onKeyUp,
     onKeyboardSimulatedClick,
-    as: Element = "span" as T,
+    as: Element = 'span' as T,
     ...props
   }: ButtonLikeProps<T>,
   forwardedRef: React.ForwardedRef<ButtonLikeElement[T]>,
@@ -58,9 +63,9 @@ const ButtonLike = React.forwardRef(function ButtonLikeImpl<T extends ButtonLike
           return;
         }
 
-        if (event.key === " ") {
+        if (event.key === ' ') {
           event.preventDefault();
-        } else if (event.key === "Enter") {
+        } else if (event.key === 'Enter') {
           onKeyboardSimulatedClick?.(event);
           if (!event.defaultPrevented) {
             event.preventDefault();
@@ -74,7 +79,7 @@ const ButtonLike = React.forwardRef(function ButtonLikeImpl<T extends ButtonLike
           return;
         }
 
-        if (event.key === " ") {
+        if (event.key === ' ') {
           onKeyboardSimulatedClick?.(event);
           if (!event.defaultPrevented) {
             event.preventDefault();
@@ -87,7 +92,7 @@ const ButtonLike = React.forwardRef(function ButtonLikeImpl<T extends ButtonLike
 }) as ButtonLikeComponent;
 
 interface ButtonLikeComponent {
-  <T extends ButtonLikeAs = "span">(props: ButtonLikeProps<T>): React.ReactNode;
+  <T extends ButtonLikeAs = 'span'>(props: ButtonLikeProps<T>): React.ReactNode;
   displayName?: string | undefined;
   readonly $$typeof: symbol;
 }

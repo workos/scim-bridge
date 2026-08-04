@@ -1,3 +1,3 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-export * from "@radix-ui/themes/dist/esm/helpers/index.js";
+export * from '../radix-themes/helpers/index.js';

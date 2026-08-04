@@ -1,19 +1,21 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
+'use client';
 
-import { composeRefs } from "radix-ui/internal";
-import * as React from "react";
-import { useIsomorphicLayoutEffect } from "../helpers/use-isomorphic-layout-effect.js";
-import * as TextField from "./text-field.js";
+import { composeRefs } from 'radix-ui/internal';
+import * as React from 'react';
+import { useIsomorphicLayoutEffect } from '../helpers/use-isomorphic-layout-effect.js';
+import * as TextField from './text-field.js';
 
-interface ColorFieldProps extends React.ComponentPropsWithoutRef<typeof TextField.Root> {
+interface ColorFieldProps extends React.ComponentPropsWithoutRef<
+  typeof TextField.Root
+> {
   value?: string;
   defaultValue?: string;
   onValueChange?: (value: string) => void;
 }
 
-const DEFAULT_COLOR = "000000";
+const DEFAULT_COLOR = '000000';
 
 const ColorField = React.forwardRef<HTMLInputElement, ColorFieldProps>(
   (
@@ -24,7 +26,7 @@ const ColorField = React.forwardRef<HTMLInputElement, ColorFieldProps>(
       onBlur,
       onValueChange,
       onKeyDownCapture,
-      placeholder = "Hex color",
+      placeholder = 'Hex color',
       size,
       state,
       disabled,
@@ -96,7 +98,7 @@ const ColorField = React.forwardRef<HTMLInputElement, ColorFieldProps>(
 
             // Firefox doesn't really reset input selection range on blur, and then
             // recovers it on focus, which messes with our selection on mouse up.
-            if (navigator.userAgent.toLowerCase().includes("firefox")) {
+            if (navigator.userAgent.toLowerCase().includes('firefox')) {
               inputRef.current?.setSelectionRange(0, 0);
             }
 
@@ -107,7 +109,7 @@ const ColorField = React.forwardRef<HTMLInputElement, ColorFieldProps>(
             onChange?.(event);
           }}
           onKeyDownCapture={(event) => {
-            if (event.key === "Enter") {
+            if (event.key === 'Enter') {
               if (committedColorRef.current !== inputValue) {
                 committedColorRef.current = color;
                 setInputValue(color);
@@ -120,7 +122,7 @@ const ColorField = React.forwardRef<HTMLInputElement, ColorFieldProps>(
               }
             }
 
-            if (event.key === "Escape") {
+            if (event.key === 'Escape') {
               if (committedColorRef.current !== inputValue) {
                 setInputValue(committedColorRef.current);
                 setTimeout(() => inputRef.current?.select());
@@ -141,11 +143,11 @@ const ColorField = React.forwardRef<HTMLInputElement, ColorFieldProps>(
                 className="ColorFieldSwatch"
                 tabIndex={-1}
                 type="color"
-                value={"#" + color}
+                value={'#' + color}
                 disabled={(() => {
                   // TODO remove this when state prop is removed
                   if (state !== undefined) {
-                    return state === "disabled" || state === "read-only";
+                    return state === 'disabled' || state === 'read-only';
                   }
 
                   return disabled || readOnly;
@@ -171,7 +173,7 @@ const ColorField = React.forwardRef<HTMLInputElement, ColorFieldProps>(
   },
 );
 
-ColorField.displayName = "ColorField";
+ColorField.displayName = 'ColorField';
 
 const hasSelection = (input: HTMLInputElement | null) => {
   if (input) {
@@ -184,7 +186,7 @@ const hasSelection = (input: HTMLInputElement | null) => {
 
 const parseHex = (value?: string) => {
   const regexp = /((?:^(?:[0-9]|[a-f]){6})|(?:^(?:[0-9]|[a-f]){1,3}))/i;
-  let [hex] = value?.trim().replace(/^#/, "").match(regexp) ?? [];
+  let [hex] = value?.trim().replace(/^#/, '').match(regexp) ?? [];
 
   if (!hex) {
     return null;
@@ -198,13 +200,13 @@ const parseHex = (value?: string) => {
       hex = hex.repeat(3);
       break;
     case 3:
-      const [r, g, b] = hex.split("");
+      const [r, g, b] = hex.split('');
       hex = `${r}${r}${g}${g}${b}${b}`;
   }
 
   return hex.toUpperCase();
 };
 
-const formatHex = (value: string) => "#" + value;
+const formatHex = (value: string) => '#' + value;
 
 export { ColorField };

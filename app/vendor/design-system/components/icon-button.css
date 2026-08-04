@@ -11,7 +11,7 @@
 }
 
 .IconButton::before {
-  content: "";
+  content: '';
   position: absolute;
   border-radius: inherit;
   top: calc(-1 * var(--space-1));
@@ -43,7 +43,7 @@
   background-color: var(--gray-a3);
 }
 
-.IconButton.gray[data-state="open"]::before {
+.IconButton.gray[data-state='open']::before {
   background-color: var(--gray-a4);
 }
 
@@ -65,7 +65,7 @@
   background-color: var(--purple-a3);
 }
 
-.IconButton.purple[data-state="open"]::before {
+.IconButton.purple[data-state='open']::before {
   background-color: var(--purple-a4);
 }
 
@@ -87,7 +87,7 @@
   background-color: var(--green-a3);
 }
 
-.IconButton.green[data-state="open"]::before {
+.IconButton.green[data-state='open']::before {
   background-color: var(--green-a4);
 }
 
@@ -109,7 +109,7 @@
   background-color: var(--red-a3);
 }
 
-.IconButton.red[data-state="open"]::before {
+.IconButton.red[data-state='open']::before {
   background-color: var(--red-a4);
 }
 
@@ -125,7 +125,7 @@
 
 .IconButton.state-disabled {
   color: var(--gray-a8);
-  cursor: default;
+  cursor: var(--cursor-disabled);
 }
 
 .IconButton.state-disabled:hover::before,

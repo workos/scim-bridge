@@ -9,17 +9,17 @@ import {
   PropDef,
   textFieldRootPropDefs,
   widthPropDefs,
-} from "../props.js";
+} from '../props.js';
 
-const rootSizes = ["1", "2", "3"] as const;
+const rootSizes = ['1', '2', '3'] as const;
 export type RootSize = (typeof rootSizes)[number];
 
 export const rootPropDefs = {
   size: {
-    type: "enum",
-    className: "rt-r-size",
+    type: 'enum',
+    className: 'rt-r-size',
     values: rootSizes,
-    default: "2",
+    default: '2',
     responsive: true,
   },
 } satisfies {
@@ -41,7 +41,7 @@ export const popoverPropDefs = {
   ...asChildPropDef,
   width: widthPropDefs.width,
   minWidth: widthPropDefs.minWidth,
-  maxWidth: { ...widthPropDefs.maxWidth, default: "480px" },
+  maxWidth: { ...widthPropDefs.maxWidth, default: '480px' },
   ...heightPropDefs,
 } satisfies {
   width: PropDef<string>;
@@ -49,17 +49,17 @@ export const popoverPropDefs = {
   maxWidth: PropDef<string>;
 };
 
-const contentVariants = ["solid", "soft"] as const;
+const contentVariants = ['solid', 'soft'] as const;
 export type ContentVariant = (typeof contentVariants)[number];
 
 export const contentPropDefs = {
   variant: {
-    type: "enum",
-    className: "rt-variant",
+    type: 'enum',
+    className: 'rt-variant',
     values: contentVariants,
     // NOTE: if this ends up in Radix Themes, default should be 'solid' to match
     // Select defaults
-    default: "soft",
+    default: 'soft',
   },
   ...colorPropDef,
   ...highContrastPropDef,
@@ -67,22 +67,22 @@ export const contentPropDefs = {
   variant: PropDef<ContentVariant>;
 };
 
-const checkboxSizes = ["1", "2", "3"] as const;
-const checkboxVariants = ["classic", "surface", "soft"] as const;
+const checkboxSizes = ['1', '2', '3'] as const;
+const checkboxVariants = ['classic', 'surface', 'soft'] as const;
 
 export const checkboxPropDefs = {
   size: {
-    type: "enum",
-    className: "rt-r-size",
+    type: 'enum',
+    className: 'rt-r-size',
     values: checkboxSizes,
-    default: "2",
+    default: '2',
     responsive: true,
   },
   variant: {
-    type: "enum",
-    className: "rt-variant",
+    type: 'enum',
+    className: 'rt-variant',
     values: checkboxVariants,
-    default: "surface",
+    default: 'surface',
   },
   ...colorPropDef,
   ...highContrastPropDef,

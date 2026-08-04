@@ -1,3 +1,3 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-export * as RadioCards from "@radix-ui/themes/dist/esm/components/radio-cards.js";
+export * as RadioCards from '../radix-themes/components/radio-cards.js';

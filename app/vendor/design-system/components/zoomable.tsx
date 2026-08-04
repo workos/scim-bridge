@@ -1,17 +1,17 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
+'use client';
 
-import { Theme } from "@radix-ui/themes/dist/esm/components/theme.js";
-import classNames from "classnames";
-import { Dialog } from "radix-ui";
-import * as React from "react";
-import { flushSync } from "react-dom";
-import { extractProps } from "../helpers/themes.js";
-import { marginPropDefs, MarginProps } from "../props.js";
-import { VisuallyHidden } from "./visually-hidden.js";
+import classNames from 'classnames';
+import { Dialog } from 'radix-ui';
+import * as React from 'react';
+import { flushSync } from 'react-dom';
+import { extractProps } from '../helpers/themes.js';
+import { marginPropDefs, MarginProps } from '../props.js';
+import { Theme } from '../radix-themes/components/theme.js';
+import { VisuallyHidden } from './visually-hidden.js';
 
-type ZoomStatus = "closed" | "closing" | "opening" | "open" | "fading-out";
+type ZoomStatus = 'closed' | 'closing' | 'opening' | 'open' | 'fading-out';
 
 interface ImageSize {
   width: number;
@@ -38,7 +38,7 @@ interface ZoomableProps extends MarginProps {
 const Zoomable = (props: ZoomableProps) => {
   const { children, className, style } = extractProps(props, marginPropDefs);
   const [isMobile, setIsMobile] = React.useState(true);
-  const [status, setStatus] = React.useState<ZoomStatus>("closed");
+  const [status, setStatus] = React.useState<ZoomStatus>('closed');
   const [transform, setTransform] = React.useState<Transform>({
     width: 0,
     height: 0,
@@ -59,15 +59,18 @@ const Zoomable = (props: ZoomableProps) => {
     height: maxHeight,
   });
 
-  const setAnimatedTransform = React.useCallback((from: Transform, to: Transform) => {
-    // Apply the `from` position immediately
-    flushSync(() => {
-      setTransform(from);
-    });
+  const setAnimatedTransform = React.useCallback(
+    (from: Transform, to: Transform) => {
+      // Apply the `from` position immediately
+      flushSync(() => {
+        setTransform(from);
+      });
 
-    // Apply the `to` transform later so the transition can happen
-    setTransform(to);
-  }, []);
+      // Apply the `to` transform later so the transition can happen
+      setTransform(to);
+    },
+    [],
+  );
 
   const getZoomedProps = React.useCallback(
     (rect: DOMRect) => {
@@ -93,7 +96,7 @@ const Zoomable = (props: ZoomableProps) => {
 
     const offset = window.scrollY;
 
-    if (status === "closed") {
+    if (status === 'closed') {
       const { x, y, scale } = getZoomedProps(rect);
 
       // Do not scale image if scale is smaller than the original size
@@ -101,7 +104,7 @@ const Zoomable = (props: ZoomableProps) => {
         return;
       }
 
-      setStatus("opening");
+      setStatus('opening');
       setAnimatedTransform(
         {
           x: rect.x,
@@ -120,8 +123,8 @@ const Zoomable = (props: ZoomableProps) => {
           scale,
         },
       );
-    } else if (status === "open") {
-      setStatus("closing");
+    } else if (status === 'open') {
+      setStatus('closing');
       setAnimatedTransform(
         { ...transform },
         {
@@ -136,22 +139,22 @@ const Zoomable = (props: ZoomableProps) => {
     }
   }, [setAnimatedTransform, getZoomedProps, status, transform]);
 
-  const handleClose = status === "open" ? handleZoom : undefined;
+  const handleClose = status === 'open' ? handleZoom : undefined;
 
   React.useEffect(() => {
-    if (status === "open") {
-      window.addEventListener("scroll", handleZoom);
+    if (status === 'open') {
+      window.addEventListener('scroll', handleZoom);
     } else {
-      window.removeEventListener("scroll", handleZoom);
+      window.removeEventListener('scroll', handleZoom);
     }
 
     return () => {
-      window.removeEventListener("scroll", handleZoom);
+      window.removeEventListener('scroll', handleZoom);
     };
   }, [handleZoom, status]);
 
   React.useEffect(() => {
-    if (status === "open") {
+    if (status === 'open') {
       const rect = childRef.current?.getBoundingClientRect();
 
       if (!rect) {
@@ -174,19 +177,19 @@ const Zoomable = (props: ZoomableProps) => {
 
   React.useEffect(() => {
     // Match --sm
-    const mediaQueryList = window.matchMedia("(min-width: 768px)");
+    const mediaQueryList = window.matchMedia('(min-width: 768px)');
 
     const handleChange = ({ matches }: { matches: boolean }) => {
       setIsMobile(!matches);
 
       if (matches) {
-        setStatus("closed");
+        setStatus('closed');
       }
     };
 
     handleChange(mediaQueryList);
-    mediaQueryList.addEventListener("change", handleChange);
-    return () => mediaQueryList.removeEventListener("change", handleChange);
+    mediaQueryList.addEventListener('change', handleChange);
+    return () => mediaQueryList.removeEventListener('change', handleChange);
   }, []);
 
   return isMobile ? (
@@ -194,16 +197,16 @@ const Zoomable = (props: ZoomableProps) => {
       {children}
     </div>
   ) : (
-    <Dialog.Root modal={false} open={status !== "closed"}>
+    <Dialog.Root modal={false} open={status !== 'closed'}>
       <Dialog.Trigger
         asChild
         aria-label="Zoom in"
         style={style}
         className={classNames(
           className,
-          "ZoomableTrigger",
-          (status === "open" || status === "opening" || status === "closing") &&
-            "ZoomableTriggerHidden",
+          'ZoomableTrigger',
+          (status === 'open' || status === 'opening' || status === 'closing') &&
+            'ZoomableTriggerHidden',
         )}
         onClick={handleZoom}
       >
@@ -253,18 +256,18 @@ const Zoomable = (props: ZoomableProps) => {
               width: transform.width,
               height: transform.height,
               transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
-              opacity: status === "fading-out" ? 0 : 1,
+              opacity: status === 'fading-out' ? 0 : 1,
             }}
             onClick={handleZoom}
             onEscapeKeyDown={handleClose}
             onWheel={handleClose}
             onTransitionEnd={() => {
-              if (status === "opening") {
-                setStatus("open");
-              } else if (status === "closing") {
-                setStatus("fading-out");
-              } else if (status === "fading-out") {
-                setStatus("closed");
+              if (status === 'opening') {
+                setStatus('open');
+              } else if (status === 'closing') {
+                setStatus('fading-out');
+              } else if (status === 'fading-out') {
+                setStatus('closed');
               }
             }}
           >
@@ -289,9 +292,9 @@ function useWindowSize(callback?: () => void) {
       setWindowSize({ width: window.innerWidth, height: window.innerHeight });
     }
 
-    window.addEventListener("resize", handleResize);
+    window.addEventListener('resize', handleResize);
     handleResize();
-    return () => window.removeEventListener("resize", handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   return windowSize;

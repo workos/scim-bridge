@@ -85,13 +85,16 @@
     background-color: var(--accent-a4);
   } */
 
-  &[data-nesting-level]:not([data-nesting-level="0"]) {
+  &[data-nesting-level]:not([data-nesting-level='0']) {
     &::before {
       /* add vertical lines at each nesting level to the left of the item */
-      content: "";
+      content: '';
       position: absolute;
       /* Start from the leftmost line position and extend to the rightmost */
-      left: calc(var(--space-5) - var(--tree-line-offset) - var(--_nesting-level) * var(--space-5));
+      left: calc(
+        var(--space-5) - var(--tree-line-offset) - var(--_nesting-level) *
+          var(--space-5)
+      );
       top: 0;
       bottom: 0;
       width: calc(var(--_nesting-level) * var(--space-5));

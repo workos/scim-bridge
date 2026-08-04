@@ -2,7 +2,7 @@
   visibility: hidden;
 }
 
-.ZoomableTrigger[data-state="closed"] {
+.ZoomableTrigger[data-state='closed'] {
   cursor: zoom-in;
 }
 
@@ -14,7 +14,7 @@
   transition: opacity 300ms cubic-bezier(0.33, 1, 0.68, 1);
 }
 
-.ZoomableOverlay[data-state="open"] {
+.ZoomableOverlay[data-state='open'] {
   pointer-events: auto;
 }
 
@@ -29,6 +29,6 @@
     opacity 300ms cubic-bezier(0.33, 1, 0.68, 1);
 }
 
-.ZoomableContent[data-state="open"] {
+.ZoomableContent[data-state='open'] {
   cursor: zoom-out;
 }

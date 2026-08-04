@@ -5,7 +5,7 @@
 }
 
 /* Remove backdrop filter from panels to improve performance and avoid visual bugs */
-.radix-themes[data-panel-background="translucent"] {
+.radix-themes[data-panel-background='translucent'] {
   --backdrop-filter-panel: none;
 }
 
@@ -22,7 +22,7 @@
   background-image: radial-gradient(var(--accent-a3), var(--accent-a2));
 }
 
-.rt-Badge[data-accent-color="gray"] {
+.rt-Badge[data-accent-color='gray']:where(.rt-variant-surface) {
   color: var(--gray-12);
 }
 .rt-Badge[data-low-contrast] {
@@ -32,7 +32,7 @@
 }
 
 /* Make sure that hidden until found elements don't affect page layout */
-[hidden="until-found"] {
+[hidden='until-found'] {
   position: absolute;
 }
 
@@ -42,7 +42,7 @@ input::-webkit-contacts-auto-fill-button {
 }
 
 /* Hide the native password reveal button in Microsoft Edge */
-input[type="password"]::-ms-reveal {
+input[type='password']::-ms-reveal {
   display: none;
 }
 
@@ -53,35 +53,48 @@ input[type="password"]::-ms-reveal {
 }
 
 /* Add accent outline on checked Checkbox Cards for visual consistency */
-.rt-CheckboxCardsItem:has([data-state="checked"])::after {
+.rt-CheckboxCardsItem:has([data-state='checked'])::after {
   outline: 2px solid var(--accent-indicator);
   outline-offset: -1px;
 }
 
 /* Add focus styles on Checkbox Cards to match Radio Cards behavior */
-.rt-CheckboxCardsItem:has([data-state="checked"]):has(:focus-visible) {
+.rt-CheckboxCardsItem:has([data-state='checked']):has(:focus-visible) {
   outline: none;
 }
 
-.rt-CheckboxCardsItem:has([data-state="checked"]):has(:focus-visible)::before {
+.rt-CheckboxCardsItem:has([data-state='checked']):has(:focus-visible)::before {
   background-image: linear-gradient(var(--focus-a3), var(--focus-a3));
 }
 
-.rt-CheckboxCardsItem:has([data-state="checked"]):has(:focus-visible)::after {
+.rt-CheckboxCardsItem:has([data-state='checked']):has(:focus-visible)::after {
   outline-color: var(--focus-10);
 }
 
 /* Override soft menu item highlighted background to use scale 3 instead of 4 */
-.rt-BaseMenuContent:where(.rt-variant-soft) :where(.rt-BaseMenuItem[data-highlighted]) {
+.rt-BaseMenuContent:where(.rt-variant-soft)
+  :where(.rt-BaseMenuItem[data-highlighted]) {
   background: var(--accent-a3);
 }
 
-/* Add disable state to tab trigger */
-.rt-TabsTrigger[disabled] {
+/* Add disable state to tab trigger (also covers `<fieldset disabled>`, which
+   sets `:disabled` but not the `[disabled]` attribute). */
+.rt-TabsTrigger:is([disabled], :disabled) {
   pointer-events: none;
   .rt-TabsTriggerInner {
     color: var(--gray-a8);
   }
+}
+
+/* Popper triggers disabled via an ancestor `<fieldset disabled>` still receive
+   pointer events (browsers only suppress mouse and click events on disabled
+   controls), which would open the popper — Radix only checks its own
+   `disabled` prop. Remove them from hit-testing; this trades away their
+   not-allowed cursor, but blocking the popper matters more. Directly disabled
+   triggers ([disabled]) are handled by Radix itself and keep the cursor.
+   (`:is()` rather than `:where()` to outrank the reset's `pointer-events`.) */
+button:is([aria-haspopup], [role='combobox']):is(:disabled:not([disabled])) {
+  pointer-events: none;
 }
 
 /* Override select item styling */
@@ -103,7 +116,7 @@ input[type="password"]::-ms-reveal {
 
 /* Ensure all items have space for indicator, even when not selected */
 .rt-SelectItem::after {
-  content: "";
+  content: '';
   min-width: calc(var(--select-item-indicator-width));
 }
 
@@ -123,7 +136,8 @@ input[type="password"]::-ms-reveal {
 }
 
 /* Override solid menu item highlighted color to remove accent-contrast */
-.rt-BaseMenuContent:where(.rt-variant-solid) :where(.rt-BaseMenuItem[data-highlighted]) {
+.rt-BaseMenuContent:where(.rt-variant-solid)
+  :where(.rt-BaseMenuItem[data-highlighted]) {
   color: inherit;
 }
 

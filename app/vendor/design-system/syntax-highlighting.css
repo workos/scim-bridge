@@ -75,14 +75,14 @@
   color: inherit;
 }
 
-[data-language="url"] .token.query-delimiter,
-[data-language="url"] .token.pair-delimiter {
+[data-language='url'] .token.query-delimiter,
+[data-language='url'] .token.pair-delimiter {
   color: var(--red-11);
 }
-[data-language="url"] .token.key,
-[data-language="url"] .token.pair {
+[data-language='url'] .token.key,
+[data-language='url'] .token.pair {
   color: var(--blue-11);
 }
-[data-language="url"] .token.value {
+[data-language='url'] .token.value {
   color: var(--blue-12);
 }

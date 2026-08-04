@@ -6,7 +6,7 @@
  * using a special separator for use in Combobox values and Set membership.
  */
 
-export const PATH_SEPARATOR = ":-:-:";
+export const PATH_SEPARATOR = ':-:-:';
 
 /**
  * Convert an array of keys to an internal path string.

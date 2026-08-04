@@ -1,5 +1,6 @@
 .IconPanel {
-  --icon-panel-shadow: 0px 0.5px 2px 0px rgba(0, 0, 0, 0.2), 0px 2px 3px 0px rgba(0, 0, 0, 0.1);
+  --icon-panel-shadow:
+    0px 0.5px 2px 0px rgba(0, 0, 0, 0.2), 0px 2px 3px 0px rgba(0, 0, 0, 0.1);
 }
 
 :is(.dark, .dark-theme) .IconPanel,
@@ -16,7 +17,9 @@
 }
 
 :is(.dark, .dark-theme) .IconPanel.variant-classic,
-:is(.dark, .dark-theme) .radix-themes:not(.light, .light-theme) .IconPanel.variant-classic {
+:is(.dark, .dark-theme)
+  .radix-themes:not(.light, .light-theme)
+  .IconPanel.variant-classic {
   background: linear-gradient(to bottom, var(--gray-6), var(--gray-3));
 }
 
@@ -27,7 +30,9 @@
 }
 
 :is(.dark, .dark-theme) .IconPanel.variant-solid,
-:is(.dark, .dark-theme) .radix-themes:not(.light, .light-theme) .IconPanel.variant-solid {
+:is(.dark, .dark-theme)
+  .radix-themes:not(.light, .light-theme)
+  .IconPanel.variant-solid {
   background-color: var(--gray-4);
 }
 

@@ -14,7 +14,7 @@
 }
 
 .ScreenshotRoot::after {
-  content: "";
+  content: '';
   inset: var(--space-5);
   position: absolute;
   box-shadow: inset 0 0 0 0.5px rgba(0 0 0 / 0.05);

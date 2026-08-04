@@ -1,23 +1,23 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
+'use client';
 
-import classNames from "classnames";
-import * as React from "react";
-import { extractProps } from "../helpers/themes.js";
-import { marginPropDefs, MarginProps } from "../props.js";
-import { Slot } from "./slot.js";
+import classNames from 'classnames';
+import * as React from 'react';
+import { extractProps } from '../helpers/themes.js';
+import { marginPropDefs, MarginProps } from '../props.js';
+import { Slot } from './slot.js';
 
 interface IconButtonOwnProps {
-  size?: "1" | "2" | "3";
-  color?: "gray" | "purple" | "green" | "red";
+  size?: '1' | '2' | '3';
+  color?: 'gray' | 'purple' | 'green' | 'red';
   loading?: boolean;
   /**
    * @deprecated Different state types now use different props as they are no
    * longer mutually exclusive. Use `loading` or `disabled` instead. Note that
    * loading buttons will always be force-disabled.
    */
-  state?: "normal" | "disabled" | "loading";
+  state?: 'normal' | 'disabled' | 'loading';
   /**
    * By default, the `disabled` prop will use the `aria-disabled` attribute to
    * ensure that content remains focusable and accessible even when in a
@@ -27,102 +27,105 @@ interface IconButtonOwnProps {
    */
   fullyDisabled?: boolean;
   asChild?: boolean;
-  type?: "button" | "submit" | "reset" | null;
+  type?: 'button' | 'submit' | 'reset' | null;
 }
 
 interface IconButtonProps
   extends
-    Omit<React.ComponentPropsWithRef<"button">, "color" | "type">,
+    Omit<React.ComponentPropsWithRef<'button'>, 'color' | 'type'>,
     IconButtonOwnProps,
     MarginProps {}
 
-const IconButton = React.forwardRef<HTMLButtonElement, IconButtonProps>((props, forwardedRef) => {
-  const {
-    className,
-    color = "gray",
-    size = "2",
-    state: stateProp,
-    disabled: disabledProp = false,
-    fullyDisabled = false,
-    loading: loadingProp = false,
-    onClick,
-    asChild,
-    type = "button",
-    ...iconButtonProps
-  } = extractProps(props, marginPropDefs);
+const IconButton = React.forwardRef<HTMLButtonElement, IconButtonProps>(
+  (props, forwardedRef) => {
+    const {
+      className,
+      color = 'gray',
+      size = '2',
+      state: stateProp,
+      disabled: disabledProp = false,
+      fullyDisabled = false,
+      loading: loadingProp = false,
+      onClick,
+      asChild,
+      type = 'button',
+      ...iconButtonProps
+    } = extractProps(props, marginPropDefs);
 
-  let disabled = disabledProp || fullyDisabled || loadingProp;
-  let loading = loadingProp;
+    let disabled = disabledProp || fullyDisabled || loadingProp;
+    let loading = loadingProp;
 
-  // TODO remove all of this when state prop is removed
-  let deprecatedState: IconButtonOwnProps["state"];
-  if (stateProp !== undefined) {
-    deprecatedState = stateProp;
-    if (stateProp === "loading") {
-      loading = true;
-      disabled = true;
-    } else if (stateProp === "disabled") {
-      disabled = true;
-      loading = false;
+    // TODO remove all of this when state prop is removed
+    let deprecatedState: IconButtonOwnProps['state'];
+    if (stateProp !== undefined) {
+      deprecatedState = stateProp;
+      if (stateProp === 'loading') {
+        loading = true;
+        disabled = true;
+      } else if (stateProp === 'disabled') {
+        disabled = true;
+        loading = false;
+      } else {
+        disabled = false;
+        loading = false;
+      }
     } else {
-      disabled = false;
-      loading = false;
+      if (loading) {
+        deprecatedState = 'loading';
+      } else if (disabled) {
+        deprecatedState = 'disabled';
+      } else {
+        deprecatedState = 'normal';
+      }
     }
-  } else {
-    if (loading) {
-      deprecatedState = "loading";
-    } else if (disabled) {
-      deprecatedState = "disabled";
-    } else {
-      deprecatedState = "normal";
-    }
-  }
 
-  const Comp = asChild ? Slot : "button";
+    const Comp = asChild ? Slot : 'button';
 
-  return (
-    <Comp
-      tabIndex={0}
-      ref={forwardedRef}
-      aria-disabled={(disabled && !fullyDisabled) || undefined}
-      data-loading={loading || undefined}
-      disabled={fullyDisabled || undefined}
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      type={type!}
-      className={classNames(className, "reset-button", "IconButton", {
-        // TODO: These should no longer be mutually exclusive. Double check to
-        // see if there's any impact by consolidating these classes, fix as
-        // needed.
-        "state-normal": deprecatedState === "normal",
-        "state-disabled": deprecatedState === "disabled",
-        "state-loading": deprecatedState === "loading",
+    return (
+      <Comp
+        tabIndex={0}
+        ref={forwardedRef}
+        aria-disabled={(disabled && !fullyDisabled) || undefined}
+        data-loading={loading || undefined}
+        disabled={fullyDisabled || undefined}
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        type={type!}
+        className={classNames(className, 'reset-button', 'IconButton', {
+          // TODO: These should no longer be mutually exclusive. Double check to
+          // see if there's any impact by consolidating these classes, fix as
+          // needed.
+          'state-normal': deprecatedState === 'normal',
+          'state-disabled': deprecatedState === 'disabled',
+          'state-loading': deprecatedState === 'loading',
 
-        "size-1": size === "1",
-        "size-2": size === "2",
-        "size-3": size === "3",
-        gray: color === "gray",
-        purple: color === "purple",
-        green: color === "green",
-        red: color === "red",
-      })}
-      onClick={(event) => {
-        const ariaDisabled = event.currentTarget.getAttribute("aria-disabled");
+          'size-1': size === '1',
+          'size-2': size === '2',
+          'size-3': size === '3',
+          'gray': color === 'gray',
+          'purple': color === 'purple',
+          'green': color === 'green',
+          'red': color === 'red',
+        })}
+        onClick={(event) => {
+          const ariaDisabled =
+            event.currentTarget.getAttribute('aria-disabled');
 
-        if (ariaDisabled !== null && ariaDisabled !== "false") {
-          // Prevent form submission
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
+          if (ariaDisabled !== null && ariaDisabled !== 'false') {
+            // Prevent form submission
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
 
-        onClick?.(event);
-      }}
-      {...iconButtonProps}
-    />
-  );
-});
+          onClick?.(event);
+        }}
+        {...iconButtonProps}
+      />
+    );
+  },
+);
 
-IconButton.displayName = "IconButton";
+IconButton.displayName = 'IconButton';
 
 export { IconButton };
 export type { IconButtonProps };

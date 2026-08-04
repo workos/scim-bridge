@@ -1,10 +1,10 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
+'use client';
 
-import * as ThemesTabs from "@radix-ui/themes/dist/esm/components/tabs.js";
-import { composeRefs, useControllableState } from "radix-ui/internal";
-import * as React from "react";
+import { composeRefs, useControllableState } from 'radix-ui/internal';
+import * as React from 'react';
+import * as ThemesTabs from '../radix-themes/components/tabs.js';
 
 const TabsContext = React.createContext<{
   value: string;
@@ -14,7 +14,9 @@ const TabsContext = React.createContext<{
 const useTabsContext = () => {
   const tabsContext = React.useContext(TabsContext);
   if (!tabsContext) {
-    throw new TypeError("`useTabsContext` must be called within `TabsContext.Provider`");
+    throw new TypeError(
+      '`useTabsContext` must be called within `TabsContext.Provider`',
+    );
   }
 
   return tabsContext;
@@ -23,10 +25,13 @@ const useTabsContext = () => {
 type TabsRootElement = React.ElementRef<typeof ThemesTabs.Root>;
 type TabsRootProps = React.ComponentPropsWithoutRef<typeof ThemesTabs.Root>;
 const TabsRoot = React.forwardRef<TabsRootElement, TabsRootProps>(
-  ({ value: valueProp, defaultValue, onValueChange, ...props }, forwardedRef) => {
+  (
+    { value: valueProp, defaultValue, onValueChange, ...props },
+    forwardedRef,
+  ) => {
     const [value, setValue] = useControllableState({
       prop: valueProp,
-      defaultProp: defaultValue ?? "",
+      defaultProp: defaultValue ?? '',
       onChange: onValueChange,
     });
 
@@ -37,15 +42,22 @@ const TabsRoot = React.forwardRef<TabsRootElement, TabsRootProps>(
           onValueChange: setValue,
         }}
       >
-        <ThemesTabs.Root ref={forwardedRef} {...props} value={value} onValueChange={setValue} />
+        <ThemesTabs.Root
+          ref={forwardedRef}
+          {...props}
+          value={value}
+          onValueChange={setValue}
+        />
       </TabsContext.Provider>
     );
   },
 );
-TabsRoot.displayName = "TabsRoot";
+TabsRoot.displayName = 'TabsRoot';
 
 type TabsContentElement = React.ElementRef<typeof ThemesTabs.Content>;
-type TabsContentProps = React.ComponentPropsWithoutRef<typeof ThemesTabs.Content>;
+type TabsContentProps = React.ComponentPropsWithoutRef<
+  typeof ThemesTabs.Content
+>;
 const TabsContent = React.forwardRef<TabsContentElement, TabsContentProps>(
   ({ value, ...props }, forwardedRef) => {
     const context = useTabsContext();
@@ -59,9 +71,9 @@ const TabsContent = React.forwardRef<TabsContentElement, TabsContentProps>(
     React.useEffect(() => {
       const contentNode = contentRef.current;
       const handleSearchMatch = () => onValueChange(value);
-      contentNode?.addEventListener("beforematch", handleSearchMatch);
+      contentNode?.addEventListener('beforematch', handleSearchMatch);
       return () => {
-        contentNode?.removeEventListener("beforematch", handleSearchMatch);
+        contentNode?.removeEventListener('beforematch', handleSearchMatch);
       };
     }, [value, onValueChange]);
 
@@ -71,9 +83,9 @@ const TabsContent = React.forwardRef<TabsContentElement, TabsContentProps>(
       const contentNode = contentRef.current;
       if (contentNode) {
         if (isActive) {
-          contentNode.removeAttribute("hidden");
+          contentNode.removeAttribute('hidden');
         } else {
-          contentNode.setAttribute("hidden", "until-found");
+          contentNode.setAttribute('hidden', 'until-found');
         }
       }
     }, [isActive]);
@@ -90,7 +102,7 @@ const TabsContent = React.forwardRef<TabsContentElement, TabsContentProps>(
     );
   },
 );
-TabsContent.displayName = "TabsContent";
+TabsContent.displayName = 'TabsContent';
 
 export const Root = TabsRoot;
 export const List = ThemesTabs.List;

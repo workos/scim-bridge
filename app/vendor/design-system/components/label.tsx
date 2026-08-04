@@ -1,27 +1,27 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-import classNames from "classnames";
-import * as React from "react";
-import { Text } from "./text.js";
+import classNames from 'classnames';
+import * as React from 'react';
+import { Text } from './text.js';
 
 type TextProps = Omit<
   React.ComponentPropsWithoutRef<typeof Text>,
-  "asChild" | "weight" | "size" | "color"
+  'asChild' | 'weight' | 'size' | 'color'
 >;
 
-type LabelBaseProps = Omit<React.ComponentPropsWithoutRef<"label">, "color">;
+type LabelBaseProps = Omit<React.ComponentPropsWithoutRef<'label'>, 'color'>;
 
 type LabelProps = TextProps & LabelBaseProps;
 
 const Label = React.forwardRef<HTMLLabelElement, LabelProps>(
-  ({ className, children, as = "label", ...props }, forwardedRef) => (
+  ({ className, children, as = 'label', ...props }, forwardedRef) => (
     <Text
       ref={forwardedRef}
       highContrast
       // Introducing lint rule banning type assertions
       // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-      as={as as "label"}
-      className={classNames(className, "Label")}
+      as={as as 'label'}
+      className={classNames(className, 'Label')}
       color="gray"
       size="2"
       weight="bold"
@@ -32,6 +32,6 @@ const Label = React.forwardRef<HTMLLabelElement, LabelProps>(
   ),
 );
 
-Label.displayName = "Label";
+Label.displayName = 'Label';
 
 export { Label };

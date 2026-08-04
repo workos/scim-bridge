@@ -1,18 +1,18 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
+'use client';
 
-import { lastDayOfMonth, parse } from "date-fns";
-import * as React from "react";
+import { lastDayOfMonth, parse } from 'date-fns';
+import * as React from 'react';
 import {
   clampDayForYearMonth,
   ComposedDate,
   formatDateValue,
   isValidDate,
   keyFrom,
-} from "../helpers/date-picker-helpers.js";
+} from '../helpers/date-picker-helpers.js';
 
-type Segment = "year" | "month" | "day";
+type Segment = 'year' | 'month' | 'day';
 
 export interface SegmentedDateInputRef {
   focusSegment: (segment: Segment) => void;
@@ -20,30 +20,36 @@ export interface SegmentedDateInputRef {
 
 const SEG_MAX: Record<Segment, number> = { year: 4, month: 2, day: 2 } as const;
 const SEGMENT_CONFIG = {
-  year: { placeholder: "YYYY", ariaLabel: "Year" },
-  month: { placeholder: "MM", ariaLabel: "Month" },
-  day: { placeholder: "DD", ariaLabel: "Day" },
+  year: { placeholder: 'YYYY', ariaLabel: 'Year' },
+  month: { placeholder: 'MM', ariaLabel: 'Month' },
+  day: { placeholder: 'DD', ariaLabel: 'Day' },
 } as const;
 
 type DateSegmentsContextValue = {
   values: Record<Segment, string>;
   refs: Record<Segment, React.MutableRefObject<HTMLInputElement | null>>;
   disabled: boolean;
-  handleKeyDown: (e: React.KeyboardEvent<HTMLInputElement>, segment: Segment) => void;
+  handleKeyDown: (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    segment: Segment,
+  ) => void;
   handleSegmentInput: (
     e: React.ChangeEvent<HTMLInputElement>,
     segment: Segment,
     maxLength: number,
   ) => void;
-  padOnBlur: (seg: "month" | "day") => () => void;
+  padOnBlur: (seg: 'month' | 'day') => () => void;
 };
 
-const DateSegmentsContext = React.createContext<DateSegmentsContextValue | null>(null);
+const DateSegmentsContext =
+  React.createContext<DateSegmentsContextValue | null>(null);
 
 const useDateSegments = () => {
   const ctx = React.useContext(DateSegmentsContext);
   if (!ctx) {
-    throw new Error("DateSegmentInput must be used within DateSegmentsContext.Provider");
+    throw new Error(
+      'DateSegmentInput must be used within DateSegmentsContext.Provider',
+    );
   }
 
   return ctx;
@@ -79,7 +85,7 @@ const DateSegmentInput: React.FC<DateSegmentInputProps> = ({
       ref={inputRef}
       aria-label={config.ariaLabel}
       autoComplete="off"
-      className={`SegmentedDateInput-input SegmentedDateInput-input--${segmentType} ${!value ? "is-empty" : ""} ${className ?? ""}`}
+      className={`SegmentedDateInput-input SegmentedDateInput-input--${segmentType} ${!value ? 'is-empty' : ''} ${className ?? ''}`}
       disabled={disabled ?? ctxDisabled}
       inputMode="numeric"
       maxLength={max}
@@ -89,7 +95,11 @@ const DateSegmentInput: React.FC<DateSegmentInputProps> = ({
       value={value}
       onChange={(e) => handleSegmentInput(e, segmentType, max)}
       onKeyDown={(e) => handleKeyDown(e, segmentType)}
-      onBlur={segmentType === "month" || segmentType === "day" ? padOnBlur(segmentType) : undefined}
+      onBlur={
+        segmentType === 'month' || segmentType === 'day'
+          ? padOnBlur(segmentType)
+          : undefined
+      }
     />
   );
 };
@@ -105,7 +115,10 @@ interface SegmentedDateInputProps {
   onEnterWhenValid?: () => void;
 }
 
-const SegmentedDateInput = React.forwardRef<SegmentedDateInputRef, SegmentedDateInputProps>(
+const SegmentedDateInput = React.forwardRef<
+  SegmentedDateInputRef,
+  SegmentedDateInputProps
+>(
   (
     {
       value,
@@ -119,7 +132,9 @@ const SegmentedDateInput = React.forwardRef<SegmentedDateInputRef, SegmentedDate
     },
     ref,
   ) => {
-    const [internalValue, setInternalValue] = React.useState(() => formatDateValue(value));
+    const [internalValue, setInternalValue] = React.useState(() =>
+      formatDateValue(value),
+    );
     const lastEmittedKey = React.useRef<string | null>(null);
     const prevOpenRef = React.useRef(false);
     const yearRef = React.useRef<HTMLInputElement>(null);
@@ -138,11 +153,15 @@ const SegmentedDateInput = React.forwardRef<SegmentedDateInputRef, SegmentedDate
     );
 
     const isDateInRange = React.useCallback(
-      (date: Date) => (!minDate || date >= minDate) && (!maxDate || date <= maxDate),
+      (date: Date) =>
+        (!minDate || date >= minDate) && (!maxDate || date <= maxDate),
       [minDate, maxDate],
     );
 
-    const _parse = React.useCallback((key: string) => parse(key, "yyyy-MM-dd", new Date()), []);
+    const _parse = React.useCallback(
+      (key: string) => parse(key, 'yyyy-MM-dd', new Date()),
+      [],
+    );
 
     React.useEffect(() => {
       const next = formatDateValue(value);
@@ -228,13 +247,13 @@ const SegmentedDateInput = React.forwardRef<SegmentedDateInputRef, SegmentedDate
         const len = input.value.length;
 
         switch (e.key) {
-          case "ArrowRight":
+          case 'ArrowRight':
             if (cursor === len) {
               e.preventDefault();
-              if (current === "year") {
+              if (current === 'year') {
                 monthRef.current?.focus();
                 monthRef.current?.setSelectionRange(0, 0);
-              } else if (current === "month") {
+              } else if (current === 'month') {
                 dayRef.current?.focus();
                 dayRef.current?.setSelectionRange(0, 0);
               }
@@ -242,10 +261,10 @@ const SegmentedDateInput = React.forwardRef<SegmentedDateInputRef, SegmentedDate
 
             break;
 
-          case "ArrowLeft":
+          case 'ArrowLeft':
             if (cursor === 0) {
               e.preventDefault();
-              if (current === "day") {
+              if (current === 'day') {
                 monthRef.current?.focus();
                 const monthInput = monthRef.current;
 
@@ -253,8 +272,11 @@ const SegmentedDateInput = React.forwardRef<SegmentedDateInputRef, SegmentedDate
                   return;
                 }
 
-                monthInput.setSelectionRange(monthInput.value.length, monthInput.value.length);
-              } else if (current === "month") {
+                monthInput.setSelectionRange(
+                  monthInput.value.length,
+                  monthInput.value.length,
+                );
+              } else if (current === 'month') {
                 yearRef.current?.focus();
                 const yearInput = yearRef.current;
 
@@ -262,15 +284,21 @@ const SegmentedDateInput = React.forwardRef<SegmentedDateInputRef, SegmentedDate
                   return;
                 }
 
-                yearInput.setSelectionRange(yearInput.value.length, yearInput.value.length);
+                yearInput.setSelectionRange(
+                  yearInput.value.length,
+                  yearInput.value.length,
+                );
               }
             }
 
             break;
 
-          case "Backspace":
-            if ((input.selectionStart ?? 0) === 0 && (input.selectionEnd ?? 0) === 0) {
-              if (current === "day") {
+          case 'Backspace':
+            if (
+              (input.selectionStart ?? 0) === 0 &&
+              (input.selectionEnd ?? 0) === 0
+            ) {
+              if (current === 'day') {
                 if (!monthRef.current) {
                   return;
                 }
@@ -278,7 +306,7 @@ const SegmentedDateInput = React.forwardRef<SegmentedDateInputRef, SegmentedDate
                 monthRef.current?.focus();
                 const monthInput = monthRef.current;
                 monthInput.setSelectionRange(0, monthInput.value.length);
-              } else if (current === "month") {
+              } else if (current === 'month') {
                 yearRef.current?.focus();
                 const yearInput = yearRef.current;
                 if (!yearInput) {
@@ -291,12 +319,15 @@ const SegmentedDateInput = React.forwardRef<SegmentedDateInputRef, SegmentedDate
 
             break;
 
-          case "Escape":
+          case 'Escape':
             input.blur();
             break;
 
-          case "Enter":
-            if (isValidDate(internalValue) && isDateInRange(_parse(keyFrom(internalValue)))) {
+          case 'Enter':
+            if (
+              isValidDate(internalValue) &&
+              isDateInRange(_parse(keyFrom(internalValue)))
+            ) {
               onEnterWhenValid?.();
             }
 
@@ -307,9 +338,12 @@ const SegmentedDateInput = React.forwardRef<SegmentedDateInputRef, SegmentedDate
     );
 
     const padOnBlur = React.useCallback(
-      (segmentType: "month" | "day") => () => {
+      (segmentType: 'month' | 'day') => () => {
         setInternalValue((currentValues) => {
-          if (currentValues[segmentType] && currentValues[segmentType].length === 1) {
+          if (
+            currentValues[segmentType] &&
+            currentValues[segmentType].length === 1
+          ) {
             const paddedValue = `0${currentValues[segmentType]}`;
             const nextValues = {
               ...currentValues,
@@ -334,62 +368,68 @@ const SegmentedDateInput = React.forwardRef<SegmentedDateInputRef, SegmentedDate
     );
 
     const handleSegmentInput = React.useCallback(
-      (e: React.ChangeEvent<HTMLInputElement>, segment: Segment, maxLength: number) => {
-        const digits = e.target.value.replace(/\D/g, "").slice(0, maxLength);
+      (
+        e: React.ChangeEvent<HTMLInputElement>,
+        segment: Segment,
+        maxLength: number,
+      ) => {
+        const digits = e.target.value.replace(/\D/g, '').slice(0, maxLength);
         let segmentValue = digits;
 
-        if (segment === "month") {
+        if (segment === 'month') {
           const monthNum = parseInt(segmentValue, 10);
           if (segmentValue.length === 1 && monthNum >= 2 && monthNum <= 9) {
             segmentValue = `0${monthNum}`;
           } else if (segmentValue.length === 2) {
             if (monthNum === 0) {
-              segmentValue = "01";
+              segmentValue = '01';
             } else if (monthNum > 12) {
-              segmentValue = "12";
+              segmentValue = '12';
             }
           }
-        } else if (segment === "day") {
+        } else if (segment === 'day') {
           const dayNum = parseInt(segmentValue, 10);
           if (segmentValue.length === 1 && dayNum >= 4 && dayNum <= 9) {
             segmentValue = `0${dayNum}`;
           } else if (segmentValue.length === 2) {
-            const yearNum = parseInt(internalValue.year || "2000", 10);
-            const monthNum = parseInt(internalValue.month || "1", 10);
-            const lastDayOfCurrentMonth = lastDayOfMonth(new Date(yearNum, monthNum - 1)).getDate();
+            const yearNum = parseInt(internalValue.year || '2000', 10);
+            const monthNum = parseInt(internalValue.month || '1', 10);
+            const lastDayOfCurrentMonth = lastDayOfMonth(
+              new Date(yearNum, monthNum - 1),
+            ).getDate();
             if (dayNum === 0) {
-              segmentValue = "01";
+              segmentValue = '01';
             } else if (dayNum > lastDayOfCurrentMonth) {
-              segmentValue = String(lastDayOfCurrentMonth).padStart(2, "0");
+              segmentValue = String(lastDayOfCurrentMonth).padStart(2, '0');
             }
           }
         }
 
         // Build next state and re-clamp day if year or month changed
         let nextInternalValue = { ...internalValue, [segment]: segmentValue };
-        if (segment !== "day" && nextInternalValue.day) {
+        if (segment !== 'day' && nextInternalValue.day) {
           nextInternalValue = {
             ...nextInternalValue,
             day: clampDayForYearMonth(nextInternalValue),
           };
         }
 
-        const previousSegmentValue = internalValue[segment] || "";
+        const previousSegmentValue = internalValue[segment] || '';
         setInternalValue(nextInternalValue);
         commitIfCompleteAndValid(nextInternalValue);
 
         // Auto-advance (day never auto-advances)
         const shouldAdvance =
-          (segment === "year" && segmentValue.length === SEG_MAX.year) ||
-          (segment === "month" &&
+          (segment === 'year' && segmentValue.length === SEG_MAX.year) ||
+          (segment === 'month' &&
             (segmentValue.length === SEG_MAX.month ||
               (segmentValue.length === 1 && parseInt(segmentValue, 10) >= 2)));
 
         if (shouldAdvance && segmentValue !== previousSegmentValue) {
           requestAnimationFrame(() => {
-            if (segment === "year") {
+            if (segment === 'year') {
               monthRef.current?.focus();
-            } else if (segment === "month") {
+            } else if (segment === 'month') {
               dayRef.current?.focus();
             }
           });
@@ -415,7 +455,7 @@ const SegmentedDateInput = React.forwardRef<SegmentedDateInputRef, SegmentedDate
     return (
       <div ref={containerRef} className="SegmentedDateInput">
         <DateSegmentsContext.Provider value={ctx}>
-          {(["year", "month", "day"] as const).map((seg, i) => (
+          {(['year', 'month', 'day'] as const).map((seg, i) => (
             <React.Fragment key={seg}>
               <DateSegmentInput segmentType={seg} />
               {i < 2 && <span className="SegmentedDateInput-separator">-</span>}
@@ -427,7 +467,7 @@ const SegmentedDateInput = React.forwardRef<SegmentedDateInputRef, SegmentedDate
   },
 );
 
-SegmentedDateInput.displayName = "SegmentedDateInput";
+SegmentedDateInput.displayName = 'SegmentedDateInput';
 
 export { SegmentedDateInput };
 export type { SegmentedDateInputProps };

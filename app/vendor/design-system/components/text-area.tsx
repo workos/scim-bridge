@@ -1,7 +1,7 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-import { TextArea as ThemesTextArea } from "@radix-ui/themes/dist/esm/components/text-area.js";
-import * as React from "react";
+import * as React from 'react';
+import { TextArea as ThemesTextArea } from '../radix-themes/components/text-area.js';
 
 interface TextAreaInputOwnProps {
   invalid?: boolean;
@@ -9,30 +9,37 @@ interface TextAreaInputOwnProps {
    * @deprecated Different state types now use different props as they are no
    * longer mutually exclusive. Use `disabled`, `readOnly` or `invalid` instead.
    */
-  state?: "normal" | "disabled" | "read-only" | "invalid";
+  state?: 'normal' | 'disabled' | 'read-only' | 'invalid';
 }
 
 interface TextAreaInputProps
   extends
-    Omit<React.ComponentPropsWithoutRef<typeof ThemesTextArea>, "color">,
+    Omit<React.ComponentPropsWithoutRef<typeof ThemesTextArea>, 'color'>,
     TextAreaInputOwnProps {}
 
 const TextArea = React.forwardRef<HTMLTextAreaElement, TextAreaInputProps>(
   (
-    { invalid = false, disabled = false, readOnly = false, variant = "surface", state, ...props },
+    {
+      invalid = false,
+      disabled = false,
+      readOnly = false,
+      variant = 'surface',
+      state,
+      ...props
+    },
     forwardedRef,
   ) => {
     // TODO remove all of this when state prop is removed
     if (state !== undefined) {
-      if (state === "read-only") {
+      if (state === 'read-only') {
         readOnly = true;
         disabled = false;
         invalid = false;
-      } else if (state === "disabled") {
+      } else if (state === 'disabled') {
         readOnly = false;
         disabled = true;
         invalid = false;
-      } else if (state === "invalid") {
+      } else if (state === 'invalid') {
         readOnly = false;
         disabled = false;
         invalid = true;
@@ -52,11 +59,11 @@ const TextArea = React.forwardRef<HTMLTextAreaElement, TextAreaInputProps>(
         variant={variant}
         color={(() => {
           if (invalid) {
-            return "red";
+            return 'red';
           }
 
-          if (variant === "soft") {
-            return "gray";
+          if (variant === 'soft') {
+            return 'gray';
           }
 
           return undefined;
@@ -67,6 +74,6 @@ const TextArea = React.forwardRef<HTMLTextAreaElement, TextAreaInputProps>(
   },
 );
 
-TextArea.displayName = "TextArea";
+TextArea.displayName = 'TextArea';
 
 export { TextArea };

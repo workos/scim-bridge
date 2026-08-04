@@ -1,23 +1,24 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
-import { Progress as ThemesProgress } from "@radix-ui/themes/dist/esm/components/progress.js";
-import * as React from "react";
+'use client';
+import * as React from 'react';
+import { Progress as ThemesProgress } from '../radix-themes/components/progress.js';
 
 type ProgressProps = React.ComponentPropsWithoutRef<typeof ThemesProgress>;
 
-const Progress = React.forwardRef<React.ElementRef<typeof ThemesProgress>, ProgressProps>(
-  ({ style, ...props }, forwardedRef) => (
-    <ThemesProgress
-      ref={forwardedRef}
-      color="gray"
-      size="1"
-      style={{ maxWidth: 250, width: "100%", ...style }}
-      {...props}
-    />
-  ),
-);
+const Progress = React.forwardRef<
+  React.ElementRef<typeof ThemesProgress>,
+  ProgressProps
+>(({ style, ...props }, forwardedRef) => (
+  <ThemesProgress
+    ref={forwardedRef}
+    color="gray"
+    size="1"
+    style={{ maxWidth: 250, width: '100%', ...style }}
+    {...props}
+  />
+));
 
-Progress.displayName = "Progress";
+Progress.displayName = 'Progress';
 
 export { Progress };

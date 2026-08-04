@@ -1,18 +1,21 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
+'use client';
 
-import { CalendarIcon, Cross2Icon } from "@radix-ui/react-icons";
-import * as React from "react";
-import { ComposedDate } from "../helpers/date-picker-helpers.js";
-import type { MarginProps } from "../props.js";
-import { type CalendarRef, Calendar } from "./calendar.js";
-import { IconButton } from "./icon-button.js";
-import { Popover } from "./popover.js";
-import { type SegmentedDateInputRef, SegmentedDateInput } from "./segmented-date-input.js";
+import { CalendarIcon, Cross2Icon } from '@radix-ui/react-icons';
+import * as React from 'react';
+import { ComposedDate } from '../helpers/date-picker-helpers.js';
+import type { MarginProps } from '../props.js';
+import { type CalendarRef, Calendar } from './calendar.js';
+import { IconButton } from './icon-button.js';
+import { Popover } from './popover.js';
+import {
+  type SegmentedDateInputRef,
+  SegmentedDateInput,
+} from './segmented-date-input.js';
 
 export interface DatePickerRef {
-  focusSegment: (segment: "year" | "month" | "day") => void;
+  focusSegment: (segment: 'year' | 'month' | 'day') => void;
 }
 
 interface DatePickerProps extends MarginProps {
@@ -21,7 +24,7 @@ interface DatePickerProps extends MarginProps {
   disabled?: boolean;
   minDate?: Date;
   maxDate?: Date;
-  calendarPopoverAlign?: "center" | "start" | "end";
+  calendarPopoverAlign?: 'center' | 'start' | 'end';
 }
 
 const DatePicker = React.forwardRef<DatePickerRef, DatePickerProps>(
@@ -32,13 +35,15 @@ const DatePicker = React.forwardRef<DatePickerRef, DatePickerProps>(
       disabled = false,
       minDate,
       maxDate,
-      calendarPopoverAlign = "start",
+      calendarPopoverAlign = 'start',
       ...props
     },
     ref,
   ) => {
     const [isOpen, setIsOpen] = React.useState(false);
-    const [partialDate, setPartialDate] = React.useState<ComposedDate | undefined>(undefined);
+    const [partialDate, setPartialDate] = React.useState<
+      ComposedDate | undefined
+    >(undefined);
     const inputAreaRef = React.useRef<HTMLDivElement>(null);
     const segmentedDateInputRef = React.useRef<SegmentedDateInputRef>(null);
     const calendarRef = React.useRef<CalendarRef>(null);
@@ -46,7 +51,7 @@ const DatePicker = React.forwardRef<DatePickerRef, DatePickerProps>(
     React.useImperativeHandle(
       ref,
       () => ({
-        focusSegment: (segment: "year" | "month" | "day") => {
+        focusSegment: (segment: 'year' | 'month' | 'day') => {
           segmentedDateInputRef.current?.focusSegment(segment);
         },
       }),
@@ -61,9 +66,12 @@ const DatePicker = React.forwardRef<DatePickerRef, DatePickerProps>(
       [onChange],
     );
 
-    const handlePartialDateChange = React.useCallback((partial: ComposedDate) => {
-      setPartialDate(partial);
-    }, []);
+    const handlePartialDateChange = React.useCallback(
+      (partial: ComposedDate) => {
+        setPartialDate(partial);
+      },
+      [],
+    );
 
     const handleClear = React.useCallback(
       (e: React.MouseEvent) => {
@@ -86,7 +94,7 @@ const DatePicker = React.forwardRef<DatePickerRef, DatePickerProps>(
         // If click is inside the input area (but not on the icon button)
         if (inputArea && inputArea.contains(target)) {
           const isIconButton = target.closest('[aria-label="Open calendar"]');
-          const isInputElement = target.tagName === "INPUT";
+          const isInputElement = target.tagName === 'INPUT';
 
           if (!isIconButton) {
             // If clicking on an input and popover is already open, don't toggle
@@ -107,7 +115,7 @@ const DatePicker = React.forwardRef<DatePickerRef, DatePickerProps>(
               } else {
                 // If clicking on the trigger area but not on a specific segment, focus the year input
                 requestAnimationFrame(() => {
-                  segmentedDateInputRef.current?.focusSegment("year");
+                  segmentedDateInputRef.current?.focusSegment('year');
                 });
               }
             }
@@ -181,7 +189,11 @@ const DatePicker = React.forwardRef<DatePickerRef, DatePickerProps>(
               </div>
             </div>
           </Popover.Trigger>
-          <Popover.Content align={calendarPopoverAlign} minWidth="258px" width="258px">
+          <Popover.Content
+            align={calendarPopoverAlign}
+            minWidth="258px"
+            width="258px"
+          >
             <Calendar
               ref={calendarRef}
               disabled={disabled}
@@ -198,7 +210,7 @@ const DatePicker = React.forwardRef<DatePickerRef, DatePickerProps>(
   },
 );
 
-DatePicker.displayName = "DatePicker";
+DatePicker.displayName = 'DatePicker';
 
 export { DatePicker };
 export type { DatePickerProps };

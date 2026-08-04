@@ -1,3 +1,3 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-export * as CheckboxGroup from "@radix-ui/themes/dist/esm/components/checkbox-group.js";
+export * as CheckboxGroup from '../radix-themes/components/checkbox-group.js';

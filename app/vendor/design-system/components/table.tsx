@@ -1,32 +1,53 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
+'use client';
 
-import { ChevronRightIcon } from "@radix-ui/react-icons";
-import classNames from "classnames";
-import { composeRefs, useComposedRefs, useControllableState } from "radix-ui/internal";
-import * as React from "react";
-import { createContext } from "../helpers/create-context.js";
-import { getTabbableNodes } from "../helpers/get-tabbable-nodes.js";
-import * as RovingFocusGroup from "../helpers/roving-focus.js";
-import { ComponentPropsWithout, extractProps, RemovedProps } from "../helpers/themes.js";
-import { useIsomorphicLayoutEffect } from "../helpers/use-isomorphic-layout-effect.js";
-import { GetPropDefTypes, marginPropDefs, MarginProps } from "../props.js";
-import { Portal } from "./portal.js";
-import * as ScrollArea from "./scroll-area.js";
-import { Slot } from "./slot.js";
-import { tableCellPropDefs, tableContentPropDefs, tableRowPropDefs } from "./table.props.js";
-import { Text } from "./text.js";
-import { VisuallyHidden } from "./visually-hidden.js";
+import { ChevronRightIcon } from '@radix-ui/react-icons';
+import classNames from 'classnames';
+import {
+  composeRefs,
+  useComposedRefs,
+  useControllableState,
+} from 'radix-ui/internal';
+import * as React from 'react';
+import { createContext } from '../helpers/create-context.js';
+import { getTabbableNodes } from '../helpers/get-tabbable-nodes.js';
+import * as RovingFocusGroup from '../helpers/roving-focus.js';
+import {
+  ComponentPropsWithout,
+  extractProps,
+  RemovedProps,
+} from '../helpers/themes.js';
+import { useIsomorphicLayoutEffect } from '../helpers/use-isomorphic-layout-effect.js';
+import { GetPropDefTypes, marginPropDefs, MarginProps } from '../props.js';
+import { Portal } from './portal.js';
+import * as ScrollArea from './scroll-area.js';
+import { Slot } from './slot.js';
+import {
+  tableCellPropDefs,
+  tableContentPropDefs,
+  tableRowPropDefs,
+} from './table.props.js';
+import { Text } from './text.js';
+import { VisuallyHidden } from './visually-hidden.js';
 
-interface TableRootProps extends React.ComponentPropsWithoutRef<"div">, MarginProps {}
+interface TableRootProps
+  extends React.ComponentPropsWithoutRef<'div'>, MarginProps {}
 
-const TableRoot = React.forwardRef<HTMLDivElement, TableRootProps>((props, forwardedRef) => {
-  const { className, ...rootProps } = extractProps(props, marginPropDefs);
-  return <div ref={forwardedRef} className={classNames(className, "TableRoot")} {...rootProps} />;
-});
+const TableRoot = React.forwardRef<HTMLDivElement, TableRootProps>(
+  (props, forwardedRef) => {
+    const { className, ...rootProps } = extractProps(props, marginPropDefs);
+    return (
+      <div
+        ref={forwardedRef}
+        className={classNames(className, 'TableRoot')}
+        {...rootProps}
+      />
+    );
+  },
+);
 
-TableRoot.displayName = "TableRoot";
+TableRoot.displayName = 'TableRoot';
 
 interface TableContentContextValue {
   value?: string;
@@ -35,28 +56,40 @@ interface TableContentContextValue {
 }
 
 const [TableContentProvider, useTableContentContext] =
-  createContext<TableContentContextValue>("TableContent");
+  createContext<TableContentContextValue>('TableContent');
 
-interface TableContentOwnProps extends GetPropDefTypes<typeof tableContentPropDefs> {
+interface TableContentOwnProps extends GetPropDefTypes<
+  typeof tableContentPropDefs
+> {
   defaultValue?: string;
   value?: string;
   onValueChange?: (value: string) => void;
 }
 
 interface TableContentProps
-  extends TableContentOwnProps, ComponentPropsWithout<"div", RemovedProps>, MarginProps {}
+  extends
+    TableContentOwnProps,
+    ComponentPropsWithout<'div', RemovedProps>,
+    MarginProps {}
 
-const defaultAriaDescription = "Press Up Arrow or Down Arrow to navigate the rows.";
+const defaultAriaDescription =
+  'Press Up Arrow or Down Arrow to navigate the rows.';
 
 const TableContent = React.forwardRef<HTMLTableElement, TableContentProps>(
-  ({ children, defaultValue, onValueChange, value: valueProp, ...props }, forwardedRef) => {
+  (
+    { children, defaultValue, onValueChange, value: valueProp, ...props },
+    forwardedRef,
+  ) => {
     const { className, ...contentProps } = extractProps(props, marginPropDefs);
-    const { className: tableClassName } = extractProps(props, tableContentPropDefs);
+    const { className: tableClassName } = extractProps(
+      props,
+      tableContentPropDefs,
+    );
 
     const [value, setValue] = useControllableState({
       prop: valueProp,
       onChange: onValueChange,
-      defaultProp: defaultValue ?? "",
+      defaultProp: defaultValue ?? '',
     });
 
     const [hasFocusWithin, setHasFocusWithin] = React.useState(false);
@@ -68,23 +101,23 @@ const TableContent = React.forwardRef<HTMLTableElement, TableContentProps>(
     useIsomorphicLayoutEffect(() => {
       const content = contentRef.current;
       const viewport = viewportRef.current;
-      const firstCell = viewport?.querySelector("th");
-      const header = viewport?.querySelector("thead");
+      const firstCell = viewport?.querySelector('th');
+      const header = viewport?.querySelector('thead');
 
       if (content && viewport && firstCell && header) {
         const contentResizeObserver = new ResizeObserver(() => {
           // Observe content size changes to turn on/off sticky first column
           if (viewport.scrollWidth > viewport.clientWidth) {
-            content.setAttribute("data-has-horizontal-scroll", "true");
+            content.setAttribute('data-has-horizontal-scroll', 'true');
           } else {
-            content.removeAttribute("data-has-horizontal-scroll");
+            content.removeAttribute('data-has-horizontal-scroll');
           }
 
           // Observe content size changes to turn on/off sticky header
           if (viewport.scrollHeight > viewport.clientHeight) {
-            content.setAttribute("data-has-vertical-scroll", "true");
+            content.setAttribute('data-has-vertical-scroll', 'true');
           } else {
-            content.removeAttribute("data-has-vertical-scroll");
+            content.removeAttribute('data-has-vertical-scroll');
           }
         });
 
@@ -94,21 +127,27 @@ const TableContent = React.forwardRef<HTMLTableElement, TableContentProps>(
         const firstCellResizeObserver = new ResizeObserver(([entry]) => {
           const width = entry?.borderBoxSize?.[0]?.inlineSize;
           if (width !== undefined) {
-            content.style.setProperty("--table-scrollbar-x-offset", `${width}px`);
+            content.style.setProperty(
+              '--table-scrollbar-x-offset',
+              `${width}px`,
+            );
           }
         });
 
-        firstCellResizeObserver.observe(firstCell, { box: "border-box" });
+        firstCellResizeObserver.observe(firstCell, { box: 'border-box' });
 
         // Observe header to position the scrollbar to the bottom of it
         const headerResizeObserver = new ResizeObserver(([entry]) => {
           const height = entry?.borderBoxSize?.[0]?.blockSize;
           if (height !== undefined) {
-            content.style.setProperty("--table-scrollbar-y-offset", `${height}px`);
+            content.style.setProperty(
+              '--table-scrollbar-y-offset',
+              `${height}px`,
+            );
           }
         });
 
-        headerResizeObserver.observe(header, { box: "border-box" });
+        headerResizeObserver.observe(header, { box: 'border-box' });
 
         return () => {
           contentResizeObserver.disconnect();
@@ -122,7 +161,9 @@ const TableContent = React.forwardRef<HTMLTableElement, TableContentProps>(
 
     const ariaDescribedById = React.useId();
 
-    const [ariaDescription, setAriaDescription] = React.useState(defaultAriaDescription);
+    const [ariaDescription, setAriaDescription] = React.useState(
+      defaultAriaDescription,
+    );
 
     return (
       <TableContentProvider
@@ -133,17 +174,22 @@ const TableContent = React.forwardRef<HTMLTableElement, TableContentProps>(
         <Text
           ref={contentRef}
           as="div"
-          className={classNames(className, "TableContent")}
+          className={classNames(className, 'TableContent')}
           size="2"
           {...contentProps}
         >
-          <RovingFocusGroup.Root asChild dir="ltr" loop={false} orientation="vertical">
+          <RovingFocusGroup.Root
+            asChild
+            dir="ltr"
+            loop={false}
+            orientation="vertical"
+          >
             <ScrollArea.Root>
               <ScrollArea.Viewport ref={viewportRef}>
                 <table
                   ref={composeRefs(tableRef, forwardedRef)}
                   aria-describedby={ariaDescribedById}
-                  className={classNames("TableContentTable", tableClassName)}
+                  className={classNames('TableContentTable', tableClassName)}
                   // Make it possible for the screen reader to focus the table with the virtual cursor
                   tabIndex={-1}
                   onBlur={(event) => {
@@ -161,21 +207,26 @@ const TableContent = React.forwardRef<HTMLTableElement, TableContentProps>(
                     }
 
                     if (event.target instanceof HTMLTableRowElement) {
-                      const table = event.target?.closest("table");
-                      const rows = table?.querySelectorAll("tr") ?? [];
+                      const table = event.target?.closest('table');
+                      const rows = table?.querySelectorAll('tr') ?? [];
                       const rowsCount = rows.length ?? 0;
-                      const currentRow = Array.from(rows).indexOf(event.target) + 1;
-                      const cells = Array.from(event.target.querySelectorAll("th, td"));
-                      const cellText = cells.map((cell) => cell.textContent).join(", ");
+                      const currentRow =
+                        Array.from(rows).indexOf(event.target) + 1;
+                      const cells = Array.from(
+                        event.target.querySelectorAll('th, td'),
+                      );
+                      const cellText = cells
+                        .map((cell) => cell.textContent)
+                        .join(', ');
 
-                      let descriptor = "";
+                      let descriptor = '';
 
-                      if (event.target.getAttribute("data-clickable")) {
-                        descriptor = "clickable,";
+                      if (event.target.getAttribute('data-clickable')) {
+                        descriptor = 'clickable,';
                       }
 
-                      if (event.target.getAttribute("data-selected")) {
-                        descriptor = "selected,";
+                      if (event.target.getAttribute('data-selected')) {
+                        descriptor = 'selected,';
                       }
 
                       const description = `
@@ -202,7 +253,11 @@ const TableContent = React.forwardRef<HTMLTableElement, TableContentProps>(
 
               {hasFocusWithin && (
                 <Portal>
-                  <VisuallyHidden aria-live="assertive" id={ariaDescribedById} tabIndex={-1}>
+                  <VisuallyHidden
+                    aria-live="assertive"
+                    id={ariaDescribedById}
+                    tabIndex={-1}
+                  >
                     {ariaDescription}
                   </VisuallyHidden>
                 </Portal>
@@ -215,27 +270,35 @@ const TableContent = React.forwardRef<HTMLTableElement, TableContentProps>(
   },
 );
 
-TableContent.displayName = "TableContent";
+TableContent.displayName = 'TableContent';
 
-type TableHeaderProps = React.ComponentPropsWithoutRef<"thead">;
+type TableHeaderProps = React.ComponentPropsWithoutRef<'thead'>;
 
 const TableHeader = React.forwardRef<HTMLTableSectionElement, TableHeaderProps>(
   ({ className, ...props }, forwardedRef) => (
-    <thead ref={forwardedRef} className={classNames(className, "TableHeader")} {...props} />
+    <thead
+      ref={forwardedRef}
+      className={classNames(className, 'TableHeader')}
+      {...props}
+    />
   ),
 );
 
-TableHeader.displayName = "TableHeader";
+TableHeader.displayName = 'TableHeader';
 
-type TableBodyProps = React.ComponentPropsWithoutRef<"tbody">;
+type TableBodyProps = React.ComponentPropsWithoutRef<'tbody'>;
 
 const TableBody = React.forwardRef<HTMLTableSectionElement, TableBodyProps>(
   ({ className, ...props }, forwardedRef) => (
-    <tbody ref={forwardedRef} className={classNames(className, "TableBody")} {...props} />
+    <tbody
+      ref={forwardedRef}
+      className={classNames(className, 'TableBody')}
+      {...props}
+    />
   ),
 );
 
-TableBody.displayName = "TableBody";
+TableBody.displayName = 'TableBody';
 
 interface TableRowContextValue {
   actionNode: HTMLElement | null;
@@ -244,17 +307,29 @@ interface TableRowContextValue {
   setLinkNode: (element: HTMLAnchorElement | null) => void;
 }
 
-const [TableRowProvider, useTableRowContext] = createContext<TableRowContextValue>("TableRow");
+const [TableRowProvider, useTableRowContext] =
+  createContext<TableRowContextValue>('TableRow');
 
 type TableRowOwnProps = GetPropDefTypes<typeof tableRowPropDefs>;
 
-interface TableRowProps extends TableRowOwnProps, React.ComponentPropsWithoutRef<"tr"> {
+interface TableRowProps
+  extends TableRowOwnProps, React.ComponentPropsWithoutRef<'tr'> {
   value?: string;
 }
 
 const TableRow = React.forwardRef<HTMLTableRowElement, TableRowProps>(
   (
-    { children, onAuxClick, onBlur, onClick, onFocus, onKeyDown, onMouseDown, value, ...props },
+    {
+      children,
+      onAuxClick,
+      onBlur,
+      onClick,
+      onFocus,
+      onKeyDown,
+      onMouseDown,
+      value,
+      ...props
+    },
     forwardedRef,
   ) => {
     const { className, ...rowProps } = extractProps(props, tableRowPropDefs);
@@ -262,10 +337,14 @@ const TableRow = React.forwardRef<HTMLTableRowElement, TableRowProps>(
     const composedRef = useComposedRefs(rowRef, forwardedRef);
     const [pressed, setPressed] = React.useState(false);
 
-    const tableContext = useTableContentContext("TableContent");
+    const tableContext = useTableContentContext('TableContent');
 
-    const [linkNode, setLinkNode] = React.useState<HTMLAnchorElement | null>(null);
-    const [actionNode, setActionNode] = React.useState<HTMLElement | null>(null);
+    const [linkNode, setLinkNode] = React.useState<HTMLAnchorElement | null>(
+      null,
+    );
+    const [actionNode, setActionNode] = React.useState<HTMLElement | null>(
+      null,
+    );
 
     const isTabLike = value !== undefined;
     const isSelected = isTabLike && value === tableContext.value;
@@ -281,7 +360,9 @@ const TableRow = React.forwardRef<HTMLTableRowElement, TableRowProps>(
     // Keep track of the length as a state to update `focusable` when that changes
     const [tabbableNodesLength, setTabbableNodesLength] = React.useState(0);
 
-    const focusable = Boolean(tableContext.hasFocusWithin || clickable || tabbableNodesLength);
+    const focusable = Boolean(
+      tableContext.hasFocusWithin || clickable || tabbableNodesLength,
+    );
 
     const removeChildrenTabIndices = React.useCallback(() => {
       if (rowRef.current) {
@@ -289,20 +370,20 @@ const TableRow = React.forwardRef<HTMLTableRowElement, TableRowProps>(
 
         tabbableNodes.current = nodes.map((element) => ({
           element,
-          originalTabIndex: element.getAttribute("tabindex"),
+          originalTabIndex: element.getAttribute('tabindex'),
         }));
 
         setTabbableNodesLength(nodes.length);
-        nodes.forEach((child) => child.setAttribute("tabindex", "-1"));
+        nodes.forEach((child) => child.setAttribute('tabindex', '-1'));
       }
     }, []);
 
     const restoreChildrenTabIndices = React.useCallback(() => {
       tabbableNodes.current.forEach(({ element, originalTabIndex }) => {
         if (originalTabIndex === null) {
-          element.removeAttribute("tabindex");
+          element.removeAttribute('tabindex');
         } else {
-          element.setAttribute("tabindex", originalTabIndex);
+          element.setAttribute('tabindex', originalTabIndex);
         }
       });
     }, []);
@@ -316,7 +397,11 @@ const TableRow = React.forwardRef<HTMLTableRowElement, TableRowProps>(
     // Render a placeholder row when there are no children so that you can use it for presentational reasons
     if (!children) {
       return (
-        <tr ref={forwardedRef} aria-hidden className={classNames(className, "TableRow")}>
+        <tr
+          ref={forwardedRef}
+          aria-hidden
+          className={classNames(className, 'TableRow')}
+        >
           <TableCell aria-hidden colSpan={1000} />
         </tr>
       );
@@ -329,10 +414,14 @@ const TableRow = React.forwardRef<HTMLTableRowElement, TableRowProps>(
         setActionNode={setActionNode}
         setLinkNode={setLinkNode}
       >
-        <RovingFocusGroup.Item asChild active={isSelected} focusable={focusable}>
+        <RovingFocusGroup.Item
+          asChild
+          active={isSelected}
+          focusable={focusable}
+        >
           <tr
             ref={composedRef}
-            className={classNames(className, "TableRow")}
+            className={classNames(className, 'TableRow')}
             data-clickable={clickable || undefined}
             data-pressed={(clickable && pressed) || undefined}
             data-selected={isSelected || undefined}
@@ -368,7 +457,7 @@ const TableRow = React.forwardRef<HTMLTableRowElement, TableRowProps>(
               onFocus?.(event);
             }}
             onKeyDown={(event) => {
-              const isClickLike = event.key === " " || event.key === "Enter";
+              const isClickLike = event.key === ' ' || event.key === 'Enter';
 
               if (isClickLike && isRowTarget(event)) {
                 event.preventDefault();
@@ -381,7 +470,7 @@ const TableRow = React.forwardRef<HTMLTableRowElement, TableRowProps>(
                 if (linkNode) {
                   setPressed(true);
 
-                  addEventListener("keyup", () => setPressed(false), {
+                  addEventListener('keyup', () => setPressed(false), {
                     once: true,
                   });
                 }
@@ -403,7 +492,7 @@ const TableRow = React.forwardRef<HTMLTableRowElement, TableRowProps>(
                   // Toggle to pressed if we anticipate that navigation will happen on click
                   setPressed(true);
 
-                  addEventListener("mouseup", () => setPressed(false), {
+                  addEventListener('mouseup', () => setPressed(false), {
                     once: true,
                   });
                 }
@@ -448,8 +537,8 @@ const passLinkClick = (
 ) => {
   let isClickLike = event.nativeEvent instanceof MouseEvent;
 
-  if ("key" in event) {
-    isClickLike = event.key === " " || event.key === "Enter";
+  if ('key' in event) {
+    isClickLike = event.key === ' ' || event.key === 'Enter';
   }
 
   if (!linkNode || !isRowTarget(event) || !isClickLike) {
@@ -457,50 +546,61 @@ const passLinkClick = (
   }
 
   const originalTarget = linkNode.target;
-  const isMiddleClick = "button" in event && event.button === 1;
+  const isMiddleClick = 'button' in event && event.button === 1;
 
   if (isMiddleClick || event.ctrlKey || event.shiftKey || event.metaKey) {
-    linkNode.target = "_blank";
+    linkNode.target = '_blank';
   }
 
   linkNode.click();
 
   if (!originalTarget) {
-    linkNode.removeAttribute("target");
+    linkNode.removeAttribute('target');
   } else {
     linkNode.target = originalTarget;
   }
 };
 
-TableRow.displayName = "TableRow";
+TableRow.displayName = 'TableRow';
 
 type TableCellOwnProps = GetPropDefTypes<typeof tableCellPropDefs>;
 
 interface TableCellProps
-  extends TableCellOwnProps, Omit<React.ComponentPropsWithoutRef<"td">, "align" | "width"> {}
+  extends
+    TableCellOwnProps,
+    Omit<React.ComponentPropsWithoutRef<'td'>, 'align' | 'width'> {}
 
-const TableCell = React.forwardRef<HTMLTableCellElement, TableCellProps>((props, forwardedRef) => {
-  const { className, ...cellProps } = extractProps(props, tableCellPropDefs);
-  return <td ref={forwardedRef} className={classNames(className, "TableCell")} {...cellProps} />;
-});
-
-TableCell.displayName = "TableCell";
-
-const TableColumnHeader = React.forwardRef<HTMLTableCellElement, TableCellProps>(
+const TableCell = React.forwardRef<HTMLTableCellElement, TableCellProps>(
   (props, forwardedRef) => {
     const { className, ...cellProps } = extractProps(props, tableCellPropDefs);
     return (
-      <th
+      <td
         ref={forwardedRef}
-        className={classNames(className, "TableColumnHeader", "TableCell")}
-        scope="col"
+        className={classNames(className, 'TableCell')}
         {...cellProps}
       />
     );
   },
 );
 
-TableColumnHeader.displayName = "TableColumnHeader";
+TableCell.displayName = 'TableCell';
+
+const TableColumnHeader = React.forwardRef<
+  HTMLTableCellElement,
+  TableCellProps
+>((props, forwardedRef) => {
+  const { className, ...cellProps } = extractProps(props, tableCellPropDefs);
+  return (
+    <th
+      ref={forwardedRef}
+      className={classNames(className, 'TableColumnHeader', 'TableCell')}
+      scope="col"
+      {...cellProps}
+    />
+  );
+});
+
+TableColumnHeader.displayName = 'TableColumnHeader';
 
 const TableRowHeader = React.forwardRef<HTMLTableCellElement, TableCellProps>(
   (props, forwardedRef) => {
@@ -508,7 +608,7 @@ const TableRowHeader = React.forwardRef<HTMLTableCellElement, TableCellProps>(
     return (
       <th
         ref={forwardedRef}
-        className={classNames(className, "TableRowHeader", "TableCell")}
+        className={classNames(className, 'TableRowHeader', 'TableCell')}
         scope="row"
         {...cellProps}
       />
@@ -516,11 +616,11 @@ const TableRowHeader = React.forwardRef<HTMLTableCellElement, TableCellProps>(
   },
 );
 
-TableRowHeader.displayName = "TableRowHeader";
+TableRowHeader.displayName = 'TableRowHeader';
 
 const TableRowAction = React.forwardRef<HTMLElement, React.PropsWithChildren>(
   (props, forwardedRef) => {
-    const tableRowContext = useTableRowContext("TableRow");
+    const tableRowContext = useTableRowContext('TableRow');
     return (
       <Slot
         ref={composeRefs(forwardedRef, tableRowContext.setActionNode)}
@@ -531,16 +631,16 @@ const TableRowAction = React.forwardRef<HTMLElement, React.PropsWithChildren>(
   },
 );
 
-TableRowAction.displayName = "TableRowAction";
+TableRowAction.displayName = 'TableRowAction';
 
-type TableRowLinkProps = React.ComponentPropsWithoutRef<"svg"> & {
+type TableRowLinkProps = React.ComponentPropsWithoutRef<'svg'> & {
   visuallyHidden?: boolean;
 };
 
 const TableRowLink = React.forwardRef<SVGSVGElement, TableRowLinkProps>(
   ({ children, className, visuallyHidden = false, ...props }, forwardedRef) => {
     const linkWrapperRef = React.useRef<HTMLDivElement>(null);
-    const tableRowContext = useTableRowContext("TableRow");
+    const tableRowContext = useTableRowContext('TableRow');
 
     const { child, hasValidChildren } = (() => {
       try {
@@ -553,7 +653,7 @@ const TableRowLink = React.forwardRef<SVGSVGElement, TableRowLinkProps>(
     React.useEffect(() => {
       if (!hasValidChildren) {
         // eslint-disable-next-line no-console
-        console.warn("TableRowLink must have exactly one child");
+        console.warn('TableRowLink must have exactly one child');
       }
     }, [hasValidChildren]);
 
@@ -561,9 +661,9 @@ const TableRowLink = React.forwardRef<SVGSVGElement, TableRowLinkProps>(
       if (linkWrapperRef.current) {
         // We have to querySelector the link rather than get it via the ref and set the
         // tabindex manually rather than use Slot because Next.js links don’t forward refs
-        const linkNode = linkWrapperRef.current.querySelector("a");
+        const linkNode = linkWrapperRef.current.querySelector('a');
         tableRowContext.setLinkNode(linkNode);
-        linkNode?.setAttribute("tabindex", "-1");
+        linkNode?.setAttribute('tabindex', '-1');
       }
     });
 
@@ -573,7 +673,7 @@ const TableRowLink = React.forwardRef<SVGSVGElement, TableRowLinkProps>(
           <ChevronRightIcon
             ref={forwardedRef}
             aria-hidden
-            className={classNames(className, "TableRowLink")}
+            className={classNames(className, 'TableRowLink')}
             height="16"
             width="16"
             {...props}
@@ -585,23 +685,31 @@ const TableRowLink = React.forwardRef<SVGSVGElement, TableRowLinkProps>(
   },
 );
 
-TableRowLink.displayName = "TableRowLink";
+TableRowLink.displayName = 'TableRowLink';
 
-type TableFooterProps = React.ComponentPropsWithoutRef<"div">;
+type TableFooterProps = React.ComponentPropsWithoutRef<'div'>;
 
 const TableFooter = React.forwardRef<HTMLDivElement, TableFooterProps>(
   ({ className, ...props }, forwardedRef) => (
-    <div ref={forwardedRef} className={classNames(className, "TableFooter")} {...props} />
+    <div
+      ref={forwardedRef}
+      className={classNames(className, 'TableFooter')}
+      {...props}
+    />
   ),
 );
 
-TableFooter.displayName = "TableFooter";
+TableFooter.displayName = 'TableFooter';
 
-type TableDetailProps = React.ComponentPropsWithoutRef<"div">;
+type TableDetailProps = React.ComponentPropsWithoutRef<'div'>;
 
 const TableDetail = React.forwardRef<HTMLDivElement, TableDetailProps>(
   ({ children, className, ...props }, forwardedRef) => (
-    <div ref={forwardedRef} className={classNames(className, "TableDetail")} {...props}>
+    <div
+      ref={forwardedRef}
+      className={classNames(className, 'TableDetail')}
+      {...props}
+    >
       <div className="TableDetailInner">
         <ScrollArea.Root>
           <ScrollArea.Viewport className="TableDetailViewport" tabIndex={0}>
@@ -615,7 +723,7 @@ const TableDetail = React.forwardRef<HTMLDivElement, TableDetailProps>(
   ),
 );
 
-TableDetail.displayName = "TableDetail";
+TableDetail.displayName = 'TableDetail';
 
 export const Root = TableRoot;
 export const Detail = TableDetail;

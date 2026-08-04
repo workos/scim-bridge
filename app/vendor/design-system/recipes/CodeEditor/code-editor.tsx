@@ -1,14 +1,17 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
-import classNames from "classnames";
-import * as React from "react";
-import { Box } from "../../components/box.js";
-import { Flex } from "../../components/flex.js";
-import { CodeEditorRoot, useCodeEditorContext } from "./code-editor-context.js";
-import { DiagnosticsToggle } from "./diagnostics.js";
+'use client';
+import classNames from 'classnames';
+import * as React from 'react';
+import { Box } from '../../components/box.js';
+import { Flex } from '../../components/flex.js';
+import { CodeEditorRoot, useCodeEditorContext } from './code-editor-context.js';
+import { DiagnosticsToggle } from './diagnostics.js';
 
-export const Content = ({ className, ...props }: React.ComponentPropsWithoutRef<typeof Box>) => {
+export const Content = ({
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<typeof Box>) => {
   const { container, setContainer, view } = useCodeEditorContext();
 
   React.useEffect(() => {
@@ -28,11 +31,11 @@ export const Content = ({ className, ...props }: React.ComponentPropsWithoutRef<
       view?.contentDOM.blur();
     };
 
-    window.addEventListener("pointerdown", handleClickOutside, {
+    window.addEventListener('pointerdown', handleClickOutside, {
       capture: true,
     });
     return () => {
-      window.removeEventListener("pointerdown", handleClickOutside, {
+      window.removeEventListener('pointerdown', handleClickOutside, {
         capture: true,
       });
     };
@@ -41,7 +44,7 @@ export const Content = ({ className, ...props }: React.ComponentPropsWithoutRef<
   return (
     <Box
       ref={setContainer}
-      className={classNames("CodeEditor", className)}
+      className={classNames('CodeEditor', className)}
       height="100%"
       minHeight="0"
       {...props}
@@ -49,9 +52,12 @@ export const Content = ({ className, ...props }: React.ComponentPropsWithoutRef<
   );
 };
 
-export const Header = ({ className, ...props }: React.ComponentPropsWithoutRef<typeof Flex>) => (
+export const Header = ({
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<typeof Flex>) => (
   <Flex
-    className={classNames("CodeEditorHeader", className)}
+    className={classNames('CodeEditorHeader', className)}
     display="inline-flex"
     justify="between"
     px="3"
@@ -60,9 +66,12 @@ export const Header = ({ className, ...props }: React.ComponentPropsWithoutRef<t
     {...props}
   />
 );
-export const Footer = ({ className, ...props }: React.ComponentPropsWithoutRef<typeof Flex>) => (
+export const Footer = ({
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<typeof Flex>) => (
   <Flex
-    className={classNames("CodeEditorFooter", className)}
+    className={classNames('CodeEditorFooter', className)}
     display="inline-flex"
     justify="between"
     px="3"
@@ -72,9 +81,12 @@ export const Footer = ({ className, ...props }: React.ComponentPropsWithoutRef<t
   />
 );
 
-export const Frame = ({ className, ...props }: React.ComponentPropsWithoutRef<typeof Flex>) => (
+export const Frame = ({
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<typeof Flex>) => (
   <Flex
-    className={classNames("CodeEditorFrame", className)}
+    className={classNames('CodeEditorFrame', className)}
     direction="column"
     height="100%"
     minHeight="0"

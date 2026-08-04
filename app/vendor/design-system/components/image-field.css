@@ -15,13 +15,13 @@
   user-select: none;
 }
 
-.ImageFieldRoot[data-state="normal"]:hover {
+.ImageFieldRoot[data-state='normal']:hover {
   cursor: var(--cursor-button);
   background-color: var(--gray-a2);
 }
 
-.ImageFieldRoot[data-state="disabled"],
-.ImageFieldRoot[data-state="read-only"] {
+.ImageFieldRoot[data-state='disabled'],
+.ImageFieldRoot[data-state='read-only'] {
   background-color: var(--gray-a2);
 }
 
@@ -29,8 +29,8 @@
   color: var(--gray-a11);
 }
 
-.ImageFieldRoot[data-state="disabled"] .ImageFieldPlaceholder,
-.ImageFieldRoot[data-state="read-only"] .ImageFieldPlaceholder {
+.ImageFieldRoot[data-state='disabled'] .ImageFieldPlaceholder,
+.ImageFieldRoot[data-state='read-only'] .ImageFieldPlaceholder {
   color: var(--gray-a9);
 }
 
@@ -93,10 +93,10 @@
   height: 100%;
 }
 
-.ImageFieldRoot[data-state="disabled"] .ImageFieldPreview,
-.ImageFieldRoot[data-state="disabled"] .ImageFieldPreviewInner,
-.ImageFieldRoot[data-state="read-only"] .ImageFieldPreview,
-.ImageFieldRoot[data-state="read-only"] .ImageFieldPreviewInner {
+.ImageFieldRoot[data-state='disabled'] .ImageFieldPreview,
+.ImageFieldRoot[data-state='disabled'] .ImageFieldPreviewInner,
+.ImageFieldRoot[data-state='read-only'] .ImageFieldPreview,
+.ImageFieldRoot[data-state='read-only'] .ImageFieldPreviewInner {
   opacity: 0.75;
 }
 
@@ -132,8 +132,8 @@
   opacity: 1;
 }
 
-.ImageFieldRoot[data-state="disabled"] .ImageFieldPreviewOverlay,
-.ImageFieldRoot[data-state="read-only"] .ImageFieldPreviewOverlay {
+.ImageFieldRoot[data-state='disabled'] .ImageFieldPreviewOverlay,
+.ImageFieldRoot[data-state='read-only'] .ImageFieldPreviewOverlay {
   display: none;
 }
 

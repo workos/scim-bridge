@@ -1,42 +1,41 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-import { Cross2Icon, MagnifyingGlassIcon } from "@radix-ui/react-icons";
-import { composeRefs, useControllableState } from "radix-ui/internal";
-import * as React from "react";
-import { Box, Flex, Heading, ScrollArea, Text } from "../index.js";
+import { Cross2Icon, MagnifyingGlassIcon } from '@radix-ui/react-icons';
+import { composeRefs, useControllableState } from 'radix-ui/internal';
+import * as React from 'react';
+import { Box, Flex, Heading, ScrollArea, Text } from '../index.js';
 
 const RADIUS_MAPPING = {
-  "1": "var(--radius-4)",
-  "2": "var(--radius-5)",
+  '1': 'var(--radius-4)',
+  '2': 'var(--radius-5)',
 } as const;
 
-type BoxProps = Omit<React.ComponentPropsWithoutRef<typeof Box>, "className">;
+type BoxProps = Omit<React.ComponentPropsWithoutRef<typeof Box>, 'className'>;
 
 type CardListRootProps = BoxProps & {
   children: React.ReactNode;
   radius?: keyof typeof RADIUS_MAPPING;
 };
 
-const CardListRoot = React.forwardRef<HTMLDivElement, CardListRootProps>(function CardListRoot(
-  { children, radius = "1", style, ...props },
-  ref,
-) {
-  const radiusValue = RADIUS_MAPPING[radius];
+const CardListRoot = React.forwardRef<HTMLDivElement, CardListRootProps>(
+  function CardListRoot({ children, radius = '1', style, ...props }, ref) {
+    const radiusValue = RADIUS_MAPPING[radius];
 
-  return (
-    <Box
-      ref={ref}
-      {...props}
-      className="CardListRoot"
-      style={{
-        ...style,
-        "--card-border-radius": radiusValue,
-      }}
-    >
-      {children}
-    </Box>
-  );
-});
+    return (
+      <Box
+        ref={ref}
+        {...props}
+        className="CardListRoot"
+        style={{
+          ...style,
+          '--card-border-radius': radiusValue,
+        }}
+      >
+        {children}
+      </Box>
+    );
+  },
+);
 
 interface CardListHeaderProps {
   children?: React.ReactNode;
@@ -47,7 +46,13 @@ interface CardListHeaderProps {
 const CardListHeader = React.forwardRef<HTMLDivElement, CardListHeaderProps>(
   function CardListHeader({ children, title, description }, ref) {
     return (
-      <Flex ref={ref} align="start" className="CardListHeader" direction="column" gap="4">
+      <Flex
+        ref={ref}
+        align="start"
+        className="CardListHeader"
+        direction="column"
+        gap="4"
+      >
         <Flex direction="column" gap="1">
           <Heading size="3">{title}</Heading>
           {description && (
@@ -65,37 +70,36 @@ const CardListHeader = React.forwardRef<HTMLDivElement, CardListHeaderProps>(
 
 type CardListBodyProps = BoxProps;
 
-const CardListBody = React.forwardRef<HTMLDivElement, CardListBodyProps>(function CardListBody(
-  { p, px, py, pt, pb, pl, pr, ...props },
-  ref,
-) {
-  return (
-    <ScrollArea.Root className="CardListScrollRoot">
-      <ScrollArea.Viewport>
-        <Text asChild size="2">
-          <Box
-            ref={ref}
-            className="CardListBody"
-            {...props}
-            p={p === "current" ? "var(--card-padding)" : p}
-          />
-        </Text>
-      </ScrollArea.Viewport>
+const CardListBody = React.forwardRef<HTMLDivElement, CardListBodyProps>(
+  function CardListBody({ p, px, py, pt, pb, pl, pr, ...props }, ref) {
+    return (
+      <ScrollArea.Root className="CardListScrollRoot">
+        <ScrollArea.Viewport>
+          <Text asChild size="2">
+            <Box
+              ref={ref}
+              className="CardListBody"
+              {...props}
+              p={p === 'current' ? 'var(--card-padding)' : p}
+            />
+          </Text>
+        </ScrollArea.Viewport>
 
-      <ScrollArea.Scrollbar orientation="horizontal" />
-      <ScrollArea.Scrollbar orientation="vertical" />
-    </ScrollArea.Root>
-  );
-});
+        <ScrollArea.Scrollbar orientation="horizontal" />
+        <ScrollArea.Scrollbar orientation="vertical" />
+      </ScrollArea.Root>
+    );
+  },
+);
 
 type CardListFooterProps = {
   children: React.ReactNode;
-  justify?: "start" | "center" | "end" | "between";
+  justify?: 'start' | 'center' | 'end' | 'between';
   style?: React.CSSProperties;
 };
 
 const CardListFooter = React.forwardRef<HTMLDivElement, CardListFooterProps>(
-  function CardListFooter({ children, justify = "start", style }, ref) {
+  function CardListFooter({ children, justify = 'start', style }, ref) {
     return (
       <Text asChild color="gray">
         <Flex
@@ -113,7 +117,7 @@ const CardListFooter = React.forwardRef<HTMLDivElement, CardListFooterProps>(
   },
 );
 
-interface CardListSearchProps extends React.ComponentPropsWithoutRef<"input"> {
+interface CardListSearchProps extends React.ComponentPropsWithoutRef<'input'> {
   children?: React.ReactNode;
   onValueChange?: (value: string) => void;
 }
@@ -125,9 +129,9 @@ const CardListSearch = React.forwardRef<HTMLInputElement, CardListSearchProps>(
   ) {
     const inputRef = React.useRef<HTMLInputElement>(null);
 
-    const [value = "", setValue] = useControllableState({
+    const [value = '', setValue] = useControllableState({
       prop: valueProp !== undefined ? String(valueProp) : undefined,
-      defaultProp: defaultValue !== undefined ? String(defaultValue) : "",
+      defaultProp: defaultValue !== undefined ? String(defaultValue) : '',
       onChange: onValueChange,
     });
 
@@ -148,10 +152,10 @@ const CardListSearch = React.forwardRef<HTMLInputElement, CardListSearchProps>(
       // handleChange which calls setValue('') exactly once.
       const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
         window.HTMLInputElement.prototype,
-        "value",
+        'value',
       )?.set;
-      nativeInputValueSetter?.call(input, "");
-      input.dispatchEvent(new Event("input", { bubbles: true }));
+      nativeInputValueSetter?.call(input, '');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
 
       input.focus();
     };

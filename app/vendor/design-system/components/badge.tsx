@@ -1,45 +1,49 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-import { Badge as ThemesBadge } from "@radix-ui/themes/dist/esm/components/badge.js";
-import * as React from "react";
-import type { MarginProps } from "../props.js";
+import * as React from 'react';
+import type { MarginProps } from '../props.js';
+import { Badge as ThemesBadge } from '../radix-themes/components/badge.js';
 
 type ThemesBadgeProps = React.ComponentPropsWithoutRef<typeof ThemesBadge>;
 
 interface BadgeCommonProps {
-  size?: ThemesBadgeProps["size"];
+  size?: ThemesBadgeProps['size'];
 }
 
 interface BadgeLowContrastProps {
-  color?: "gray";
+  color?: 'white';
   lowContrast: true;
 }
 
 interface BadgeColoredProps {
-  color?: "gray" | "purple" | "blue" | "green" | "yellow" | "red";
+  color?: 'white' | 'gray' | 'purple' | 'blue' | 'green' | 'yellow' | 'red';
   lowContrast?: false;
 }
 
-type BadgeOwnProps = BadgeCommonProps & (BadgeLowContrastProps | BadgeColoredProps);
+type BadgeOwnProps = BadgeCommonProps &
+  (BadgeLowContrastProps | BadgeColoredProps);
 
-type BadgeProps = Omit<ThemesBadgeProps, "color" | "highContrast" | "radius" | "variant"> &
+type BadgeProps = Omit<
+  ThemesBadgeProps,
+  'color' | 'highContrast' | 'radius' | 'variant'
+> &
   BadgeOwnProps &
   MarginProps;
 
 const Badge = React.forwardRef<HTMLSpanElement, BadgeProps>(
-  ({ color = "gray", lowContrast = false, ...props }, forwardedRef) => (
+  ({ color = 'white', lowContrast = false, ...props }, forwardedRef) => (
     <ThemesBadge
       ref={forwardedRef}
-      color={color}
+      color={color === 'white' ? 'gray' : color}
       data-low-contrast={lowContrast || undefined}
       radius="full"
-      variant={color === "gray" ? "surface" : "soft"}
+      variant={color === 'white' ? 'surface' : 'soft'}
       {...props}
     />
   ),
 );
 
-Badge.displayName = "Badge";
+Badge.displayName = 'Badge';
 
 export { Badge };
 export type { BadgeProps };

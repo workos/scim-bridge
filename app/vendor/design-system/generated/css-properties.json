@@ -124,9 +124,30 @@
     "text-before-edge",
     "unset"
   ],
-  "all": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "anchor-name": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
-  "anchor-scope": ["all", "inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "all": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "anchor-name": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "anchor-scope": [
+    "all",
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "animation": [
     "alternate",
     "alternate-reverse",
@@ -168,7 +189,13 @@
     "revert-layer",
     "unset"
   ],
-  "animation-delay": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "animation-delay": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "animation-direction": [
     "alternate",
     "alternate-reverse",
@@ -180,7 +207,14 @@
     "revert-layer",
     "unset"
   ],
-  "animation-duration": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "animation-duration": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "animation-fill-mode": [
     "backwards",
     "both",
@@ -200,7 +234,14 @@
     "revert-layer",
     "unset"
   ],
-  "animation-name": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "animation-name": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "animation-play-state": [
     "inherit",
     "initial",
@@ -210,7 +251,13 @@
     "running",
     "unset"
   ],
-  "animation-range": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "animation-range": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "animation-range-end": [
     "contain",
     "cover",
@@ -302,7 +349,14 @@
     "textfield",
     "unset"
   ],
-  "aspect-ratio": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "aspect-ratio": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "backdrop-filter": [
     "blur()",
     "brightness()",
@@ -540,7 +594,13 @@
     "revert-layer",
     "unset"
   ],
-  "block-size": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "block-size": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "border": [
     "color()",
     "color-mix()",
@@ -574,18 +634,90 @@
     "transparent",
     "unset"
   ],
-  "border-block": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-block-color": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-block-end": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-block-end-color": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-block-end-style": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-block-end-width": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-block-start": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-block-start-color": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-block-start-style": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-block-start-width": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-block-style": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-block-width": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "border-block": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-block-color": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-block-end": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-block-end-color": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-block-end-style": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-block-end-width": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-block-start": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-block-start-color": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-block-start-style": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-block-start-width": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-block-style": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-block-width": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "border-bottom": [
     "color()",
     "color-mix()",
@@ -619,9 +751,27 @@
     "transparent",
     "unset"
   ],
-  "border-bottom-color": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-bottom-left-radius": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-bottom-right-radius": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "border-bottom-color": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-bottom-left-radius": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-bottom-right-radius": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "border-bottom-style": [
     "dashed",
     "dotted",
@@ -678,10 +828,34 @@
     "transparent",
     "unset"
   ],
-  "border-end-end-radius": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-end-start-radius": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-image": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-image-outset": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "border-end-end-radius": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-end-start-radius": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-image": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-image-outset": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "border-image-repeat": [
     "inherit",
     "initial",
@@ -693,7 +867,14 @@
     "stretch",
     "unset"
   ],
-  "border-image-slice": ["fill", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "border-image-slice": [
+    "fill",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "border-image-source": [
     "conic-gradient()",
     "cross-fade()",
@@ -713,19 +894,98 @@
     "revert-layer",
     "unset"
   ],
-  "border-image-width": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-inline": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-inline-color": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-inline-end": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-inline-end-color": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-inline-end-style": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-inline-end-width": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-inline-start": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-inline-start-color": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-inline-start-style": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-inline-start-width": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-inline-style": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-inline-width": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "border-image-width": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-inline": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-inline-color": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-inline-end": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-inline-end-color": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-inline-end-style": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-inline-end-width": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-inline-start": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-inline-start-color": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-inline-start-style": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-inline-start-width": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-inline-style": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-inline-width": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "border-left": [
     "color()",
     "color-mix()",
@@ -806,7 +1066,13 @@
     "thin",
     "unset"
   ],
-  "border-radius": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "border-radius": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "border-right": [
     "color()",
     "color-mix()",
@@ -887,9 +1153,49 @@
     "thin",
     "unset"
   ],
-  "border-spacing": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-start-end-radius": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-start-start-radius": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "border-shape": [
+    "border-box",
+    "circle()",
+    "content-box",
+    "ellipse()",
+    "fill-box",
+    "inherit",
+    "initial",
+    "inset()",
+    "margin-box",
+    "none",
+    "padding-box",
+    "path()",
+    "polygon()",
+    "rect()",
+    "revert",
+    "revert-layer",
+    "stroke-box",
+    "unset",
+    "view-box",
+    "xywh()"
+  ],
+  "border-spacing": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-start-end-radius": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-start-start-radius": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "border-style": [
     "dashed",
     "dotted",
@@ -960,8 +1266,20 @@
     "transparent",
     "unset"
   ],
-  "border-top-left-radius": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "border-top-right-radius": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "border-top-left-radius": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "border-top-right-radius": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "border-top-style": [
     "dashed",
     "dotted",
@@ -1030,11 +1348,45 @@
     "slice",
     "unset"
   ],
-  "box-direction": ["inherit", "initial", "normal", "reverse", "revert", "revert-layer", "unset"],
-  "box-flex": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "box-flex-group": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "box-lines": ["inherit", "initial", "multiple", "revert", "revert-layer", "single", "unset"],
-  "box-ordinal-group": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "box-direction": [
+    "inherit",
+    "initial",
+    "normal",
+    "reverse",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "box-flex": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "box-flex-group": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "box-lines": [
+    "inherit",
+    "initial",
+    "multiple",
+    "revert",
+    "revert-layer",
+    "single",
+    "unset"
+  ],
+  "box-ordinal-group": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "box-orient": [
     "block-axis",
     "horizontal",
@@ -1142,9 +1494,31 @@
     "revert-layer",
     "unset"
   ],
-  "caption-side": ["bottom", "inherit", "initial", "revert", "revert-layer", "top", "unset"],
-  "caret": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "caret-animation": ["auto", "inherit", "initial", "manual", "revert", "revert-layer", "unset"],
+  "caption-side": [
+    "bottom",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "top",
+    "unset"
+  ],
+  "caret": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "caret-animation": [
+    "auto",
+    "inherit",
+    "initial",
+    "manual",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "caret-color": [
     "auto",
     "color()",
@@ -1190,7 +1564,15 @@
     "right",
     "unset"
   ],
-  "clip": ["auto", "inherit", "initial", "rect", "revert", "revert-layer", "unset"],
+  "clip": [
+    "auto",
+    "inherit",
+    "initial",
+    "rect",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "clip-path": [
     "border-box",
     "circle()",
@@ -1213,7 +1595,15 @@
     "view-box",
     "xywh()"
   ],
-  "clip-rule": ["evenodd", "inherit", "initial", "nonzero", "revert", "revert-layer", "unset"],
+  "clip-rule": [
+    "evenodd",
+    "inherit",
+    "initial",
+    "nonzero",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "color": [
     "color()",
     "color-mix()",
@@ -1234,7 +1624,14 @@
     "transparent",
     "unset"
   ],
-  "color-interpolation-filters": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "color-interpolation-filters": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "color-scheme": [
     "dark",
     "inherit",
@@ -1246,11 +1643,46 @@
     "revert-layer",
     "unset"
   ],
-  "column-count": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "column-fill": ["auto", "balance", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "column-gap": ["inherit", "initial", "normal", "revert", "revert-layer", "unset"],
-  "column-height": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "column-rule": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "column-count": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "column-fill": [
+    "auto",
+    "balance",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "column-gap": [
+    "inherit",
+    "initial",
+    "normal",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "column-height": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "column-rule": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "column-rule-color": [
     "color()",
     "color-mix()",
@@ -1298,8 +1730,23 @@
     "thin",
     "unset"
   ],
-  "column-span": ["all", "inherit", "initial", "none", "revert", "revert-layer", "unset"],
-  "column-width": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "column-span": [
+    "all",
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "column-width": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "column-wrap": [
     "auto",
     "inherit",
@@ -1310,7 +1757,13 @@
     "unset",
     "wrap"
   ],
-  "columns": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "columns": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "contain": [
     "content",
     "inherit",
@@ -1369,8 +1822,21 @@
     "revert-layer",
     "unset"
   ],
-  "container": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "container-name": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "container": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "container-name": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "container-type": [
     "inherit",
     "initial",
@@ -1656,9 +2122,31 @@
     "superellipse()",
     "unset"
   ],
-  "counter-increment": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
-  "counter-reset": ["inherit", "initial", "none", "reversed", "revert", "revert-layer", "unset"],
-  "counter-set": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "counter-increment": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "counter-reset": [
+    "inherit",
+    "initial",
+    "none",
+    "reversed",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "counter-set": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "cursor": [
     "alias",
     "all-scroll",
@@ -1702,10 +2190,38 @@
     "zoom-in",
     "zoom-out"
   ],
-  "cx": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "cy": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "d": ["inherit", "initial", "none", "path", "revert", "revert-layer", "unset"],
-  "direction": ["inherit", "initial", "ltr", "revert", "revert-layer", "rtl", "unset"],
+  "cx": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "cy": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "d": [
+    "inherit",
+    "initial",
+    "none",
+    "path",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "direction": [
+    "inherit",
+    "initial",
+    "ltr",
+    "revert",
+    "revert-layer",
+    "rtl",
+    "unset"
+  ],
   "display": [
     "block",
     "contents",
@@ -1769,8 +2285,24 @@
     "standard",
     "unset"
   ],
-  "empty-cells": ["hide", "inherit", "initial", "revert", "revert-layer", "show", "unset"],
-  "field-sizing": ["content", "fixed", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "empty-cells": [
+    "hide",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "show",
+    "unset"
+  ],
+  "field-sizing": [
+    "content",
+    "fixed",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "fill": [
     "color()",
     "color-mix()",
@@ -1794,8 +2326,22 @@
     "transparent",
     "unset"
   ],
-  "fill-opacity": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "fill-rule": ["evenodd", "inherit", "initial", "nonzero", "revert", "revert-layer", "unset"],
+  "fill-opacity": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "fill-rule": [
+    "evenodd",
+    "inherit",
+    "initial",
+    "nonzero",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "filter": [
     "blur()",
     "brightness()",
@@ -1814,8 +2360,22 @@
     "sepia()",
     "unset"
   ],
-  "flex": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
-  "flex-basis": ["content", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "flex": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "flex-basis": [
+    "content",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "flex-direction": [
     "column",
     "column-reverse",
@@ -1827,9 +2387,27 @@
     "row-reverse",
     "unset"
   ],
-  "flex-flow": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "flex-grow": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "flex-shrink": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "flex-flow": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "flex-grow": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "flex-shrink": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "flex-wrap": [
     "inherit",
     "initial",
@@ -1872,7 +2450,13 @@
     "transparent",
     "unset"
   ],
-  "flood-opacity": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "flood-opacity": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "font": [
     "caption",
     "condensed",
@@ -1936,8 +2520,23 @@
     "revert-layer",
     "unset"
   ],
-  "font-language-override": ["inherit", "initial", "normal", "revert", "revert-layer", "unset"],
-  "font-optical-sizing": ["auto", "inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "font-language-override": [
+    "inherit",
+    "initial",
+    "normal",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "font-optical-sizing": [
+    "auto",
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "font-palette": [
     "dark",
     "inherit",
@@ -2054,7 +2653,15 @@
     "revert-layer",
     "unset"
   ],
-  "font-synthesis-style": ["auto", "inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "font-synthesis-style": [
+    "auto",
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "font-synthesis-weight": [
     "auto",
     "inherit",
@@ -2203,7 +2810,14 @@
     "super",
     "unset"
   ],
-  "font-variation-settings": ["inherit", "initial", "normal", "revert", "revert-layer", "unset"],
+  "font-variation-settings": [
+    "inherit",
+    "initial",
+    "normal",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "font-weight": [
     "bold",
     "bolder",
@@ -2241,9 +2855,29 @@
     "revert-layer",
     "unset"
   ],
-  "gap": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "grid": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "grid-area": ["auto", "inherit", "initial", "revert", "revert-layer", "span", "unset"],
+  "gap": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "grid": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "grid-area": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "span",
+    "unset"
+  ],
   "grid-auto-columns": [
     "auto",
     "fit-content",
@@ -2278,15 +2912,81 @@
     "revert-layer",
     "unset"
   ],
-  "grid-column": ["auto", "inherit", "initial", "revert", "revert-layer", "span", "unset"],
-  "grid-column-end": ["auto", "inherit", "initial", "revert", "revert-layer", "span", "unset"],
-  "grid-column-gap": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "grid-column-start": ["auto", "inherit", "initial", "revert", "revert-layer", "span", "unset"],
-  "grid-gap": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "grid-row": ["auto", "inherit", "initial", "revert", "revert-layer", "span", "unset"],
-  "grid-row-end": ["auto", "inherit", "initial", "revert", "revert-layer", "span", "unset"],
-  "grid-row-gap": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "grid-row-start": ["auto", "inherit", "initial", "revert", "revert-layer", "span", "unset"],
+  "grid-column": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "span",
+    "unset"
+  ],
+  "grid-column-end": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "span",
+    "unset"
+  ],
+  "grid-column-gap": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "grid-column-start": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "span",
+    "unset"
+  ],
+  "grid-gap": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "grid-row": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "span",
+    "unset"
+  ],
+  "grid-row-end": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "span",
+    "unset"
+  ],
+  "grid-row-gap": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "grid-row-start": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "span",
+    "unset"
+  ],
   "grid-template": [
     "auto",
     "fit-content",
@@ -2300,7 +3000,14 @@
     "revert-layer",
     "unset"
   ],
-  "grid-template-areas": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "grid-template-areas": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "grid-template-columns": [
     "auto",
     "auto-fill",
@@ -2360,9 +3067,32 @@
     "revert-layer",
     "unset"
   ],
-  "hyphenate-character": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "hyphenate-limit-chars": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "hyphens": ["auto", "inherit", "initial", "manual", "none", "revert", "revert-layer", "unset"],
+  "hyphenate-character": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "hyphenate-limit-chars": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "hyphens": [
+    "auto",
+    "inherit",
+    "initial",
+    "manual",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "image-orientation": [
     "flip",
     "from-image",
@@ -2404,7 +3134,14 @@
     "revert-layer",
     "unset"
   ],
-  "initial-letter": ["inherit", "initial", "normal", "revert", "revert-layer", "unset"],
+  "initial-letter": [
+    "inherit",
+    "initial",
+    "normal",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "initial-letter-align": [
     "alphabetic",
     "auto",
@@ -2416,14 +3153,62 @@
     "revert-layer",
     "unset"
   ],
-  "inline-size": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "inset": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "inset-block": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "inset-block-end": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "inset-block-start": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "inset-inline": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "inset-inline-end": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "inset-inline-start": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "inline-size": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "inset": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "inset-block": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "inset-block-end": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "inset-block-start": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "inset-inline": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "inset-inline-end": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "inset-inline-start": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "interpolate-size": [
     "allow-keywords",
     "inherit",
@@ -2433,11 +3218,47 @@
     "revert-layer",
     "unset"
   ],
-  "isolation": ["auto", "inherit", "initial", "isolate", "revert", "revert-layer", "unset"],
-  "interactivity": ["auto", "inert", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "interest-delay": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "interest-delay-end": ["inherit", "initial", "normal", "revert", "revert-layer", "unset"],
-  "interest-delay-start": ["inherit", "initial", "normal", "revert", "revert-layer", "unset"],
+  "isolation": [
+    "auto",
+    "inherit",
+    "initial",
+    "isolate",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "interactivity": [
+    "auto",
+    "inert",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "interest-delay": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "interest-delay-end": [
+    "inherit",
+    "initial",
+    "normal",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "interest-delay-start": [
+    "inherit",
+    "initial",
+    "normal",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "justify-content": [
     "center",
     "end",
@@ -2540,7 +3361,14 @@
     "revert-layer",
     "unset"
   ],
-  "letter-spacing": ["inherit", "initial", "normal", "revert", "revert-layer", "unset"],
+  "letter-spacing": [
+    "inherit",
+    "initial",
+    "normal",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "lighting-color": [
     "color()",
     "color-mix()",
@@ -2573,10 +3401,36 @@
     "strict",
     "unset"
   ],
-  "line-clamp": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
-  "line-height": ["inherit", "initial", "normal", "revert", "revert-layer", "unset"],
-  "line-height-step": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "list-style": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "line-clamp": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "line-height": [
+    "inherit",
+    "initial",
+    "normal",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "line-height-step": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "list-style": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "list-style-image": [
     "conic-gradient()",
     "cross-fade()",
@@ -2605,11 +3459,43 @@
     "revert-layer",
     "unset"
   ],
-  "list-style-type": ["inherit", "initial", "none", "revert", "revert-layer", "symbols", "unset"],
-  "margin": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "margin-block": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "margin-block-end": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "margin-block-start": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "list-style-type": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "symbols",
+    "unset"
+  ],
+  "margin": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "margin-block": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "margin-block-end": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "margin-block-start": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "margin-bottom": [
     "anchor-size()",
     "auto",
@@ -2619,10 +3505,36 @@
     "revert-layer",
     "unset"
   ],
-  "margin-inline": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "margin-inline-end": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "margin-inline-start": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "margin-left": ["anchor-size()", "auto", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "margin-inline": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "margin-inline-end": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "margin-inline-start": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "margin-left": [
+    "anchor-size()",
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "margin-right": [
     "anchor-size()",
     "auto",
@@ -2632,7 +3544,15 @@
     "revert-layer",
     "unset"
   ],
-  "margin-top": ["anchor-size()", "auto", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "margin-top": [
+    "anchor-size()",
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "margin-trim": [
     "all",
     "in-flow",
@@ -2643,10 +3563,38 @@
     "revert-layer",
     "unset"
   ],
-  "marker": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
-  "marker-end": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
-  "marker-mid": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
-  "marker-start": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "marker": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "marker-end": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "marker-mid": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "marker-start": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "mask": [
     "add",
     "alpha",
@@ -2695,7 +3643,13 @@
     "unset",
     "view-box"
   ],
-  "mask-border": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "mask-border": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "mask-border-mode": [
     "alpha",
     "inherit",
@@ -2705,7 +3659,13 @@
     "revert-layer",
     "unset"
   ],
-  "mask-border-outset": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "mask-border-outset": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "mask-border-repeat": [
     "inherit",
     "initial",
@@ -2717,7 +3677,14 @@
     "stretch",
     "unset"
   ],
-  "mask-border-slice": ["fill", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "mask-border-slice": [
+    "fill",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "mask-border-source": [
     "conic-gradient()",
     "cross-fade()",
@@ -2737,7 +3704,14 @@
     "revert-layer",
     "unset"
   ],
-  "mask-border-width": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "mask-border-width": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "mask-clip": [
     "border-box",
     "content-box",
@@ -2840,7 +3814,15 @@
     "revert-layer",
     "unset"
   ],
-  "mask-type": ["alpha", "inherit", "initial", "luminance", "revert", "revert-layer", "unset"],
+  "mask-type": [
+    "alpha",
+    "inherit",
+    "initial",
+    "luminance",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "masonry-auto-flow": [
     "definite-first",
     "inherit",
@@ -2852,10 +3834,40 @@
     "revert-layer",
     "unset"
   ],
-  "math-depth": ["add", "auto-add", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "math-shift": ["compact", "inherit", "initial", "normal", "revert", "revert-layer", "unset"],
-  "math-style": ["compact", "inherit", "initial", "normal", "revert", "revert-layer", "unset"],
-  "max-block-size": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "math-depth": [
+    "add",
+    "auto-add",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "math-shift": [
+    "compact",
+    "inherit",
+    "initial",
+    "normal",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "math-style": [
+    "compact",
+    "inherit",
+    "initial",
+    "normal",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "max-block-size": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "max-height": [
     "anchor-size()",
     "calc-size()",
@@ -2869,8 +3881,21 @@
     "revert-layer",
     "unset"
   ],
-  "max-inline-size": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "max-lines": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "max-inline-size": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "max-lines": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "max-width": [
     "anchor-size()",
     "calc-size()",
@@ -2884,7 +3909,13 @@
     "revert-layer",
     "unset"
   ],
-  "min-block-size": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "min-block-size": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "min-height": [
     "anchor-size()",
     "auto",
@@ -2898,7 +3929,13 @@
     "revert-layer",
     "unset"
   ],
-  "min-inline-size": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "min-inline-size": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "min-width": [
     "anchor-size()",
     "auto",
@@ -2970,7 +4007,13 @@
     "unset",
     "xywh()"
   ],
-  "offset": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "offset": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "offset-anchor": [
     "auto",
     "bottom",
@@ -2984,7 +4027,13 @@
     "top",
     "unset"
   ],
-  "offset-distance": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "offset-distance": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "offset-path": [
     "border-box",
     "circle()",
@@ -3021,11 +4070,43 @@
     "top",
     "unset"
   ],
-  "offset-rotate": ["auto", "inherit", "initial", "reverse", "revert", "revert-layer", "unset"],
-  "opacity": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "order": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "orphans": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "outline": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "offset-rotate": [
+    "auto",
+    "inherit",
+    "initial",
+    "reverse",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "opacity": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "order": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "orphans": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "outline": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "outline-color": [
     "auto",
     "color()",
@@ -3047,7 +4128,13 @@
     "transparent",
     "unset"
   ],
-  "outline-offset": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "outline-offset": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "outline-style": [
     "auto",
     "dashed",
@@ -3087,7 +4174,15 @@
     "unset",
     "visible"
   ],
-  "overflow-anchor": ["auto", "inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "overflow-anchor": [
+    "auto",
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "overflow-block": [
     "auto",
     "clip",
@@ -3165,7 +4260,15 @@
     "unset",
     "visible"
   ],
-  "overlay": ["auto", "inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "overlay": [
+    "auto",
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "overscroll-behavior": [
     "auto",
     "contain",
@@ -3216,18 +4319,91 @@
     "revert-layer",
     "unset"
   ],
-  "padding": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "padding-block": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "padding-block-end": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "padding-block-start": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "padding-bottom": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "padding-inline": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "padding-inline-end": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "padding-inline-start": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "padding-left": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "padding-right": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "padding-top": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "page": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "padding": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "padding-block": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "padding-block-end": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "padding-block-start": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "padding-bottom": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "padding-inline": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "padding-inline-end": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "padding-inline-start": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "padding-left": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "padding-right": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "padding-top": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "page": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "page-break-after": [
     "always",
     "auto",
@@ -3256,7 +4432,15 @@
     "unset",
     "verso"
   ],
-  "page-break-inside": ["auto", "avoid", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "page-break-inside": [
+    "auto",
+    "avoid",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "paint-order": [
     "fill",
     "inherit",
@@ -3268,7 +4452,14 @@
     "stroke",
     "unset"
   ],
-  "perspective": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "perspective": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "perspective-origin": [
     "bottom",
     "center",
@@ -3281,9 +4472,27 @@
     "top",
     "unset"
   ],
-  "place-content": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "place-items": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "place-self": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "place-content": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "place-items": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "place-self": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "pointer-events": [
     "all",
     "auto",
@@ -3379,7 +4588,13 @@
     "y-self-start",
     "y-start"
   ],
-  "position-try": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "position-try": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "position-try-fallbacks": [
     "flip-block",
     "flip-inline",
@@ -3423,8 +4638,22 @@
     "revert-layer",
     "unset"
   ],
-  "quotes": ["auto", "inherit", "initial", "none", "revert", "revert-layer", "unset"],
-  "r": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "quotes": [
+    "auto",
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "r": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "reading-flow": [
     "flex-flow",
     "flex-visual",
@@ -3439,7 +4668,13 @@
     "source-order",
     "unset"
   ],
-  "reading-order": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "reading-order": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "resize": [
     "block",
     "both",
@@ -3463,8 +4698,25 @@
     "revert-layer",
     "unset"
   ],
-  "rotate": ["inherit", "initial", "none", "revert", "revert-layer", "unset", "x", "y", "z"],
-  "row-gap": ["inherit", "initial", "normal", "revert", "revert-layer", "unset"],
+  "rotate": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset",
+    "x",
+    "y",
+    "z"
+  ],
+  "row-gap": [
+    "inherit",
+    "initial",
+    "normal",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "ruby-align": [
     "center",
     "inherit",
@@ -3486,7 +4738,15 @@
     "separate",
     "unset"
   ],
-  "ruby-overhang": ["auto", "inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "ruby-overhang": [
+    "auto",
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "ruby-position": [
     "alternate",
     "inherit",
@@ -3498,10 +4758,39 @@
     "under",
     "unset"
   ],
-  "rx": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "ry": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "scale": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
-  "scroll-behavior": ["auto", "inherit", "initial", "revert", "revert-layer", "smooth", "unset"],
+  "rx": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "ry": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scale": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-behavior": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "smooth",
+    "unset"
+  ],
   "scroll-initial-target": [
     "inherit",
     "initial",
@@ -3511,17 +4800,83 @@
     "revert-layer",
     "unset"
   ],
-  "scroll-margin": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-margin-block": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-margin-block-end": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-margin-block-start": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-margin-bottom": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-margin-inline": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-margin-inline-end": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-margin-inline-start": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-margin-left": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-margin-right": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-margin-top": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "scroll-margin": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-margin-block": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-margin-block-end": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-margin-block-start": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-margin-bottom": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-margin-inline": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-margin-inline-end": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-margin-inline-start": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-margin-left": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-margin-right": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-margin-top": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "scroll-marker-group": [
     "after",
     "before",
@@ -3532,17 +4887,94 @@
     "revert-layer",
     "unset"
   ],
-  "scroll-padding": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-padding-block": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-padding-block-end": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-padding-block-start": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-padding-bottom": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-padding-inline": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-padding-inline-end": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-padding-inline-start": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-padding-left": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-padding-right": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "scroll-padding-top": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "scroll-padding": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-padding-block": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-padding-block-end": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-padding-block-start": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-padding-bottom": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-padding-inline": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-padding-inline-end": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-padding-inline-start": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-padding-left": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-padding-right": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-padding-top": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "scroll-snap-align": [
     "center",
     "end",
@@ -3597,7 +5029,15 @@
     "revert-layer",
     "unset"
   ],
-  "scroll-snap-stop": ["always", "inherit", "initial", "normal", "revert", "revert-layer", "unset"],
+  "scroll-snap-stop": [
+    "always",
+    "inherit",
+    "initial",
+    "normal",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "scroll-snap-type": [
     "block",
     "both",
@@ -3633,8 +5073,22 @@
     "revert-layer",
     "unset"
   ],
-  "scroll-target-group": ["auto", "inherit", "initial", "none", "revert", "revert-layer", "unset"],
-  "scroll-timeline": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "scroll-target-group": [
+    "auto",
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "scroll-timeline": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "scroll-timeline-axis": [
     "block",
     "inherit",
@@ -3646,7 +5100,14 @@
     "x",
     "y"
   ],
-  "scroll-timeline-name": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "scroll-timeline-name": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "scrollbar-color": [
     "auto",
     "color()",
@@ -3688,8 +5149,20 @@
     "thin",
     "unset"
   ],
-  "shape-image-threshold": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "shape-margin": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "shape-image-threshold": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "shape-margin": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "shape-outside": [
     "border-box",
     "circle()",
@@ -3720,7 +5193,14 @@
     "unset",
     "xywh()"
   ],
-  "shape-rendering": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "shape-rendering": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "speak-as": [
     "digits",
     "inherit",
@@ -3733,8 +5213,20 @@
     "spell-out",
     "unset"
   ],
-  "stop-color": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "stop-opacity": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "stop-color": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "stop-opacity": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "stroke": [
     "color()",
     "color-mix()",
@@ -3778,8 +5270,21 @@
     "transparent",
     "unset"
   ],
-  "stroke-dasharray": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
-  "stroke-dashoffset": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "stroke-dasharray": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "stroke-dashoffset": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "stroke-linecap": [
     "butt",
     "inherit",
@@ -3802,11 +5307,43 @@
     "round",
     "unset"
   ],
-  "stroke-miterlimit": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "stroke-opacity": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "stroke-width": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "tab-size": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "table-layout": ["auto", "fixed", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "stroke-miterlimit": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "stroke-opacity": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "stroke-width": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "tab-size": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "table-layout": [
+    "auto",
+    "fixed",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "text-align": [
     "center",
     "end",
@@ -3845,8 +5382,23 @@
     "start",
     "unset"
   ],
-  "text-autospace": ["auto", "inherit", "initial", "normal", "revert", "revert-layer", "unset"],
-  "text-box": ["inherit", "initial", "normal", "revert", "revert-layer", "unset"],
+  "text-autospace": [
+    "auto",
+    "inherit",
+    "initial",
+    "normal",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "text-box": [
+    "inherit",
+    "initial",
+    "normal",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "text-box-edge": [
     "alphabetic",
     "auto",
@@ -3882,7 +5434,13 @@
     "revert-layer",
     "unset"
   ],
-  "text-decoration": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "text-decoration": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "text-decoration-color": [
     "color()",
     "color-mix()",
@@ -3903,7 +5461,14 @@
     "transparent",
     "unset"
   ],
-  "text-decoration-inset": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "text-decoration-inset": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "text-decoration-line": [
     "blink",
     "grammar-error",
@@ -3963,7 +5528,13 @@
     "revert-layer",
     "unset"
   ],
-  "text-emphasis": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "text-emphasis": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "text-emphasis-color": [
     "color()",
     "color-mix()",
@@ -4011,7 +5582,15 @@
     "triangle",
     "unset"
   ],
-  "text-indent": ["each-line", "hanging", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "text-indent": [
+    "each-line",
+    "hanging",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "text-justify": [
     "auto",
     "inherit",
@@ -4033,8 +5612,23 @@
     "unset",
     "upright"
   ],
-  "text-overflow": ["clip", "ellipsis", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "text-rendering": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "text-overflow": [
+    "clip",
+    "ellipsis",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "text-rendering": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "text-shadow": [
     "color()",
     "color-mix()",
@@ -4056,7 +5650,15 @@
     "transparent",
     "unset"
   ],
-  "text-size-adjust": ["auto", "inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "text-size-adjust": [
+    "auto",
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "text-spacing-trim": [
     "inherit",
     "initial",
@@ -4082,7 +5684,14 @@
     "unset",
     "uppercase"
   ],
-  "text-underline-offset": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
+  "text-underline-offset": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "text-underline-position": [
     "auto",
     "from-font",
@@ -4095,8 +5704,22 @@
     "under",
     "unset"
   ],
-  "text-wrap": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "text-wrap-mode": ["inherit", "initial", "nowrap", "revert", "revert-layer", "unset", "wrap"],
+  "text-wrap": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "text-wrap-mode": [
+    "inherit",
+    "initial",
+    "nowrap",
+    "revert",
+    "revert-layer",
+    "unset",
+    "wrap"
+  ],
   "text-wrap-style": [
     "auto",
     "balance",
@@ -4108,9 +5731,29 @@
     "stable",
     "unset"
   ],
-  "timeline-scope": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
-  "timeline-trigger": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
-  "timeline-trigger-activation-range": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "timeline-scope": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "timeline-trigger": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "timeline-trigger-activation-range": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "timeline-trigger-activation-range-end": [
     "contain",
     "cover",
@@ -4139,7 +5782,13 @@
     "revert-layer",
     "unset"
   ],
-  "timeline-trigger-active-range": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "timeline-trigger-active-range": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "timeline-trigger-active-range-end": [
     "auto",
     "contain",
@@ -4170,7 +5819,14 @@
     "revert-layer",
     "unset"
   ],
-  "timeline-trigger-name": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "timeline-trigger-name": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "timeline-trigger-source": [
     "auto",
     "inherit",
@@ -4262,7 +5918,15 @@
     "top",
     "unset"
   ],
-  "transform-style": ["flat", "inherit", "initial", "preserve-", "revert", "revert-layer", "unset"],
+  "transform-style": [
+    "flat",
+    "inherit",
+    "initial",
+    "preserve-",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "transition": [
     "all",
     "allow-discrete",
@@ -4293,9 +5957,29 @@
     "revert-layer",
     "unset"
   ],
-  "transition-delay": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "transition-duration": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "transition-property": ["all", "inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "transition-delay": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "transition-duration": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "transition-property": [
+    "all",
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "transition-timing-function": [
     "cubic-bezier()",
     "ease",
@@ -4313,8 +5997,23 @@
     "steps()",
     "unset"
   ],
-  "translate": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
-  "trigger-scope": ["all", "inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "translate": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "trigger-scope": [
+    "all",
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "unicode-bidi": [
     "bidi-override",
     "embed",
@@ -4366,7 +6065,13 @@
     "top",
     "unset"
   ],
-  "view-timeline": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "view-timeline": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "view-timeline-axis": [
     "block",
     "inherit",
@@ -4378,13 +6083,43 @@
     "x",
     "y"
   ],
-  "view-timeline-inset": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "view-timeline-name": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
-  "view-transition-class": ["inherit", "initial", "none", "revert", "revert-layer", "unset"],
+  "view-timeline-inset": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "view-timeline-name": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "view-transition-class": [
+    "inherit",
+    "initial",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "view-transition-name": [
     "inherit",
     "initial",
     "match-element",
+    "none",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "view-transition-scope": [
+    "all",
+    "inherit",
+    "initial",
     "none",
     "revert",
     "revert-layer",
@@ -4423,7 +6158,13 @@
     "revert-layer",
     "unset"
   ],
-  "widows": ["inherit", "initial", "revert", "revert-layer", "unset"],
+  "widows": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "width": [
     "anchor-size()",
     "auto",
@@ -4459,8 +6200,23 @@
     "revert-layer",
     "unset"
   ],
-  "word-spacing": ["inherit", "initial", "normal", "revert", "revert-layer", "unset"],
-  "word-wrap": ["break-word", "inherit", "initial", "normal", "revert", "revert-layer", "unset"],
+  "word-spacing": [
+    "inherit",
+    "initial",
+    "normal",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "word-wrap": [
+    "break-word",
+    "inherit",
+    "initial",
+    "normal",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
   "writing-mode": [
     "horizontal-tb",
     "inherit",
@@ -4473,8 +6229,35 @@
     "vertical-lr",
     "vertical-rl"
   ],
-  "x": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "y": ["inherit", "initial", "revert", "revert-layer", "unset"],
-  "z-index": ["auto", "inherit", "initial", "revert", "revert-layer", "unset"],
-  "zoom": ["inherit", "initial", "normal", "reset", "revert", "revert-layer", "unset"]
+  "x": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "y": [
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "z-index": [
+    "auto",
+    "inherit",
+    "initial",
+    "revert",
+    "revert-layer",
+    "unset"
+  ],
+  "zoom": [
+    "inherit",
+    "initial",
+    "normal",
+    "reset",
+    "revert",
+    "revert-layer",
+    "unset"
+  ]
 }

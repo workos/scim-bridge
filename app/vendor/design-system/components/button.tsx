@@ -1,42 +1,45 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
+'use client';
 
-import { Button as ThemesButton } from "@radix-ui/themes/dist/esm/components/button.js";
-import classNames from "classnames";
-import * as React from "react";
-import type { MarginProps } from "../props.js";
+import classNames from 'classnames';
+import * as React from 'react';
+import type { MarginProps } from '../props.js';
+import { Button as ThemesButton } from '../radix-themes/components/button.js';
 
 type ThemesButtonProps = React.ComponentPropsWithoutRef<typeof ThemesButton>;
 
 interface ButtonOwnProps {
-  color?: "gray" | "purple" | "red" | "yellow";
+  color?: 'gray' | 'purple' | 'red' | 'yellow';
   ghost?: boolean;
-  size?: ThemesButtonProps["size"];
+  size?: ThemesButtonProps['size'];
   loading?: boolean;
   /**
    * @deprecated Different state types now use different props as they are no
    * longer mutually exclusive. Use `loading` or `disabled` instead. Note that
    * loading buttons will always be force-disabled.
    */
-  state?: "normal" | "disabled" | "loading";
-  type?: "button" | "submit" | "reset" | null;
+  state?: 'normal' | 'disabled' | 'loading';
+  type?: 'button' | 'submit' | 'reset' | null;
 }
 
 interface ButtonProps
-  extends Omit<ThemesButtonProps, "color" | "variant" | "type">, ButtonOwnProps, MarginProps {}
+  extends
+    Omit<ThemesButtonProps, 'color' | 'variant' | 'type'>,
+    ButtonOwnProps,
+    MarginProps {}
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   (
     {
       ghost = false,
-      color = "gray",
+      color = 'gray',
       loading = false,
       disabled,
       state,
       className,
       onClick,
-      type = "button",
+      type = 'button',
       ...props
     },
     forwardedRef,
@@ -47,10 +50,10 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 
     // TODO remove all of this when state prop is removed
     if (state !== undefined) {
-      if (state === "loading") {
+      if (state === 'loading') {
         loading = true;
         disabled = true;
-      } else if (state === "disabled") {
+      } else if (state === 'disabled') {
         disabled = true;
         loading = false;
       } else {
@@ -67,26 +70,27 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         color={color}
         data-disabled={disabled || undefined}
         data-loading={loading || undefined}
-        highContrast={!ghost && color === "gray"}
+        highContrast={!ghost && color === 'gray'}
         type={type === null ? undefined : type}
-        className={classNames(className, "Button", {
-          "state-loading": loading,
+        className={classNames(className, 'Button', {
+          'state-loading': loading,
         })}
         variant={(() => {
           if (ghost) {
-            return "ghost";
+            return 'ghost';
           }
 
-          if (color === "purple" || disabled || loading) {
-            return "solid";
+          if (color === 'purple' || disabled || loading) {
+            return 'solid';
           }
 
-          return "surface";
+          return 'surface';
         })()}
         onClick={(event) => {
-          const ariaDisabled = event.currentTarget.getAttribute("aria-disabled");
+          const ariaDisabled =
+            event.currentTarget.getAttribute('aria-disabled');
 
-          if (ariaDisabled !== null && ariaDisabled !== "false") {
+          if (ariaDisabled !== null && ariaDisabled !== 'false') {
             // Prevent form submission
             event.preventDefault();
             event.stopPropagation();
@@ -101,7 +105,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   },
 );
 
-Button.displayName = "Button";
+Button.displayName = 'Button';
 
 export { Button };
 export type { ButtonProps };

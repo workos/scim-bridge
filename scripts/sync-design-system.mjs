@@ -30,6 +30,12 @@ const SOURCE_SRC_FILES = [
   "generated",
   "helpers",
   "icons.ts",
+  // Upstream vendored Radix Themes into the design system and rewrote every
+  // component import from `@radix-ui/themes/dist/esm/…` to `../radix-themes/…`
+  // (and `styles.css` to `./radix-themes/styles/…`). Copying the components
+  // without it produces a tree whose first CSS import cannot resolve, so the
+  // build fails before any component renders.
+  "radix-themes",
   "recipes",
   "types",
 ];

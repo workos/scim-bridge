@@ -1,11 +1,15 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-import { nextDiagnostic } from "@codemirror/lint";
-import { CheckCircledIcon, CrossCircledIcon, ExclamationTriangleIcon } from "@radix-ui/react-icons";
-import { EditorView } from "@uiw/react-codemirror";
-import { Button } from "../../components/button.js";
-import { Tooltip } from "../../components/tooltip.js";
-import { useCodeEditorContext } from "./code-editor-context.js";
+import { nextDiagnostic } from '@codemirror/lint';
+import {
+  CheckCircledIcon,
+  CrossCircledIcon,
+  ExclamationTriangleIcon,
+} from '@radix-ui/react-icons';
+import { EditorView } from '@uiw/react-codemirror';
+import { Button } from '../../components/button.js';
+import { Tooltip } from '../../components/tooltip.js';
+import { useCodeEditorContext } from './code-editor-context.js';
 
 const SCROLL_BUFFER = 200;
 
@@ -34,9 +38,13 @@ export const DiagnosticsToggle = () => {
     });
   };
 
-  const warnings = diagnostics.filter((diagnostic) => diagnostic.severity === "warning");
+  const warnings = diagnostics.filter(
+    (diagnostic) => diagnostic.severity === 'warning',
+  );
 
-  const errors = diagnostics.filter((diagnostic) => diagnostic.severity === "error");
+  const errors = diagnostics.filter(
+    (diagnostic) => diagnostic.severity === 'error',
+  );
 
   const isValid = errors.length + warnings.length === 0;
 
@@ -50,7 +58,12 @@ export const DiagnosticsToggle = () => {
       </Button>
     ) : (
       <Tooltip content="Go to next issue">
-        <Button ghost color="gray" disabled={isValid} onClick={handleGoToNextDiagnostic}>
+        <Button
+          ghost
+          color="gray"
+          disabled={isValid}
+          onClick={handleGoToNextDiagnostic}
+        >
           {errors.length !== 0 && (
             <>
               <CrossCircledIcon />

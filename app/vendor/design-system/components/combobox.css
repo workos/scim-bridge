@@ -1,9 +1,15 @@
 .ComboboxPopover,
 .ComboboxContentBox {
   --scrollarea-scrollbar-vertical-margin-top: var(--combobox-content-padding);
-  --scrollarea-scrollbar-vertical-margin-bottom: var(--combobox-content-padding);
-  --scrollarea-scrollbar-horizontal-margin-left: var(--combobox-content-padding);
-  --scrollarea-scrollbar-horizontal-margin-right: var(--combobox-content-padding);
+  --scrollarea-scrollbar-vertical-margin-bottom: var(
+    --combobox-content-padding
+  );
+  --scrollarea-scrollbar-horizontal-margin-left: var(
+    --combobox-content-padding
+  );
+  --scrollarea-scrollbar-horizontal-margin-right: var(
+    --combobox-content-padding
+  );
   overflow: hidden;
   background-color: var(--color-panel-solid);
 }
@@ -16,8 +22,8 @@
 
 .ComboboxScrollArea {
   --_ideal-height: calc(
-    var(--combobox-content-padding) * 2 + var(--combobox-scroll-area-max-items) *
-      var(--combobox-item-height)
+    var(--combobox-content-padding) * 2 +
+      var(--combobox-scroll-area-max-items) * var(--combobox-item-height)
   );
   max-height: min(90dvh, var(--_ideal-height));
 }
@@ -25,7 +31,10 @@
 .ComboboxViewport {
   box-sizing: border-box;
   padding: var(--combobox-content-padding);
-  :where(.ComboboxContent:has(.rt-ScrollAreaScrollbar[data-orientation="vertical"])) & {
+  :where(
+      .ComboboxContent:has(.rt-ScrollAreaScrollbar[data-orientation='vertical'])
+    )
+    & {
     padding-right: var(--space-3);
   }
 }
@@ -118,7 +127,8 @@
 .ComboboxInput {
   &:where([data-within-popover]) {
     --padding-offset: calc(
-      (-1 * var(--combobox-content-padding)) + (var(--combobox-item-padding-offset, 0) * -1)
+      (-1 * var(--combobox-content-padding)) +
+        (var(--combobox-item-padding-offset, 0) * -1)
     );
 
     :where(.ComboboxHeader) &:only-child,
@@ -152,7 +162,7 @@
     }
   }
 
-  &:where(:has([disabled])) {
+  &:where(:has(:is([disabled], :disabled))) {
     & :where(.ComboboxIcon) {
       color: var(--gray-a9);
     }
@@ -180,11 +190,11 @@
   font-weight: var(--font-weight-regular);
   background: var(--color-surface);
 
-  &[aria-expanded="true"] {
+  &[aria-expanded='true'] {
     box-shadow: inset 0 0 0 1px var(--gray-a8);
   }
 
-  &[data-disabled="true"] {
+  &:is([data-disabled='true'], :disabled) {
     color: var(--gray-a11);
     background: var(--gray-a2);
     box-shadow: inset 0 0 0 1px var(--gray-a6);
@@ -268,12 +278,12 @@
   box-shadow: var(--shadow-5);
 }
 
-.ComboboxItemIndicatorCheckbox[data-state="checked"][data-disabled]::before {
+.ComboboxItemIndicatorCheckbox[data-state='checked'][data-disabled]::before {
   background: var(--gray-a3);
   box-shadow: inset 0 0 0 1px var(--gray-a6);
 }
 
-.ComboboxItemIndicator[data-state="checked"][data-disabled] {
+.ComboboxItemIndicator[data-state='checked'][data-disabled] {
   color: var(--gray-a9);
 }
 

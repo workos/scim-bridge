@@ -1,8 +1,12 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-import { autocompletion, Completion, CompletionContext } from "@codemirror/autocomplete";
-import { Extension } from "@codemirror/state";
-import cssProperties from "../../generated/css-properties.json";
+import {
+  autocompletion,
+  Completion,
+  CompletionContext,
+} from '@codemirror/autocomplete';
+import { Extension } from '@codemirror/state';
+import cssProperties from '../../generated/css-properties.json';
 
 export interface CSSAutocompleteOptions {
   /** Predefined CSS class names to suggest */
@@ -22,7 +26,9 @@ export interface CSSAutocompleteOptions {
  * - CSS property names (when typing after a colon)
  * - CSS property values (when typing after a colon and a space)
  */
-export function cssAutocomplete(options: CSSAutocompleteOptions = {}): Extension {
+export function cssAutocomplete(
+  options: CSSAutocompleteOptions = {},
+): Extension {
   const {
     classNames = [],
     cssVariables = [],
@@ -51,20 +57,24 @@ export function cssAutocomplete(options: CSSAutocompleteOptions = {}): Extension
         if (classMatch) {
           // Only show class completions if the dot is at the beginning of the line (with optional whitespace)
           const beforeDot = textBeforeCursor.slice(0, -classMatch[0].length);
-          const isAtLineStart = beforeDot.trim() === "";
+          const isAtLineStart = beforeDot.trim() === '';
           if (!isAtLineStart) {
             return null;
           }
 
-          const typed = classMatch[1] || "";
+          const typed = classMatch[1] || '';
           const completions: Completion[] = classNames
-            .filter((className) => className.toLowerCase().includes(typed.toLowerCase()))
+            .filter((className) =>
+              className.toLowerCase().includes(typed.toLowerCase()),
+            )
             .map((className) => ({
               label: className,
-              type: "class",
+              type: 'class',
               info: `CSS class: .${className}`,
-              detail: "CSS class",
-              boost: className.toLowerCase().startsWith(typed.toLowerCase()) ? 1 : 0,
+              detail: 'CSS class',
+              boost: className.toLowerCase().startsWith(typed.toLowerCase())
+                ? 1
+                : 0,
             }));
 
           if (completions.length > 0) {
@@ -84,15 +94,19 @@ export function cssAutocomplete(options: CSSAutocompleteOptions = {}): Extension
             return null;
           }
 
-          const typed = varMatch[1] || "";
+          const typed = varMatch[1] || '';
           const completions: Completion[] = cssVariables
-            .filter((variable) => variable.toLowerCase().includes(typed.toLowerCase()))
+            .filter((variable) =>
+              variable.toLowerCase().includes(typed.toLowerCase()),
+            )
             .map((variable) => ({
               label: variable,
-              type: "variable",
+              type: 'variable',
               info: `CSS variable: ${variable}`,
-              detail: "CSS custom property",
-              boost: variable.toLowerCase().startsWith(typed.toLowerCase()) ? 1 : 0,
+              detail: 'CSS custom property',
+              boost: variable.toLowerCase().startsWith(typed.toLowerCase())
+                ? 1
+                : 0,
             }));
 
           if (completions.length > 0) {
@@ -116,12 +130,12 @@ export function cssAutocomplete(options: CSSAutocompleteOptions = {}): Extension
             from: pos - 3,
             options: [
               {
-                label: "var()",
-                type: "function",
-                info: "CSS var() function for custom properties",
-                detail: "CSS function",
+                label: 'var()',
+                type: 'function',
+                info: 'CSS var() function for custom properties',
+                detail: 'CSS function',
                 apply: (view, _completion, from, to) => {
-                  const insert = "var()";
+                  const insert = 'var()';
                   view.dispatch({
                     changes: { from, to, insert },
                     selection: { anchor: from + insert.length - 1 }, // Position cursor before closing )
@@ -133,23 +147,29 @@ export function cssAutocomplete(options: CSSAutocompleteOptions = {}): Extension
         }
 
         // Check if we're typing a CSS property (at the beginning of a line or after opening brace)
-        const propertyMatch = textBeforeCursor.match(/(?:^|\{)\s*([a-zA-Z-]*)$/);
+        const propertyMatch = textBeforeCursor.match(
+          /(?:^|\{)\s*([a-zA-Z-]*)$/,
+        );
         if (propertyMatch) {
           // Only show CSS properties when explicitly requested
           if (!isExplicit) {
             return null;
           }
 
-          const typed = propertyMatch[1] || "";
+          const typed = propertyMatch[1] || '';
           const completions: Completion[] = cssPropertyNames
-            .filter((property) => property.toLowerCase().includes(typed.toLowerCase()))
+            .filter((property) =>
+              property.toLowerCase().includes(typed.toLowerCase()),
+            )
             .map((property) => ({
               label: property,
-              type: "property",
+              type: 'property',
               info: `CSS property: ${property}`,
-              detail: "CSS property",
+              detail: 'CSS property',
               apply: `${property}: `,
-              boost: property.toLowerCase().startsWith(typed.toLowerCase()) ? 1 : 0,
+              boost: property.toLowerCase().startsWith(typed.toLowerCase())
+                ? 1
+                : 0,
             }));
 
           if (completions.length > 0) {
@@ -170,21 +190,23 @@ export function cssAutocomplete(options: CSSAutocompleteOptions = {}): Extension
           }
 
           const property = valueMatch[1];
-          const typed = valueMatch[2] || "";
+          const typed = valueMatch[2] || '';
           const values = property ? cssPropertyValues[property] || [] : [];
 
           if (values.length > 0) {
             const completions: Completion[] = values
-              .filter((value: string) => value.toLowerCase().includes(typed.toLowerCase()))
+              .filter((value: string) =>
+                value.toLowerCase().includes(typed.toLowerCase()),
+              )
               .map((value: string) => {
                 // Check if this is a CSS function (ends with parentheses)
-                const isFunction = value.endsWith("()");
+                const isFunction = value.endsWith('()');
 
                 return {
                   label: value,
-                  type: isFunction ? "function" : "value",
-                  info: `CSS ${isFunction ? "function" : "value"} for ${property}: ${value}`,
-                  detail: isFunction ? "CSS function" : "CSS value",
+                  type: isFunction ? 'function' : 'value',
+                  info: `CSS ${isFunction ? 'function' : 'value'} for ${property}: ${value}`,
+                  detail: isFunction ? 'CSS function' : 'CSS value',
                   // For functions, position cursor inside parentheses
                   apply: isFunction
                     ? (view, _completion, from, to) => {
@@ -195,7 +217,9 @@ export function cssAutocomplete(options: CSSAutocompleteOptions = {}): Extension
                         });
                       }
                     : value,
-                  boost: value.toLowerCase().startsWith(typed.toLowerCase()) ? 1 : 0,
+                  boost: value.toLowerCase().startsWith(typed.toLowerCase())
+                    ? 1
+                    : 0,
                 };
               });
 
@@ -218,4 +242,5 @@ export function cssAutocomplete(options: CSSAutocompleteOptions = {}): Extension
 /**
  * Common CSS property values
  */
-export const DEFAULT_CSS_PROPERTY_VALUES: Record<string, string[]> = cssProperties;
+export const DEFAULT_CSS_PROPERTY_VALUES: Record<string, string[]> =
+  cssProperties;

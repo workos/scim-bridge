@@ -1,42 +1,50 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-import { CheckIcon, CircleBackslashIcon, Cross2Icon } from "@radix-ui/react-icons";
-import * as React from "react";
-import { Grid } from "./grid.js";
-import { Marker } from "./marker.js";
-import { Skeleton } from "./skeleton.js";
-import { Text } from "./text.js";
+import {
+  CheckIcon,
+  CircleBackslashIcon,
+  Cross2Icon,
+} from '@radix-ui/react-icons';
+import * as React from 'react';
+import { Grid } from './grid.js';
+import { Marker } from './marker.js';
+import { Skeleton } from './skeleton.js';
+import { Text } from './text.js';
 
 interface FlagProps {
-  state: "enabled" | "error" | "warning" | "disabled";
+  state: 'enabled' | 'error' | 'warning' | 'disabled';
   label: string;
   loading?: boolean;
 }
 
-export const Flag: React.FC<FlagProps> = ({ label, loading = false, state }) => {
-  let color: "gray" | "green" | "red" | "yellow" = "gray";
-  if (state === "enabled") {
-    color = "green";
-  } else if (state === "error") {
-    color = "red";
-  } else if (state === "warning") {
-    color = "yellow";
-  } else if (state === "disabled") {
-    color = "gray";
+export const Flag: React.FC<FlagProps> = ({
+  label,
+  loading = false,
+  state,
+}) => {
+  let color: 'gray' | 'green' | 'red' | 'yellow' = 'gray';
+  if (state === 'enabled') {
+    color = 'green';
+  } else if (state === 'error') {
+    color = 'red';
+  } else if (state === 'warning') {
+    color = 'yellow';
+  } else if (state === 'disabled') {
+    color = 'gray';
   }
 
   let icon: React.ReactNode;
-  if (state === "enabled") {
+  if (state === 'enabled') {
     icon = <CheckIcon height="16" width="16" />;
-  } else if (state === "error") {
+  } else if (state === 'error') {
     icon = <Cross2Icon height="16" width="16" />;
-  } else if (state === "warning") {
+  } else if (state === 'warning') {
     icon = <ExclamationIcon height="16" width="16" />;
-  } else if (state === "disabled") {
+  } else if (state === 'disabled') {
     icon = <CircleBackslashIcon color={color} height="16" width="16" />;
   }
 
-  if (state === "enabled" || state === "error" || state === "warning") {
+  if (state === 'enabled' || state === 'error' || state === 'warning') {
     return (
       <Skeleton loading={loading}>
         <Grid align="center" columns="14px auto" display="inline-grid" gap="2">
@@ -49,7 +57,7 @@ export const Flag: React.FC<FlagProps> = ({ label, loading = false, state }) => 
         </Grid>
       </Skeleton>
     );
-  } else if (state === "disabled") {
+  } else if (state === 'disabled') {
     return (
       <Skeleton loading={loading}>
         <Grid align="center" columns="14px auto" display="inline-grid" gap="2">
