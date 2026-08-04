@@ -10,6 +10,7 @@ import {
   setDirectoriesLogPersistence,
   setDirectoryMode,
 } from "../../../workers/shared/db";
+import { datastoreContext, demoModeContext } from "../../context";
 import { publishMintedToken } from "../../../workers/shared/client-tokens";
 import { MODES, type Mode } from "../../../workers/shared/types";
 import { Button } from "../../vendor/design-system/components/button";
@@ -109,14 +110,14 @@ function directoryError(error: unknown): string {
 }
 
 export async function loader({ context }: Route.LoaderArgs) {
-  const { env } = context.cloudflare;
+  const db = context.get(datastoreContext);
   const [directories, proxyPublicUrl, nativePublicUrl, nativeScimToken, mockWorkosToken] =
     await Promise.all([
-      listDirectories(env.DB),
-      getConfig(env.DB, "proxy.public_url"),
-      getConfig(env.DB, "native.public_url"),
-      getConfig(env.DB, "native.scim_token"),
-      getConfig(env.DB, "mock_workos.scim_token"),
+      listDirectories(db),
+      getConfig(db, "proxy.public_url"),
+      getConfig(db, "native.public_url"),
+      getConfig(db, "native.scim_token"),
+      getConfig(db, "mock_workos.scim_token"),
     ]);
 
   return {
@@ -129,7 +130,8 @@ export async function loader({ context }: Route.LoaderArgs) {
 }
 
 export async function action({ context, request }: Route.ActionArgs) {
-  const { env, demoMode } = context.cloudflare;
+  const db = context.get(datastoreContext);
+  const demoMode = context.get(demoModeContext);
   const form = await request.formData();
   const intent = form.get("intent");
   const field = (key: string) => String(form.get(key) ?? "").trim();
@@ -146,7 +148,7 @@ export async function action({ context, request }: Route.ActionArgs) {
     }
     let created: CreatedDirectory;
     try {
-      created = await insertDirectory(env.DB, {
+      created = await insertDirectory(db, {
         name,
         native_url: field("native_url"),
         native_token: field("native_token"),
@@ -163,7 +165,7 @@ export async function action({ context, request }: Route.ActionArgs) {
     // the operator recovers the token by rotating on the directory page.
     //
     // Only a bundled simulator gets a plaintext copy; see publishMintedToken.
-    await publishMintedToken(env.DB, created.id, created.proxy_token, { demoMode });
+    await publishMintedToken(db, created.id, created.proxy_token, { demoMode });
     return redirect(`/panel/directories/${created.id}`);
   }
 
@@ -185,8 +187,8 @@ export async function action({ context, request }: Route.ActionArgs) {
         continue;
       }
       try {
-        const created = await insertDirectory(env.DB, r);
-        await publishMintedToken(env.DB, created.id, created.proxy_token, { demoMode });
+        const created = await insertDirectory(db, r);
+        await publishMintedToken(db, created.id, created.proxy_token, { demoMode });
         imported++;
       } catch (error) {
         importErrors.push(`Row ${i + 1} (${r.name}): ${directoryError(error)}`);
@@ -205,7 +207,7 @@ export async function action({ context, request }: Route.ActionArgs) {
       .map((s) => s.trim())
       .filter(Boolean);
     for (const id of ids) {
-      await setDirectoryMode(env.DB, id, mode as Mode);
+      await setDirectoryMode(db, id, mode as Mode);
     }
     return { bulkUpdated: ids.length, bulkMode: mode };
   }
@@ -215,7 +217,7 @@ export async function action({ context, request }: Route.ActionArgs) {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-    await setDirectoriesLogPersistence(env.DB, ids, field("on") === "true");
+    await setDirectoriesLogPersistence(db, ids, field("on") === "true");
     return { bulkUpdated: ids.length };
   }
 
@@ -228,8 +230,8 @@ export async function action({ context, request }: Route.ActionArgs) {
           "The proxy public URL and native app public URL are both required — clearing them would break every copy-paste value on this page.",
       };
     }
-    await setConfig(env.DB, "proxy.public_url", proxyPublicUrl);
-    await setConfig(env.DB, "native.public_url", nativePublicUrl);
+    await setConfig(db, "proxy.public_url", proxyPublicUrl);
+    await setConfig(db, "native.public_url", nativePublicUrl);
     return { settingsSaved: true };
   }
 

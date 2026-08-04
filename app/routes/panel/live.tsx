@@ -2,6 +2,7 @@ import type { Route } from "./+types/live";
 
 import { useEffect, useState } from "react";
 import { Form, useActionData, useLoaderData, useNavigation, useRevalidator } from "react-router";
+import { datastoreContext } from "../../context";
 import type { Directory, ListenerEvent, Mode } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
 import {
@@ -135,8 +136,8 @@ async function cleanWorkosDirectory(
 }
 
 export async function loader({ context }: Route.LoaderArgs) {
-  const { env } = context.cloudflare;
-  const directories = await listDirectories(env.DB);
+  const db = context.get(datastoreContext);
+  const directories = await listDirectories(db);
   const directory = directories[0] ?? null;
   if (!directory) {
     return { directory: null } as const;
@@ -144,41 +145,44 @@ export async function loader({ context }: Route.LoaderArgs) {
 
   const [nativeU, idpU, nativeG, idpG, workos, auto, events] = await Promise.all([
     withDatastoreRetry(() =>
-      env.DB.prepare("SELECT user_name AS name, active FROM native_users").all<DirRow>(),
+      db.prepare("SELECT user_name AS name, active FROM native_users").all<DirRow>(),
     ),
     withDatastoreRetry(() =>
-      env.DB.prepare("SELECT user_name AS name, active FROM idp_users WHERE directory_id = ?")
+      db
+        .prepare("SELECT user_name AS name, active FROM idp_users WHERE directory_id = ?")
         .bind(directory.id)
         .all<DirRow>(),
     ),
     withDatastoreRetry(() =>
-      env.DB.prepare(
-        "SELECT g.display_name AS name, COUNT(m.user_id) AS member_count " +
-          "FROM native_groups g LEFT JOIN native_group_members m ON m.group_id = g.id " +
-          "GROUP BY g.id ORDER BY g.display_name, g.id",
-      ).all<GroupRow>(),
+      db
+        .prepare(
+          "SELECT g.display_name AS name, COUNT(m.user_id) AS member_count " +
+            "FROM native_groups g LEFT JOIN native_group_members m ON m.group_id = g.id " +
+            "GROUP BY g.id ORDER BY g.display_name, g.id",
+        )
+        .all<GroupRow>(),
     ),
     withDatastoreRetry(() =>
-      env.DB.prepare(
-        "SELECT g.display_name AS name, COUNT(m.user_id) AS member_count " +
-          "FROM idp_groups g LEFT JOIN idp_group_members m ON m.group_id = g.id " +
-          "WHERE g.directory_id = ? GROUP BY g.id ORDER BY g.display_name, g.id",
-      )
+      db
+        .prepare(
+          "SELECT g.display_name AS name, COUNT(m.user_id) AS member_count " +
+            "FROM idp_groups g LEFT JOIN idp_group_members m ON m.group_id = g.id " +
+            "WHERE g.directory_id = ? GROUP BY g.id ORDER BY g.display_name, g.id",
+        )
         .bind(directory.id)
         .all<GroupRow>(),
     ),
     fetchWorkosDirectory(directory.workos_url, directory.workos_token),
     withDatastoreRetry(() =>
-      env.DB.prepare(
-        "SELECT running, interval_ms, tick_count FROM idp_auto_state WHERE directory_id = ?",
-      )
+      db
+        .prepare(
+          "SELECT running, interval_ms, tick_count FROM idp_auto_state WHERE directory_id = ?",
+        )
         .bind(directory.id)
         .first<AutoStateRow>(),
     ),
     withDatastoreRetry(() =>
-      env.DB.prepare(
-        "SELECT * FROM listener_events ORDER BY id DESC LIMIT 25",
-      ).all<ListenerEvent>(),
+      db.prepare("SELECT * FROM listener_events ORDER BY id DESC LIMIT 25").all<ListenerEvent>(),
     ),
   ]);
 
@@ -201,40 +205,40 @@ interface AutoStateRow {
 }
 
 export async function action({ context, request }: Route.ActionArgs) {
-  const { env } = context.cloudflare;
+  const db = context.get(datastoreContext);
   const form = await request.formData();
   const intent = String(form.get("intent") ?? "");
 
   if (intent === "reset-native") {
-    await clearNativeDirectory(env.DB);
+    await clearNativeDirectory(db);
     return {};
   }
 
   const directoryId = String(form.get("directoryId") ?? "");
-  const directory = directoryId ? await getDirectoryById(env.DB, directoryId) : null;
+  const directory = directoryId ? await getDirectoryById(db, directoryId) : null;
   if (!directory) {
     return { error: "No directory exists yet — create one on the Directories tab first." };
   }
 
   // --- IdP simulator controls (forwarded to the simulator worker) ---
   if (intent === "idp-seed") {
-    const r = await callIdpSimulator(env.DB, "seed", { directoryId: directory.id });
+    const r = await callIdpSimulator(db, "seed", { directoryId: directory.id });
     return r.ok ? {} : { error: r.error };
   }
   if (intent === "idp-reset") {
-    const r = await callIdpSimulator(env.DB, "reset", { directoryId: directory.id });
+    const r = await callIdpSimulator(db, "reset", { directoryId: directory.id });
     return r.ok ? {} : { error: r.error };
   }
   if (intent === "idp-auto-start") {
     const intervalMs = Number(form.get("intervalMs")) || DEFAULT_INTERVAL_MS;
-    const r = await callIdpSimulator(env.DB, "auto/start", {
+    const r = await callIdpSimulator(db, "auto/start", {
       directoryId: directory.id,
       intervalMs,
     });
     return r.ok ? {} : { error: r.error };
   }
   if (intent === "idp-auto-stop") {
-    const r = await callIdpSimulator(env.DB, "auto/stop", { directoryId: directory.id });
+    const r = await callIdpSimulator(db, "auto/stop", { directoryId: directory.id });
     return r.ok ? {} : { error: r.error };
   }
   if (intent === "idp-action") {
@@ -246,7 +250,7 @@ export async function action({ context, request }: Route.ActionArgs) {
       const value = form.get(key);
       if (value != null) body[key] = String(value);
     }
-    const r = await callIdpSimulator(env.DB, "action", body);
+    const r = await callIdpSimulator(db, "action", body);
     return r.ok ? {} : { error: r.error };
   }
 
@@ -255,7 +259,7 @@ export async function action({ context, request }: Route.ActionArgs) {
     if (!MODES.includes(mode as Mode)) {
       return { error: "That mode is not one of passthrough, dual-write, or workos-only." };
     }
-    await setDirectoryMode(env.DB, directory.id, mode as Mode);
+    await setDirectoryMode(db, directory.id, mode as Mode);
     return {};
   }
 
@@ -265,7 +269,7 @@ export async function action({ context, request }: Route.ActionArgs) {
         error: "Backfill only runs in dual-write, so live writes keep flowing while it replays.",
       };
     }
-    const backfill = await runBackfill(env.DB, directory as Directory);
+    const backfill = await runBackfill(db, directory as Directory);
     return { backfill };
   }
 

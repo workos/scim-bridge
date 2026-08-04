@@ -1,6 +1,7 @@
 import type { Route } from "./+types/directory";
 
 import { Link, Outlet, useLoaderData, useLocation } from "react-router";
+import { datastoreContext } from "../../context";
 import { getDirectoryById } from "../../../workers/shared/db";
 import { Flex } from "../../vendor/design-system/components/flex";
 import { Heading } from "../../vendor/design-system/components/heading";
@@ -9,7 +10,7 @@ import { TabNav } from "../../vendor/design-system/components/tab-nav";
 import { ModeBadge } from "./ui";
 
 export async function loader({ context, params }: Route.LoaderArgs) {
-  const directory = await getDirectoryById(context.cloudflare.env.DB, params.id ?? "");
+  const directory = await getDirectoryById(context.get(datastoreContext), params.id ?? "");
   if (!directory) {
     throw new Response("Directory not found", { status: 404 });
   }

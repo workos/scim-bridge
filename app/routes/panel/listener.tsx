@@ -1,6 +1,7 @@
 import type { Route } from "./+types/listener";
 
 import { Form, useFetcher, useLoaderData, useNavigation, useRevalidator } from "react-router";
+import { datastoreContext } from "../../context";
 import { getConfig, setConfig } from "../../../workers/shared/db";
 import { CopyButton, FieldLabel, trimTrailingSlash } from "./ui";
 import { Badge } from "../../vendor/design-system/components/badge";
@@ -36,11 +37,11 @@ async function detectNgrokTunnel(): Promise<string | null> {
 }
 
 export async function loader({ context }: Route.LoaderArgs) {
-  const { env } = context.cloudflare;
+  const db = context.get(datastoreContext);
   const [mockEmit, webhookSecret, nativePublicUrl, tunnelUrl] = await Promise.all([
-    getConfig(env.DB, "mock_workos.emit_dsync"),
-    getConfig(env.DB, "native.webhook_secret"),
-    getConfig(env.DB, "native.public_url"),
+    getConfig(db, "mock_workos.emit_dsync"),
+    getConfig(db, "native.webhook_secret"),
+    getConfig(db, "native.public_url"),
     detectNgrokTunnel(),
   ]);
   return {
@@ -52,25 +53,21 @@ export async function loader({ context }: Route.LoaderArgs) {
 }
 
 export async function action({ context, request }: Route.ActionArgs) {
-  const { env } = context.cloudflare;
+  const db = context.get(datastoreContext);
   const form = await request.formData();
   const intent = String(form.get("intent") ?? "");
 
   if (intent === "set-mock-emit") {
-    await setConfig(
-      env.DB,
-      "mock_workos.emit_dsync",
-      form.get("value") === "true" ? "true" : "false",
-    );
+    await setConfig(db, "mock_workos.emit_dsync", form.get("value") === "true" ? "true" : "false");
     return {};
   }
   if (intent === "save-webhook-secret") {
-    await setConfig(env.DB, "native.webhook_secret", String(form.get("value") ?? "").trim());
+    await setConfig(db, "native.webhook_secret", String(form.get("value") ?? "").trim());
     return {};
   }
   if (intent === "use-tunnel-url") {
     const url = String(form.get("url") ?? "").trim();
-    if (url) await setConfig(env.DB, "native.public_url", url);
+    if (url) await setConfig(db, "native.public_url", url);
     return {};
   }
   return { error: "That action is not recognized." };

@@ -10,6 +10,7 @@ import {
   useNavigation,
   useSubmit,
 } from "react-router";
+import { datastoreContext, demoModeContext } from "../../context";
 import { runBackfill, runReconcileFromWorkos } from "../../../workers/shared/backfill";
 import {
   getConfig,
@@ -87,14 +88,14 @@ const MODE_DETAILS: { value: Mode; description: string }[] = [
 ];
 
 export async function loader({ context, params }: Route.LoaderArgs) {
-  const { env } = context.cloudflare;
-  const directory = await getDirectoryById(env.DB, params.id ?? "");
+  const db = context.get(datastoreContext);
+  const directory = await getDirectoryById(db, params.id ?? "");
   if (!directory) {
     throw new Response("Directory not found", { status: 404 });
   }
   const [proxyPublicUrl, nativePublicUrl] = await Promise.all([
-    getConfig(env.DB, "proxy.public_url"),
-    getConfig(env.DB, "native.public_url"),
+    getConfig(db, "proxy.public_url"),
+    getConfig(db, "native.public_url"),
   ]);
   return {
     directory,
@@ -158,8 +159,8 @@ export async function action({
   params,
   request,
 }: Route.ActionArgs): Promise<Response | OverviewActionData> {
-  const { env } = context.cloudflare;
-  const directory = await getDirectoryById(env.DB, params.id ?? "");
+  const db = context.get(datastoreContext);
+  const directory = await getDirectoryById(db, params.id ?? "");
   if (!directory) {
     throw new Response("Directory not found", { status: 404 });
   }
@@ -174,16 +175,16 @@ export async function action({
         error: "That mode is not one of passthrough, dual-write, or workos-only.",
       };
     }
-    await setDirectoryMode(env.DB, directory.id, mode as Mode);
+    await setDirectoryMode(db, directory.id, mode as Mode);
     return {};
   }
 
   if (intent === "rotate-proxy-token") {
-    const token = await rotateProxyToken(env.DB, directory.id);
+    const token = await rotateProxyToken(db, directory.id);
     // The old token stopped working the moment that returned, so a bundled
     // simulator still holding it would start failing every request.
-    await publishMintedToken(env.DB, directory.id, token, {
-      demoMode: context.cloudflare.demoMode,
+    await publishMintedToken(db, directory.id, token, {
+      demoMode: context.get(demoModeContext),
     });
     // Returned rather than redirected: a redirect would drop the plaintext, and
     // this response is the only place it exists (ENT-6742).
@@ -191,13 +192,13 @@ export async function action({
   }
 
   if (intent === "set-log-persistence") {
-    await setDirectoryLogPersistence(env.DB, directory.id, form.get("on") === "true");
+    await setDirectoryLogPersistence(db, directory.id, form.get("on") === "true");
     return {};
   }
 
   if (intent === "save-native") {
     await setDirectoryNative(
-      env.DB,
+      db,
       directory.id,
       String(form.get("native_url") ?? "").trim(),
       String(form.get("native_token") ?? "").trim(),
@@ -207,7 +208,7 @@ export async function action({
 
   if (intent === "save-workos") {
     await setDirectoryWorkos(
-      env.DB,
+      db,
       directory.id,
       String(form.get("workos_url") ?? "").trim(),
       String(form.get("workos_token") ?? "").trim(),
@@ -218,7 +219,7 @@ export async function action({
   if (intent === "save-workos-directory-id") {
     try {
       await setDirectoryWorkosDirectoryId(
-        env.DB,
+        db,
         directory.id,
         String(form.get("workos_directory_id") ?? "").trim(),
       );
@@ -240,7 +241,7 @@ export async function action({
           "Backfill only runs in dual-write mode, so live writes keep flowing while the snapshot replays.",
       };
     }
-    const backfill = await runBackfill(env.DB, directory);
+    const backfill = await runBackfill(db, directory);
     return { backfill };
   }
 
@@ -251,7 +252,7 @@ export async function action({
           "Reconcile from WorkOS runs in workos-only mode, to bring the native app fully current before a rollback.",
       };
     }
-    const reconcile = await runReconcileFromWorkos(env.DB, directory);
+    const reconcile = await runReconcileFromWorkos(db, directory);
     return { reconcile };
   }
 
@@ -277,10 +278,10 @@ export async function action({
 
   if (intent === "delete-directory") {
     await withDatastoreRetry(() =>
-      env.DB.batch([
-        env.DB.prepare("DELETE FROM id_mappings WHERE directory_id = ?").bind(directory.id),
-        env.DB.prepare("DELETE FROM proxy_log WHERE directory_id = ?").bind(directory.id),
-        env.DB.prepare("DELETE FROM scim_directories WHERE id = ?").bind(directory.id),
+      db.batch([
+        db.prepare("DELETE FROM id_mappings WHERE directory_id = ?").bind(directory.id),
+        db.prepare("DELETE FROM proxy_log WHERE directory_id = ?").bind(directory.id),
+        db.prepare("DELETE FROM scim_directories WHERE id = ?").bind(directory.id),
       ]),
     );
     return redirect("/panel");

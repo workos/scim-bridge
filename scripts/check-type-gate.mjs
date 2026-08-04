@@ -25,6 +25,16 @@ const PROBE_SOURCE = "export const probe: number = \"definitely not a number\";\
  *  into the gated project. The gate excludes today's single exception by name. */
 const PANEL_IMPORT_EXCEPTION = "directory-import.test.ts";
 
+/**
+ * app/ modules that are *in* the gate and cannot reach the vendored tree, so a
+ * test importing one is not the thing this check exists to stop. app/context.ts
+ * is listed in tsconfig.check.json (server/index.ts imports it) and pulls in
+ * react-router plus workers/shared/datastore, nothing else. Anything added here
+ * must be in tsconfig.check.json's include and stay clear of app/vendor.
+ */
+const GATED_APP_MODULES = new Set(["../app/context"]);
+const APP_IMPORT = /from "(\.\.\/app\/[^"]*)"|import\("(\.\.\/app\/[^"]*)"\)/g;
+
 function runGate() {
   try {
     execFileSync("npx", ["tsc", "-b", "--force"], { encoding: "utf8", stdio: "pipe" });
@@ -64,7 +74,11 @@ for (const root of PROBE_ROOTS) {
 
 const crossing = readdirSync("tests")
   .filter((file) => file.endsWith(".ts") && file !== PANEL_IMPORT_EXCEPTION)
-  .filter((file) => /from "\.\.\/app\//.test(readFileSync(join("tests", file), "utf8")));
+  .filter((file) =>
+    [...readFileSync(join("tests", file), "utf8").matchAll(APP_IMPORT)]
+      .map((match) => match[1] ?? match[2])
+      .some((specifier) => !GATED_APP_MODULES.has(specifier)),
+  );
 if (crossing.length > 0) {
   failures.push(
     `${crossing.join(", ")} import(s) from app/, which pulls the vendored design system into the ` +

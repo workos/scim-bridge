@@ -8,7 +8,12 @@
   // checks every file it reaches through an import, so one panel file in this
   // project would drag the whole vendored tree in with it. See tsconfig.app.json.
   "extends": "./tsconfig.json",
-  "include": ["workers/**/*", "server/**/*", "tests/**/*"],
+  // app/context.ts is the one panel file in here, because server/index.ts imports
+  // it to populate the request context and a composite project must list every
+  // file it reaches. It is safe to include: it pulls in react-router and
+  // workers/shared/datastore only, so it does not reach the vendored tree the way
+  // a route module would. Keep it that way — anything it imports lands in the gate.
+  "include": ["workers/**/*", "server/**/*", "tests/**/*", "app/context.ts"],
   // The one test that imports a panel route, and so reaches the vendored tree.
   // scripts/check-type-gate.mjs fails if another test starts crossing that line,
   // rather than letting it surface here as a wall of vendored-code errors.

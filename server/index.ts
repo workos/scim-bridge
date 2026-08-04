@@ -3,8 +3,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
-import { createRequestHandler } from "react-router";
+import { createRequestHandler, RouterContextProvider } from "react-router";
 import type { ServerBuild } from "react-router";
+import { datastoreContext, demoModeContext } from "../app/context";
 import proxyWorker from "../workers/proxy/index";
 import nativeWorker from "../workers/native/index";
 import idpWorker from "../workers/idp/index";
@@ -188,10 +189,17 @@ async function mountBridge(): Promise<void> {
     return staticFiles(c, next);
   });
 
-  // Everything else → the React Router control panel (SSR).
-  app.all("*", (c) =>
-    requestHandler(c.req.raw, { cloudflare: { env, ctx, demoMode: config.demoMode } }),
-  );
+  // Everything else → the React Router control panel (SSR). A fresh provider per
+  // request: React Router 8 hands this object to middleware and routes, which are
+  // free to write to it, so one shared instance would carry state across requests.
+  // The panel gets the datastore directly — it never used the `env` wrapper for
+  // anything but `env.DB`, nor `ctx.waitUntil` at all (see app/context.ts).
+  app.all("*", (c) => {
+    const context = new RouterContextProvider();
+    context.set(datastoreContext, store);
+    context.set(demoModeContext, config.demoMode);
+    return requestHandler(c.req.raw, context);
+  });
 }
 
 if (config.role === "native-app") {
