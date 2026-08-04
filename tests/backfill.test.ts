@@ -68,7 +68,7 @@ describe("runBackfill", () => {
   afterEach(() => fake?.restore());
 
   it("replays native users then groups into WorkOS through the migrated-id dance", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     fake = installFakeUpstreams();
     fake.route(
@@ -129,7 +129,7 @@ describe("runBackfill", () => {
   });
 
   it("is idempotent on a second pass: every PUT resolves, no POSTs, no duplicate mappings", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     fake = installFakeUpstreams();
     fake.route(
@@ -178,7 +178,7 @@ describe("runBackfill", () => {
   });
 
   it("counts a failed WorkOS leg and keeps mirroring the rest", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     fake = installFakeUpstreams();
     fake.route(
@@ -221,7 +221,7 @@ describe("runBackfill", () => {
   });
 
   it("pages through the native enumeration until totalResults is reached", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     const users = [
       { id: "u1", userName: "one@x.test" },
@@ -254,7 +254,7 @@ describe("runBackfill", () => {
   });
 
   it("translates group members[].value through fallback-post minted ids", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     fake = installFakeUpstreams();
     fake.route("native", "GET", "/Users", listPage([{ id: "u1", userName: "one@x.test" }]));
@@ -307,7 +307,7 @@ describe("runBackfill", () => {
   });
 
   it("records snapshot failures per kind and mirrors nothing for them", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     fake = installFakeUpstreams();
     fake.route("native", "GET", "/Users", scimJson(500, { detail: "nope" }));
@@ -326,7 +326,7 @@ describe("runBackfill", () => {
   });
 
   it("fails a snapshot resource that has no id without touching WorkOS for it", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     fake = installFakeUpstreams();
     fake.route(
@@ -349,7 +349,7 @@ describe("runBackfill", () => {
   });
 
   it("persists one proxy_log row per resource when log_persistence is on", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write", log_persistence: 1 });
     fake = installFakeUpstreams();
     fake.route("native", "GET", "/Users", listPage([{ id: "u1", userName: "one@x.test" }]));
@@ -378,7 +378,7 @@ describe("runBackfill", () => {
   });
 
   it("caps the error list at 20 while still counting every failure", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     const users = Array.from({ length: 25 }, (_, i) => ({
       id: `user-${i}`,
@@ -401,7 +401,7 @@ describe("runBackfill", () => {
   // that as null — which WorkOS rejects with 400 invalidSyntax on every replayed
   // resource, failing the whole backfill.
   it("replays a group whose externalId is null without the null", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     fake = installFakeUpstreams();
     fake.route("native", "GET", "/Users", listPage([]));
@@ -440,7 +440,7 @@ describe("runReconcileFromWorkos", () => {
   afterEach(() => fake?.restore());
 
   it("replays the WorkOS snapshot into native as migrated-id PUTs with ids translated back", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "workos-only", log_persistence: 1 });
     await upsertMapping(env.DB, {
       directory_id: directory.id,
@@ -515,7 +515,7 @@ describe("runReconcileFromWorkos", () => {
   });
 
   it("counts a native leg that rejects the upsert as failed", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "workos-only" });
     fake = installFakeUpstreams();
     fake.route(
@@ -538,7 +538,7 @@ describe("runReconcileFromWorkos", () => {
   });
 
   it("counts a thrown native leg and an id-less WorkOS resource as failed", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "workos-only" });
     fake = installFakeUpstreams();
     fake.route(
@@ -566,7 +566,7 @@ describe("runReconcileFromWorkos", () => {
   });
 
   it("logs reconcile failures and URL-encodes translated native ids in the PUT path", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "workos-only", log_persistence: 1 });
     await upsertMapping(env.DB, {
       directory_id: directory.id,
@@ -613,7 +613,7 @@ describe("runReconcileFromWorkos", () => {
   });
 
   it("repairs a drifted native row on 409 by resolving on userName and mapping the shared id", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "workos-only", log_persistence: 1 });
     fake = installFakeUpstreams();
     // No mapping seeded: the shared id translates to itself, so reconcile first
@@ -658,7 +658,7 @@ describe("runReconcileFromWorkos", () => {
   });
 
   it("repairs a drifted group on 409 by resolving on displayName", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "workos-only" });
     fake = installFakeUpstreams();
     fake.route("workos", "GET", "/Users", listPage([]));
@@ -690,7 +690,7 @@ describe("runReconcileFromWorkos", () => {
   });
 
   it("addresses a same-run repaired user by its drifted id in a later group's members", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "workos-only" });
     fake = installFakeUpstreams();
     // A user drifts and is repaired to idp-1 during the user pass; a group pushed
@@ -724,7 +724,7 @@ describe("runReconcileFromWorkos", () => {
   });
 
   it("reports an unresolvable 409 distinctly and leaves it failed", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "workos-only" });
     fake = installFakeUpstreams();
     fake.route("workos", "GET", "/Users", listPage([{ id: "shared-1", userName: "one@x.test" }]));
@@ -748,7 +748,7 @@ describe("runBackfill snapshot edges", () => {
   afterEach(() => fake?.restore());
 
   it("records a truncation error when an empty page arrives short of totalResults", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     fake = installFakeUpstreams();
     fake.route("native", "GET", "/Users", (call) => {
@@ -781,7 +781,7 @@ describe("runBackfill snapshot edges", () => {
   });
 
   it("carries totalResults forward when a later page omits it", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     fake = installFakeUpstreams();
     fake.route("native", "GET", "/Users", (call) => {
@@ -815,7 +815,7 @@ describe("runBackfill snapshot edges", () => {
   });
 
   it("keeps resources from earlier pages when a later page fails", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     fake = installFakeUpstreams();
     fake.route("native", "GET", "/Users", (call) => {
@@ -841,7 +841,7 @@ describe("runBackfill snapshot edges", () => {
   });
 
   it("treats a missing totalResults as a single page and skips non-record entries", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     fake = installFakeUpstreams();
     fake.route(
@@ -865,7 +865,7 @@ describe("runBackfill snapshot edges", () => {
   });
 
   it("fails the resource type when a 200 list body is not JSON", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     fake = installFakeUpstreams();
     fake.route("native", "GET", "/Users", listPage([{ id: "u1", userName: "one@x.test" }]));
@@ -886,7 +886,7 @@ describe("runBackfill snapshot edges", () => {
   });
 
   it("fails the resource type when the list response has an empty body", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     fake = installFakeUpstreams();
     fake.route("native", "GET", "/Users", new Response(null, { status: 204 }));
@@ -902,7 +902,7 @@ describe("runBackfill snapshot edges", () => {
   });
 
   it("fails the resource type when the list body has no Resources array", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     fake = installFakeUpstreams();
     fake.route("native", "GET", "/Users", scimJson(200, { totalResults: 3, Resources: "nope" }));
@@ -920,7 +920,7 @@ describe("runBackfill snapshot edges", () => {
   });
 
   it("reports no error for a genuinely empty directory", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     fake = installFakeUpstreams();
     fake.route("native", "GET", "/Users", listPage([]));
@@ -937,7 +937,7 @@ describe("runBackfill snapshot edges", () => {
   });
 
   it("names the WorkOS side in reconcile snapshot errors", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "workos-only" });
     fake = installFakeUpstreams();
     fake.route("workos", "GET", "/Users", new Response("<html>oops</html>", { status: 200 }));
@@ -957,7 +957,7 @@ describe("runBackfill logging and member passthrough", () => {
   afterEach(() => fake?.restore());
 
   it("writes failure rows to proxy_log with the error and leg status", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write", log_persistence: 1 });
     fake = installFakeUpstreams();
     fake.route(
@@ -990,7 +990,7 @@ describe("runBackfill logging and member passthrough", () => {
   });
 
   it("passes group member entries that are not translatable records through untouched", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     fake = installFakeUpstreams();
     fake.route("native", "GET", "/Users", listPage([{ id: "u1", userName: "one@x.test" }]));

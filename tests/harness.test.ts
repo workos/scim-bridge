@@ -15,7 +15,7 @@ describe("test harness", () => {
   afterEach(() => fake?.restore());
 
   it("boots the proxy against an in-memory migrated database", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const res = await proxyWorker.fetch(
       new Request("https://bridge.test/healthz"),
       env,
@@ -26,7 +26,7 @@ describe("test harness", () => {
   });
 
   it("routes a passthrough write to native only", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "passthrough" });
     fake = installFakeUpstreams();
     fake.route("native", "POST", "/Users", scimJson(201, { id: "nat_1", userName: "a@b.c" }));

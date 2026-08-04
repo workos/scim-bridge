@@ -14,7 +14,9 @@
     "format": "oxfmt --write app server workers tests package.json postcss.config.mjs vite.config.ts react-router.config.ts '!app/vendor/design-system/**'",
     "format:check": "oxfmt --check app server workers tests package.json postcss.config.mjs vite.config.ts react-router.config.ts '!app/vendor/design-system/**'",
     "verify": "npm run typecheck && npm run build",
-    "test": "vitest run",
+    "test": "vitest run --reporter=default --reporter=json --outputFile=.vitest/sqlite.json",
+    "test:postgres": "cross-env TEST_ENGINE=postgres vitest run --reporter=default --reporter=json --outputFile=.vitest/postgres.json",
+    "test:engines": "node scripts/check-engine-parity.mjs",
     "sync-design-system": "node scripts/sync-design-system.mjs"
   },
   "dependencies": {

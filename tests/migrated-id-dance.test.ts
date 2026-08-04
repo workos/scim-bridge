@@ -63,7 +63,7 @@ describe("migrated-id dance", () => {
 
   /** Seed a dual-write directory and script the native leg to succeed. */
   async function setup(opts: Parameters<typeof seedDirectory>[1] = {}) {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, opts);
     fake = installFakeUpstreams();
     return { env, directory, fake };
