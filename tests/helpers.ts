@@ -2,6 +2,8 @@ import Database from "better-sqlite3";
 import type { Pool } from "pg";
 import { openPostgres, PostgresDatastore, PostgresMigrator } from "../server/db/postgres";
 import { SqliteDatastore, SqliteMigrator } from "../server/db/sqlite";
+import { rememberClientToken } from "../workers/shared/client-tokens";
+import { hashProxyToken, proxyTokenHint } from "../workers/shared/crypto";
 import { newDirectoryId } from "../workers/shared/ids";
 import { runMigrations, runMigrationsSync } from "../server/db/migrate";
 import type { Directory, Mode, PocEnv } from "../workers/shared/types";
@@ -186,25 +188,32 @@ export interface SeedDirectoryOptions {
   log_persistence?: number;
 }
 
+/** A seeded row, plus the proxy token in the clear. The row itself holds only a
+ *  digest (ENT-6742), so a test that needs to present the token — most of them —
+ *  takes it from here, exactly as production takes it from the mint. */
+export type SeededDirectory = Directory & { proxy_token: string };
+
 /** Insert a directory wired to the fake upstream URLs and return the full row. */
 export async function seedDirectory(
   db: PocEnv["DB"],
   opts: SeedDirectoryOptions = {},
-): Promise<Directory> {
+): Promise<SeededDirectory> {
   const token = opts.proxy_token ?? `proxy-token-${Math.random().toString(36).slice(2)}`;
+  const id = newDirectoryId();
   await db
     .prepare(
       `INSERT INTO scim_directories
-         (id, name, mode, proxy_token, native_url, native_token, workos_url, workos_token,
-          workos_directory_id, log_persistence)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, name, mode, proxy_token_hash, proxy_token_hint, native_url, native_token,
+          workos_url, workos_token, workos_directory_id, log_persistence)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       // The same generator production uses, now that the column has no default.
-      newDirectoryId(),
+      id,
       opts.name ?? "Test Directory",
       opts.mode ?? "dual-write",
-      token,
+      await hashProxyToken(token),
+      proxyTokenHint(token),
       opts.native_url ?? NATIVE_URL,
       opts.native_token ?? "native-secret",
       WORKOS_URL,
@@ -213,12 +222,16 @@ export async function seedDirectory(
       opts.log_persistence ?? 0,
     )
     .run();
+  // Boot does this for the components that present the token (the IdP simulator,
+  // the native app's status client). Nothing else stands in for boot here, so a
+  // seeded directory that skipped it would make those components silently inert.
+  rememberClientToken(id, token);
   const row = await db
-    .prepare("SELECT * FROM scim_directories WHERE proxy_token = ?")
-    .bind(token)
+    .prepare("SELECT * FROM scim_directories WHERE id = ?")
+    .bind(id)
     .first<Directory>();
   if (!row) throw new Error("seedDirectory: row not found after insert");
-  return row;
+  return { ...row, proxy_token: token };
 }
 
 /** One recorded upstream call, in arrival order. */
@@ -341,9 +354,10 @@ export function scimJson(status: number, body: unknown): Response {
   });
 }
 
-/** Build a request to a worker as the IdP would send it. */
+/** Build a request to a worker as the IdP would send it. Takes a `SeededDirectory`
+ *  because the row alone no longer contains a presentable credential. */
 export function proxyRequest(
-  directory: Directory,
+  directory: SeededDirectory,
   method: string,
   path: string,
   body?: unknown,

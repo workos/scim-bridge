@@ -11,6 +11,7 @@ import {
   seedDirectory,
   type FakeUpstreams,
   type RecordedCall,
+  type SeededDirectory,
 } from "./helpers";
 
 /**
@@ -71,7 +72,7 @@ describe("migrated-id dance", () => {
 
   async function send(
     env: PocEnv,
-    directory: Directory,
+    directory: SeededDirectory,
     method: string,
     path: string,
     body?: unknown,

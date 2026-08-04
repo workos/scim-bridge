@@ -327,7 +327,9 @@ describe.skipIf(!POSTGRES_URL)("schema parity", () => {
     for (const db of [new SqliteDatastore(sqlite) as Datastore, postgres]) {
       const insert = (mode: string) =>
         db
-          .prepare("INSERT INTO scim_directories (id, name, mode, proxy_token) VALUES (?, ?, ?, ?)")
+          .prepare(
+            "INSERT INTO scim_directories (id, name, mode, proxy_token_hash) VALUES (?, ?, ?, ?)",
+          )
           .bind(`dir_${mode}`, "Acme", mode, `tok_${mode}`)
           .run();
 

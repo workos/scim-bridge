@@ -1,4 +1,10 @@
-import { decryptSecret, encryptSecret } from "./crypto";
+import {
+  decryptSecret,
+  encryptSecret,
+  hashProxyToken,
+  isHashedToken,
+  proxyTokenHint,
+} from "./crypto";
 import { newDirectoryId, newProxyToken } from "./ids";
 import { TransientDatastoreError, type Datastore } from "./datastore";
 import type { Directory, IdMapping, Mode, ProxyLogEntry, ResourceType } from "./types";
@@ -95,14 +101,23 @@ async function decryptDirectory(
   return directory;
 }
 
+/**
+ * Resolve the directory a presented bearer token belongs to.
+ *
+ * The token is hashed and the digest is looked up, so this authenticates without
+ * the database holding anything usable (ENT-6742). No constant-time compare: the
+ * comparison happens inside the index on a SHA-256 digest, and timing that tells an
+ * attacker something about the digest, not about the token that produced it.
+ */
 export async function getDirectoryByToken(db: Datastore, token: string): Promise<Directory | null> {
   if (!token) return null;
+  const hash = await hashProxyToken(token);
   return decryptDirectory(
     db,
     await withDatastoreRetry(() =>
       db
-        .prepare("SELECT * FROM scim_directories WHERE proxy_token = ?")
-        .bind(token)
+        .prepare("SELECT * FROM scim_directories WHERE proxy_token_hash = ?")
+        .bind(hash)
         .first<Directory>(),
     ),
   );
@@ -133,23 +148,38 @@ export interface NewDirectory {
   workos_directory_id?: string;
   /** The bearer token the IdP will present, when it already has one to keep (a
    *  DNS swap in front of an existing SCIM hostname). Omitted → a fresh one is
-   *  minted. Stays plaintext: it is the key `getDirectoryByToken` looks up. */
+   *  minted. Hashed before it is stored; only the digest reaches the row. */
   proxy_token?: string;
 }
 
-/** Create a directory, encrypting the native/WorkOS tokens at rest, and return
- *  its id. The id and proxy token are minted here rather than by column
+/** A created directory: its id, plus the proxy token in the clear. This is the
+ *  only moment the token exists in a readable form — nothing can recover it from
+ *  the row afterwards, so a caller that needs to show or configure it must take it
+ *  from here (ENT-6742). */
+export interface CreatedDirectory {
+  id: string;
+  proxy_token: string;
+}
+
+/** Create a directory, encrypting the native/WorkOS tokens at rest and hashing the
+ *  proxy token. The id and proxy token are minted here rather than by column
  *  defaults, so every driver produces the same shapes (see shared/ids.ts). */
-export async function insertDirectory(db: Datastore, directory: NewDirectory): Promise<string> {
+export async function insertDirectory(
+  db: Datastore,
+  directory: NewDirectory,
+): Promise<CreatedDirectory> {
   const id = newDirectoryId();
   const nativeToken = await encryptSecret(db, directory.native_token ?? "");
   const workosToken = await encryptSecret(db, directory.workos_token ?? "");
+  const proxyToken = directory.proxy_token?.trim() || newProxyToken();
+  const proxyTokenHash = await hashProxyToken(proxyToken);
   await withDatastoreRetry(() =>
     db
       .prepare(
         "INSERT INTO scim_directories " +
-          "(id, name, native_url, native_token, workos_url, workos_token, workos_directory_id, proxy_token) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          "(id, name, native_url, native_token, workos_url, workos_token, workos_directory_id, " +
+          "proxy_token_hash, proxy_token_hint) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(
         id,
@@ -159,11 +189,81 @@ export async function insertDirectory(db: Datastore, directory: NewDirectory): P
         directory.workos_url ?? "",
         workosToken,
         directory.workos_directory_id || null,
-        directory.proxy_token?.trim() || newProxyToken(),
+        proxyTokenHash,
+        proxyTokenHint(proxyToken),
       )
       .run(),
   );
-  return id;
+  return { id, proxy_token: proxyToken };
+}
+
+/**
+ * Mint a new proxy token for a directory and return it in the clear.
+ *
+ * The only way back from a lost token, now that the row holds a digest. The
+ * previous token stops working the moment this returns, so whoever rotates has to
+ * paste the new one into the IdP before the next sync — which is why the caller
+ * gets the plaintext and the panel shows it once.
+ */
+export async function rotateProxyToken(db: Datastore, id: string): Promise<string> {
+  const token = newProxyToken();
+  // Hashed outside the retry closure: `withDatastoreRetry` takes a sync arrow, so
+  // an `await` in there is a type error (TS1308) rather than a subtle bug.
+  const hash = await hashProxyToken(token);
+  const { meta } = await withDatastoreRetry(() =>
+    db
+      .prepare(
+        "UPDATE scim_directories SET proxy_token_hash = ?, proxy_token_hint = ?, " +
+          "updated_at = datetime('now') WHERE id = ?",
+      )
+      .bind(hash, proxyTokenHint(token), id)
+      .run(),
+  );
+  if (!meta.changes) throw new Error(`No directory ${id} to rotate.`);
+  return token;
+}
+
+/**
+ * Convert rows written before ENT-6742, where `proxy_token_hash` still holds the
+ * plaintext token the column used to be called `proxy_token`.
+ *
+ * Runs at boot, once, and is a no-op afterwards. It has to happen here rather than
+ * in the migration because neither engine computes SHA-256 portably, and it has to
+ * happen at boot rather than lazily on first authentication because a lazy version
+ * leaves plaintext in the table for as long as a directory stays idle — and puts a
+ * "try it both ways" branch in the auth path, which is the branch you least want to
+ * get wrong.
+ *
+ * The `sha256:v1:` prefix is what makes a converted row distinguishable from an
+ * unconverted one; see `hashProxyToken` for why the alternative test does not work.
+ * This pass is the last moment `proxy_token_hint` can be filled in for these rows.
+ */
+export async function backfillProxyTokenHashes(db: Datastore): Promise<number> {
+  const { results } = await withDatastoreRetry(() =>
+    db
+      .prepare("SELECT id, proxy_token_hash FROM scim_directories")
+      .all<{ id: string; proxy_token_hash: string }>(),
+  );
+  const plaintext = results.filter((row) => !isHashedToken(row.proxy_token_hash));
+  if (!plaintext.length) return 0;
+
+  const statements = await Promise.all(
+    plaintext.map(async (row) =>
+      db
+        .prepare(
+          "UPDATE scim_directories SET proxy_token_hash = ?, proxy_token_hint = ? WHERE id = ?",
+        )
+        .bind(
+          await hashProxyToken(row.proxy_token_hash),
+          proxyTokenHint(row.proxy_token_hash),
+          row.id,
+        ),
+    ),
+  );
+  // One transaction: a partial pass would leave some directories authenticating
+  // against a digest and others against a plaintext that nothing hashes to.
+  await withDatastoreRetry(() => db.batch(statements));
+  return plaintext.length;
 }
 
 /** A directory declared by environment rather than imported through the panel:
@@ -186,15 +286,20 @@ export interface EnvDirectory {
  * table default (`passthrough`), the safe answer if the status endpoint is ever
  * unreachable: the listener stays inert.
  *
- * One transaction, and the deletes run first: `proxy_token` is UNIQUE across the
- * table, so a token that moved to a different directory id would otherwise
+ * One transaction, and the deletes run first: `proxy_token_hash` is UNIQUE across
+ * the table, so a token that moved to a different directory id would otherwise
  * collide with the row still holding it.
+ *
+ * The declared token is hashed like any other. `DIRECTORIES_JSON` remains the
+ * plaintext copy for this role — it is where the customer's app already keeps it —
+ * so nothing here needs to read the row back to authenticate outbound.
  */
 export async function reconcileDirectories(
   db: Datastore,
   directories: EnvDirectory[],
 ): Promise<void> {
   const ids = directories.map((d) => d.workos_directory_id);
+  const hashes = await Promise.all(directories.map((d) => hashProxyToken(d.proxy_token)));
   const undeclared = ids.length
     ? db
         .prepare(`DELETE FROM scim_directories WHERE id NOT IN (${ids.map(() => "?").join(", ")})`)
@@ -203,18 +308,20 @@ export async function reconcileDirectories(
   await withDatastoreRetry(() =>
     db.batch([
       undeclared,
-      ...directories.map((directory) =>
+      ...directories.map((directory, index) =>
         db
           .prepare(
-            "INSERT INTO scim_directories (id, name, proxy_token, workos_directory_id) " +
-              "VALUES (?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET " +
-              "name = excluded.name, proxy_token = excluded.proxy_token, " +
-              "updated_at = datetime('now')",
+            "INSERT INTO scim_directories " +
+              "(id, name, proxy_token_hash, proxy_token_hint, workos_directory_id) " +
+              "VALUES (?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET " +
+              "name = excluded.name, proxy_token_hash = excluded.proxy_token_hash, " +
+              "proxy_token_hint = excluded.proxy_token_hint, updated_at = datetime('now')",
           )
           .bind(
             directory.workos_directory_id,
             directory.name,
-            directory.proxy_token,
+            hashes[index],
+            proxyTokenHint(directory.proxy_token),
             directory.workos_directory_id,
           ),
       ),

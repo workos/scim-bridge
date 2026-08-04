@@ -20,6 +20,7 @@ import { openDatabase, SqliteDatastore, SqliteMigrator } from "./db/sqlite";
 import { inspectStorage } from "./db/storage-durability";
 import { openPostgres, PostgresDatastore, PostgresMigrator } from "./db/postgres";
 import { runMigrations } from "./db/migrate";
+import { backfillProxyTokenHashes } from "../workers/shared/db";
 import type { Datastore, DatastoreMigrator } from "../workers/shared/datastore";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -43,6 +44,15 @@ if (applied.length) console.log(`Applied ${applied.length} migration(s): ${appli
 store.encryptionKey = config.encryptionKey;
 if (config.encryptionKey) console.log("Per-directory token encryption: enabled");
 const env: PocEnv = { DB: store };
+// Rows written before ENT-6742 hold the proxy token in the clear. Convert them
+// before anything authenticates, and before the seeding below writes more rows.
+const hashed = await backfillProxyTokenHashes(store);
+if (hashed) {
+  console.log(
+    `Hashed ${hashed} plaintext proxy token(s) at rest (ENT-6742). ` +
+      "The tokens themselves still work; they are no longer readable from the database.",
+  );
+}
 if (config.role === "native-app") {
   await seedNativeAppConfig(env, config);
   await seedNativeAppDirectories(env, config);

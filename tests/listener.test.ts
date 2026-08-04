@@ -11,6 +11,7 @@ import {
   seedDirectory,
   type FakeUpstreams,
   type SeedDirectoryOptions,
+  type SeededDirectory,
 } from "./helpers";
 
 const T1 = "2026-07-31T10:00:00.000Z";
@@ -67,7 +68,7 @@ async function deliver(
  *  0002 seeds proxy.public_url=localhost, which tests must not dial). */
 async function seedListenerEnv(
   opts: SeedDirectoryOptions = {},
-): Promise<{ env: PocEnv; directory: Directory }> {
+): Promise<{ env: PocEnv; directory: SeededDirectory }> {
   const env = await createEnv();
   await env.DB.prepare(
     "DELETE FROM poc_config WHERE key IN ('proxy.public_url', 'proxy.loopback_url')",

@@ -42,15 +42,25 @@ orders the files, the driver's `DatastoreMigrator` applies them and owns the
 
 | Table | Holds |
 | --- | --- |
-| `scim_directories` | One row per directory being migrated: `mode`, `proxy_token` (IdP→proxy; minted at import, or the token the IdP already presents when one is imported), native URL + token, WorkOS URL + token, `workos_directory_id` (the `directory_...` id DSync events carry). |
+| `scim_directories` | One row per directory being migrated: `mode`, `proxy_token_hash` + `proxy_token_hint` (IdP→proxy credential, hashed; minted at import, or the token the IdP already presents when one is imported), native URL + token, WorkOS URL + token, `workos_directory_id` (the `directory_...` id DSync events carry). |
 | `id_mappings` | native id ↔ WorkOS id per resource, with the strategy used (`migrated-id` or `fallback-post`). |
 | `proxy_log` | Every proxied request, both legs — the panel's Activity view. |
 | `listener_events` / `listener_versions` | The demo DSync listener's log and last-writer-wins ledger. |
 | `poc_config` | Global key/value settings (public URLs, demo tokens). |
 
 The native/WorkOS **bearer tokens are encrypted at rest** (AES-256-GCM) when
-`APP_ENCRYPTION_KEY` is set; the `proxy_token` is not, because it is the lookup
-key. See `workers/shared/crypto.ts`.
+`APP_ENCRYPTION_KEY` is set. The **proxy token is hashed** (`sha256:v1:<hex>`) and
+never stored in a readable form: it is only ever compared, so the proxy hashes what
+the IdP presented and looks that up. The row also keeps `proxy_token_hint`, the last
+4 characters, so the panel can identify a credential it cannot show. Encryption
+would not work here — AES-GCM is randomised, so the value could not be matched. See
+`workers/shared/crypto.ts`.
+
+Two bundled components *present* a proxy token rather than verifying one — the IdP
+simulator and the native app's status client — so they keep their own copy: from
+`DIRECTORIES_JSON` in `native-app` mode, and in `poc_config` under `idp.` for the
+simulator. A real deployment has neither: the presenter is the IdP, holding its own.
+See `workers/shared/client-tokens.ts`.
 
 ## Migration modes (per directory)
 

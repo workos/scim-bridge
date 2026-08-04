@@ -9,7 +9,12 @@ export interface Directory {
   id: string;
   name: string;
   mode: Mode;
-  proxy_token: string;
+  /** `sha256:v1:<hex>` of the bearer token the IdP presents. The token itself is
+   *  not stored (ENT-6742); this is what `getDirectoryByToken` matches against. */
+  proxy_token_hash: string;
+  /** Last 4 characters of that token's plaintext, captured when it was minted, so
+   *  the panel can identify the credential without being able to show it. */
+  proxy_token_hint: string;
   native_url: string;
   native_token: string;
   workos_url: string;
