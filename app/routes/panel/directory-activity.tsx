@@ -2,7 +2,7 @@ import type { Route } from "./+types/directory-activity";
 
 import { useLoaderData, useRevalidator } from "react-router";
 import type { ProxyLogEntry } from "../../../workers/shared/types";
-import { withD1Retry } from "../../../workers/shared/db";
+import { withDatastoreRetry } from "../../../workers/shared/db";
 import { Badge } from "../../vendor/design-system/components/badge";
 import { Button } from "../../vendor/design-system/components/button";
 import { Callout } from "../../vendor/design-system/components/callout";
@@ -16,7 +16,7 @@ import { Text } from "../../vendor/design-system/components/text";
 import { CardHeader, formatBody, StatusCodeBadge } from "./ui";
 
 export async function loader({ context, params }: Route.LoaderArgs) {
-  const { results } = await withD1Retry(() =>
+  const { results } = await withDatastoreRetry(() =>
     context.cloudflare.env.DB.prepare(
       "SELECT * FROM proxy_log WHERE directory_id = ? ORDER BY id DESC LIMIT 100",
     )

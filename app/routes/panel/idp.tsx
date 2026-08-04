@@ -9,7 +9,7 @@ import {
   useNavigation,
   useRevalidator,
 } from "react-router";
-import { getConfig, listDirectories, withD1Retry } from "../../../workers/shared/db";
+import { getConfig, listDirectories, withDatastoreRetry } from "../../../workers/shared/db";
 import type { IdpActivity } from "../../../workers/idp/types";
 import * as AlertDialog from "../../vendor/design-system/components/alert-dialog";
 import { Badge } from "../../vendor/design-system/components/badge";
@@ -106,7 +106,7 @@ export async function loader({ context }: Route.LoaderArgs) {
   }
 
   const [users, groups, members, activity, auto] = await Promise.all([
-    withD1Retry(() =>
+    withDatastoreRetry(() =>
       env.DB.prepare(
         "SELECT id, user_name, external_id, given_name, family_name, active, scim_id, last_status " +
           "FROM idp_users WHERE directory_id = ? ORDER BY created_at, user_name",
@@ -114,14 +114,14 @@ export async function loader({ context }: Route.LoaderArgs) {
         .bind(directory.id)
         .all<IdpUserRow>(),
     ),
-    withD1Retry(() =>
+    withDatastoreRetry(() =>
       env.DB.prepare(
         "SELECT id, display_name, external_id, scim_id FROM idp_groups WHERE directory_id = ? ORDER BY created_at, display_name",
       )
         .bind(directory.id)
         .all<IdpGroupRow>(),
     ),
-    withD1Retry(() =>
+    withDatastoreRetry(() =>
       env.DB.prepare(
         "SELECT m.group_id AS group_id, m.user_id AS user_id, u.user_name AS user_name " +
           "FROM idp_group_members m " +
@@ -132,12 +132,12 @@ export async function loader({ context }: Route.LoaderArgs) {
         .bind(directory.id)
         .all<IdpMemberRow>(),
     ),
-    withD1Retry(() =>
+    withDatastoreRetry(() =>
       env.DB.prepare("SELECT * FROM idp_activity WHERE directory_id = ? ORDER BY id DESC LIMIT 50")
         .bind(directory.id)
         .all<IdpActivity>(),
     ),
-    withD1Retry(() =>
+    withDatastoreRetry(() =>
       env.DB.prepare(
         "SELECT running, interval_ms, tick_count FROM idp_auto_state WHERE directory_id = ?",
       )

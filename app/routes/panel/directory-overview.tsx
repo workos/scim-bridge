@@ -19,7 +19,7 @@ import {
   setDirectoryNative,
   setDirectoryWorkos,
   setDirectoryWorkosDirectoryId,
-  withD1Retry,
+  withDatastoreRetry,
 } from "../../../workers/shared/db";
 import type { BackfillSummary, Mode } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
@@ -258,7 +258,7 @@ export async function action({
   }
 
   if (intent === "delete-directory") {
-    await withD1Retry(() =>
+    await withDatastoreRetry(() =>
       env.DB.batch([
         env.DB.prepare("DELETE FROM id_mappings WHERE directory_id = ?").bind(directory.id),
         env.DB.prepare("DELETE FROM proxy_log WHERE directory_id = ?").bind(directory.id),

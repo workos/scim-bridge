@@ -2,7 +2,7 @@ import type { Route } from "./+types/directory-mappings";
 
 import { useLoaderData, useRevalidator } from "react-router";
 import type { IdMapping } from "../../../workers/shared/types";
-import { getDirectoryById, withD1Retry } from "../../../workers/shared/db";
+import { getDirectoryById, withDatastoreRetry } from "../../../workers/shared/db";
 import { Badge } from "../../vendor/design-system/components/badge";
 import { Button } from "../../vendor/design-system/components/button";
 import { Callout } from "../../vendor/design-system/components/callout";
@@ -53,7 +53,7 @@ export async function loader({ context, params }: Route.LoaderArgs) {
   const { env } = context.cloudflare;
   const directoryId = params.id ?? "";
   const [{ results }, directory] = await Promise.all([
-    withD1Retry(() =>
+    withDatastoreRetry(() =>
       env.DB.prepare(
         "SELECT * FROM id_mappings WHERE directory_id = ? ORDER BY updated_at DESC, native_id, resource_type",
       )
