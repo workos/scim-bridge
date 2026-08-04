@@ -1,6 +1,6 @@
 import type { Directory, IdMapping, ResourceType } from "./types";
 import { MIGRATED_ID_HEADER } from "./types";
-import { getMapping, upsertMapping, withDatastoreRetry } from "./db";
+import { getMapping, listDirectories, upsertMapping, withDatastoreRetry } from "./db";
 import type { Datastore } from "./datastore";
 
 export const SCIM_PREFIX = "/scim/v2";
@@ -106,6 +106,42 @@ export function nativeNamespaceKey(base: string): string | null {
 
 function defaultPort(protocol: string): string {
   return protocol === "https:" ? "443" : protocol === "http:" ? "80" : "";
+}
+
+/**
+ * Whether two directories' native base URLs can address the same native app, and
+ * so whether their ids can collide. Compared canonically, because equivalent URLs
+ * are stored verbatim (`https://x:443/scim/v2` and `https://X/scim/v2/` are one
+ * endpoint). Fails closed: a URL that won't parse is treated as possibly shared,
+ * which only ever refuses a write.
+ */
+export function sharesNamespace(ours: string, theirs: string): boolean {
+  const a = nativeNamespaceKey(ours);
+  const b = nativeNamespaceKey(theirs);
+  return a === null || b === null ? true : a === b;
+}
+
+/**
+ * Whether another directory addresses the same native app as this one. In a
+ * shared namespace a native id names a row that may belong to a different
+ * tenant, so no identifier this directory's own tenant supplies (`externalId`,
+ * and the id derived from it) can be trusted to address a row: the tenant would
+ * be choosing which of its neighbours' rows to write. Callers fail closed on
+ * true.
+ */
+export async function nativeNamespaceIsShared(
+  db: Datastore,
+  directory: Directory,
+): Promise<boolean> {
+  const directories = await listDirectories(db);
+  return directories.some(
+    (other) =>
+      other.id !== directory.id &&
+      // A directory with no native url configured yet addresses no native app,
+      // so it holds no rows to protect. Everything else compares fail-closed.
+      other.native_url !== "" &&
+      sharesNamespace(directory.native_url, other.native_url),
+  );
 }
 
 export interface ScimPath {

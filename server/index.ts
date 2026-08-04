@@ -151,7 +151,8 @@ async function mountBridge(): Promise<void> {
       return next();
     }
 
-    if (decidePanelAuth(config, c.req.header("Authorization") ?? null) !== "denied") return next();
+    const decision = await decidePanelAuth(config, c.req.header("Authorization") ?? null);
+    if (decision !== "denied") return next();
     return c.body("Authentication required.", 401, {
       "WWW-Authenticate": 'Basic realm="scim-bridge", charset="UTF-8"',
     });

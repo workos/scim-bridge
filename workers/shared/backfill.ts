@@ -15,8 +15,9 @@ import {
   loadIdMaps,
   makeTranslator,
   mirrorUpsert,
-  nativeNamespaceKey,
+  nativeNamespaceIsShared,
   parseJson,
+  sharesNamespace,
   scimFetch,
   type IdTranslationMaps,
   type UpstreamResult,
@@ -435,6 +436,10 @@ async function repairDrift(
  * - the row's id *is* the `externalId` WorkOS holds for the resource, which is the
  *   signature of the drift this repair exists for: the listener created the row
  *   under the IdP id (`idp_id` == `externalId`) while WorkOS kept the shared id.
+ *   Only in a namespace this directory has to itself: `externalId` is minted by
+ *   the very tenant being reconciled, so where another directory fronts the same
+ *   native app the tenant could name any neighbour's row — including a row no
+ *   directory maps, which is exactly the shape this repair targets.
  *
  * A row another directory in the same native namespace maps is never written —
  * that would be one tenant's reconcile overwriting another tenant's resource.
@@ -463,25 +468,19 @@ async function unattributedReason(
       : `this directory already maps it to WorkOS ${mine.workos_id}`;
   }
 
+  if (await nativeNamespaceIsShared(db, directory)) {
+    return (
+      "is unmapped, and another directory fronts this native app, so the tenant-supplied " +
+      "externalId cannot attribute it"
+    );
+  }
+
   const ours = resource.externalId;
   if (typeof ours !== "string" || !ours) {
     return "is unmapped, and the WorkOS resource has no externalId to attribute it by";
   }
   if (ours !== driftedId) return `is unmapped and is not this directory's externalId ${ours}`;
   return null;
-}
-
-/**
- * Whether two directories' native base URLs can address the same native app, and
- * so whether their ids can collide. Compared canonically, because equivalent URLs
- * are stored verbatim (`https://x:443/scim/v2` and `https://X/scim/v2/` are one
- * endpoint). Fails closed: a URL that won't parse is treated as possibly shared,
- * which only ever refuses a repair.
- */
-function sharesNamespace(ours: string, theirs: string): boolean {
-  const a = nativeNamespaceKey(ours);
-  const b = nativeNamespaceKey(theirs);
-  return a === null || b === null ? true : a === b;
 }
 
 /** GET native filtered on a unique attribute, returning the first match's id. */

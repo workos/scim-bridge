@@ -18,6 +18,7 @@ import {
   loadIdMaps,
   makeTranslator,
   mirrorUpsert,
+  nativeNamespaceIsShared,
   parseJson,
   parseScimPath,
   scimError,
@@ -424,8 +425,14 @@ async function createWithMigratedId(
   // to a native-writing mode can't target it (404) and backfill 409s. Works for
   // groups too: WorkOS surfaces a group's idp_id as its displayName but stores
   // the externalId (raw_attributes.externalId), which the native listener reads.
+  // Only where this directory has the native namespace to itself. The externalId
+  // is the tenant's own value, and the minted id both addresses a native row and
+  // is recorded in `id_mappings` as this directory's, so in a shared namespace a
+  // tenant could name a neighbour's (or the app's own) row and have a later
+  // reconcile write over it under cover of that mapping.
   const externalId = typeof body.externalId === "string" ? body.externalId : null;
-  const mintedId = externalId ?? crypto.randomUUID();
+  const shared = await nativeNamespaceIsShared(db, directory);
+  const mintedId = !shared && externalId ? externalId : crypto.randomUUID();
   const result = await mirrorUpsert(db, directory, kind, mintedId, body);
   applyMirrorResult(log, result);
   if (!result.ok) {

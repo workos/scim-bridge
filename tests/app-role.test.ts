@@ -420,52 +420,93 @@ describe("panel auth", () => {
   const basic = (user: string, pass: string) =>
     `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
 
-  it("is open only when neither credential is configured", () => {
+  it("is open only when neither credential is configured", async () => {
     const open = { panelAuthUser: null, panelAuthPassword: null };
-    expect(decidePanelAuth(open, null)).toBe("open");
+    expect(await decidePanelAuth(open, null)).toBe("open");
     // Blank strings are what an operator gets from `PANEL_AUTH_USER=` in a .env
     // or an unset value in docker-compose, so they must read as "not set".
-    expect(decidePanelAuth({ panelAuthUser: "", panelAuthPassword: "" }, null)).toBe("open");
+    expect(await decidePanelAuth({ panelAuthUser: "", panelAuthPassword: "" }, null)).toBe("open");
   });
 
-  it("denies a half-configured pair instead of skipping auth", () => {
+  it("denies a half-configured pair instead of skipping auth", async () => {
     // The regression: `||` here meant one missing var opened the whole panel.
     // Anonymous, and with no signal to the operator that auth was off.
-    expect(decidePanelAuth({ panelAuthUser: "ada", panelAuthPassword: null }, null)).toBe("denied");
-    expect(decidePanelAuth({ panelAuthUser: null, panelAuthPassword: "hunter2" }, null)).toBe(
+    expect(await decidePanelAuth({ panelAuthUser: "ada", panelAuthPassword: null }, null)).toBe(
+      "denied",
+    );
+    expect(await decidePanelAuth({ panelAuthUser: null, panelAuthPassword: "hunter2" }, null)).toBe(
       "denied",
     );
     // Not even by presenting the half that *is* configured, which is the shape a
     // naive equality check would let through.
     expect(
-      decidePanelAuth({ panelAuthUser: "ada", panelAuthPassword: null }, basic("ada", "")),
+      await decidePanelAuth({ panelAuthUser: "ada", panelAuthPassword: null }, basic("ada", "")),
     ).toBe("denied");
     expect(
-      decidePanelAuth({ panelAuthUser: null, panelAuthPassword: "hunter2" }, basic("", "hunter2")),
+      await decidePanelAuth(
+        { panelAuthUser: null, panelAuthPassword: "hunter2" },
+        basic("", "hunter2"),
+      ),
     ).toBe("denied");
   });
 
-  it("grants only an exact match once both are configured", () => {
+  it("grants only an exact match once both are configured", async () => {
     const config = { panelAuthUser: "ada", panelAuthPassword: "hunter2" };
-    expect(decidePanelAuth(config, basic("ada", "hunter2"))).toBe("granted");
-    expect(decidePanelAuth(config, basic("ada", "wrong"))).toBe("denied");
-    expect(decidePanelAuth(config, basic("eve", "hunter2"))).toBe("denied");
-    expect(decidePanelAuth(config, null)).toBe("denied");
-    expect(decidePanelAuth(config, "Bearer ada:hunter2")).toBe("denied");
-    expect(decidePanelAuth(config, "Basic not-base64!")).toBe("denied");
+    expect(await decidePanelAuth(config, basic("ada", "hunter2"))).toBe("granted");
+    expect(await decidePanelAuth(config, basic("ada", "wrong"))).toBe("denied");
+    expect(await decidePanelAuth(config, basic("eve", "hunter2"))).toBe("denied");
+    expect(await decidePanelAuth(config, null)).toBe("denied");
+    expect(await decidePanelAuth(config, "Bearer ada:hunter2")).toBe("denied");
+    expect(await decidePanelAuth(config, "Basic not-base64!")).toBe("denied");
     // A credential-less Basic header decodes to "", which has no separator.
-    expect(decidePanelAuth(config, "Basic ")).toBe("denied");
+    expect(await decidePanelAuth(config, "Basic ")).toBe("denied");
   });
 
-  it("keeps a colon in the password intact", () => {
+  it("keeps a colon in the password intact", async () => {
     // Splitting on every colon truncates the password at the first one, so a
     // valid credential is rejected and the operator sees an unexplained 401.
     const config = { panelAuthUser: "ada", panelAuthPassword: "hunter2:extra:more" };
-    expect(decidePanelAuth(config, basic("ada", "hunter2:extra:more"))).toBe("granted");
-    expect(decidePanelAuth(config, basic("ada", "hunter2"))).toBe("denied");
+    expect(await decidePanelAuth(config, basic("ada", "hunter2:extra:more"))).toBe("granted");
+    expect(await decidePanelAuth(config, basic("ada", "hunter2"))).toBe("denied");
+  });
+
+  it("denies a wrong password of any length, without throwing", async () => {
+    // The reason the comparison hashes before comparing. A native
+    // `timingSafeEqual` throws on length-mismatched inputs, and the string version
+    // returns early on them — and a wrong password is very often the wrong length,
+    // so that is the common case, not the edge case.
+    const config = { panelAuthUser: "ada", panelAuthPassword: "hunter2" };
+
+    for (const guess of ["", "h", "hunter", "hunter2 ", "hunter2".repeat(500), "🔑"]) {
+      expect(await decidePanelAuth(config, basic("ada", guess)), guess).toBe("denied");
+    }
+  });
+
+  it("checks the password even when the username is already wrong", async () => {
+    // `user === u && pass === p` short-circuited: a wrong username meant the
+    // password comparison never ran, so the two denials cost different work. Both
+    // sides are now always compared. The observable part is only that each
+    // combination is still denied — the invariant this pins is that no arrangement
+    // of one-wrong-one-right is ever granted.
+    const config = { panelAuthUser: "ada", panelAuthPassword: "hunter2" };
+
+    expect(await decidePanelAuth(config, basic("eve", "hunter2"))).toBe("denied");
+    expect(await decidePanelAuth(config, basic("ada", "wrong"))).toBe("denied");
+    expect(await decidePanelAuth(config, basic("eve", "wrong"))).toBe("denied");
+    // And the swap: right values in the wrong fields.
+    expect(await decidePanelAuth(config, basic("hunter2", "ada"))).toBe("denied");
+  });
+
+  it("still grants a credential that differs only in case or whitespace nowhere", async () => {
+    // Hashing makes the comparison exact, which is what it must stay: a panel
+    // password is not case-insensitive and must not become so.
+    const config = { panelAuthUser: "Ada", panelAuthPassword: "Hunter2" };
+
+    expect(await decidePanelAuth(config, basic("Ada", "Hunter2"))).toBe("granted");
+    expect(await decidePanelAuth(config, basic("ada", "Hunter2"))).toBe("denied");
+    expect(await decidePanelAuth(config, basic("Ada", "hunter2"))).toBe("denied");
   });
 });
-
 /** Epoch ms the fixture below is signed at; the clock is frozen here so the
  *  delivery lands inside the listener's freshness window. */
 const SIGNED_AT = Date.parse("2026-08-03T12:00:00.000Z");
