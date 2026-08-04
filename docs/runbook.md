@@ -88,8 +88,40 @@ Advance the directory's mode from its page, verifying convergence in the
 system stayed current, so no data is lost. After cutover (`workos-only`), native
 is kept current by the DSync listener; if you're unsure it stayed caught up, run
 **Reconcile from WorkOS** on the directory page first — it snapshots the live
-WorkOS directory and replays every resource back into native (id-preserving),
-guaranteeing parity before you flip the mode back.
+WorkOS directory and replays every resource back into native, guaranteeing parity
+before you flip the mode back.
+
+Two properties make this safe:
+
+- **Id-preserving.** When the listener creates a resource from an event it adopts
+  the event's WorkOS resource id (`data.id`), which for a migrated directory is
+  the pre-migration shared id and for a resource born after cutover is the id
+  WorkOS minted from the IdP `externalId`. Either way native, WorkOS, and the
+  proxy address the resource by one id, so reconcile's `PUT /Users/{id}` lands on
+  the same row.
+- **Functional even when ids drift.** Ids don't actually have to match for
+  rollback to work: the proxy translates through the `id_mappings` table, so a
+  native row under a *different* id but with a mapping row is addressable end to
+  end. What breaks rollback is a resource with **no** mapping — the case the
+  reconcile below repairs.
+
+**Repairing a directory whose ids already drifted.** A directory cut over before
+this listener fix may hold native rows under the IdP id while WorkOS holds the
+shared id (e.g. an offboard-then-rehire re-created the row under `idp_id`). Run
+**Reconcile from WorkOS** and read its summary:
+
+- Lines like `Users/{sharedId}: id drift — userName "…" is native id {driftedId},
+  WorkOS holds {sharedId}; reconciled via mapping` mean reconcile found the
+  drifted native row by its `userName`/`displayName`, updated it in place, and
+  wrote the mapping — the directory is now rollback-safe with no further action.
+- A line ending `native returned 409 (… drift unresolved)` means the collision
+  couldn't be attributed to a row (the userName/displayName didn't resolve);
+  investigate that resource by hand.
+
+Reconcile never deletes a native row to fix an id: native is the customer's own
+app, where a `DELETE` deprovisions a real person (session revocation, data
+archival, downstream cascades). Hand-deleting a native row to force ids to line
+up is a last resort — do it only with those side effects understood.
 
 ## Run the image as the customer-app stand-in
 

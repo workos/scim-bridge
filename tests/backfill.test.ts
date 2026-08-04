@@ -611,6 +611,136 @@ describe("runReconcileFromWorkos", () => {
       ],
     );
   });
+
+  it("repairs a drifted native row on 409 by resolving on userName and mapping the shared id", async () => {
+    const env = createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "workos-only", log_persistence: 1 });
+    fake = installFakeUpstreams();
+    // No mapping seeded: the shared id translates to itself, so reconcile first
+    // PUTs /Users/shared-1. Native holds that user under the drifted IdP id, so
+    // its userName collides → 409.
+    fake.route("workos", "GET", "/Users", listPage([{ id: "shared-1", userName: "one@x.test" }]));
+    fake.route("workos", "GET", "/Groups", listPage([]));
+    fake.route("native", "PUT", "/Users/shared-1", scimJson(409, { detail: "userName exists" }));
+    fake.route("native", "GET", "/Users", () =>
+      listPage([{ id: "idp-1", userName: "one@x.test" }]),
+    );
+    fake.route("native", "PUT", "/Users/idp-1", (call) => scimJson(200, call.json()));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    // The drifted row is repaired in place — never DELETEd.
+    expect(fake.callsTo("native").map((c) => `${c.method} ${c.path.split("?")[0]}`)).toEqual([
+      "PUT /Users/shared-1",
+      "GET /Users",
+      "PUT /Users/idp-1",
+    ]);
+    expect(fake.callsTo("native").every((c) => c.method !== "DELETE")).toBe(true);
+    // Counted as mirrored, with a distinct id-drift report.
+    expect(summary.users).toEqual({ total: 1, mirrored: 1, failed: 0 });
+    expect(summary.errors).toEqual([
+      'Users/shared-1: id drift — userName "one@x.test" is native id idp-1, ' +
+        "WorkOS holds shared-1; reconciled via mapping",
+    ]);
+    // The mapping row is what keeps the two sides translatable — the crux of the fix.
+    expect(await mappingRows(env, directory.id)).toEqual([
+      {
+        resource_type: "Users",
+        native_id: "idp-1",
+        workos_id: "shared-1",
+        strategy: "fallback-post",
+      },
+    ]);
+    // The repair PUT carried the drifted id in both the path and the migrated-id header.
+    const repair = fake.callsTo("native")[2];
+    expect(repair.headers.get(MIGRATED_ID_HEADER)).toBe("idp-1");
+    expect(repair.json()).toEqual({ id: "idp-1", userName: "one@x.test" });
+  });
+
+  it("repairs a drifted group on 409 by resolving on displayName", async () => {
+    const env = createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "workos-only" });
+    fake = installFakeUpstreams();
+    fake.route("workos", "GET", "/Users", listPage([]));
+    fake.route("workos", "GET", "/Groups", listPage([{ id: "shared-g1", displayName: "Eng" }]));
+    fake.route(
+      "native",
+      "PUT",
+      "/Groups/shared-g1",
+      scimJson(409, { detail: "displayName exists" }),
+    );
+    fake.route("native", "GET", "/Groups", () => listPage([{ id: "idp-g1", displayName: "Eng" }]));
+    fake.route("native", "PUT", "/Groups/idp-g1", (call) => scimJson(200, call.json()));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    expect(summary.groups).toEqual({ total: 1, mirrored: 1, failed: 0 });
+    expect(summary.errors).toEqual([
+      'Groups/shared-g1: id drift — displayName "Eng" is native id idp-g1, ' +
+        "WorkOS holds shared-g1; reconciled via mapping",
+    ]);
+    expect(await mappingRows(env, directory.id)).toEqual([
+      {
+        resource_type: "Groups",
+        native_id: "idp-g1",
+        workos_id: "shared-g1",
+        strategy: "fallback-post",
+      },
+    ]);
+  });
+
+  it("addresses a same-run repaired user by its drifted id in a later group's members", async () => {
+    const env = createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "workos-only" });
+    fake = installFakeUpstreams();
+    // A user drifts and is repaired to idp-1 during the user pass; a group pushed
+    // afterwards lists that user by its WorkOS shared id. The member value must
+    // come out as the drifted native id — otherwise the group PUT replaces the
+    // membership set with a non-existent id and silently drops the real user.
+    fake.route("workos", "GET", "/Users", listPage([{ id: "shared-1", userName: "one@x.test" }]));
+    fake.route(
+      "workos",
+      "GET",
+      "/Groups",
+      listPage([{ id: "shared-g1", displayName: "Eng", members: [{ value: "shared-1" }] }]),
+    );
+    fake.route("native", "PUT", "/Users/shared-1", scimJson(409, { detail: "userName exists" }));
+    fake.route("native", "GET", "/Users", () =>
+      listPage([{ id: "idp-1", userName: "one@x.test" }]),
+    );
+    fake.route("native", "PUT", "/Users/idp-1", (call) => scimJson(200, call.json()));
+    fake.route("native", "PUT", "/Groups/shared-g1", (call) => scimJson(200, call.json()));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    expect(summary.users).toEqual({ total: 1, mirrored: 1, failed: 0 });
+    expect(summary.groups).toEqual({ total: 1, mirrored: 1, failed: 0 });
+    const groupPut = fake.callsTo("native").find((c) => c.path.startsWith("/Groups/"));
+    expect(groupPut?.json()).toEqual({
+      id: "shared-g1",
+      displayName: "Eng",
+      members: [{ value: "idp-1" }],
+    });
+  });
+
+  it("reports an unresolvable 409 distinctly and leaves it failed", async () => {
+    const env = createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "workos-only" });
+    fake = installFakeUpstreams();
+    fake.route("workos", "GET", "/Users", listPage([{ id: "shared-1", userName: "one@x.test" }]));
+    fake.route("workos", "GET", "/Groups", listPage([]));
+    fake.route("native", "PUT", "/Users/shared-1", scimJson(409, { detail: "userName exists" }));
+    // The lookup finds no matching row — the collision can't be attributed.
+    fake.route("native", "GET", "/Users", listPage([]));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    expect(summary.users).toEqual({ total: 1, mirrored: 0, failed: 1 });
+    expect(summary.errors).toEqual([
+      "Users/shared-1: native returned 409 (userName/displayName exists under a different id; drift unresolved)",
+    ]);
+    expect(await mappingRows(env, directory.id)).toEqual([]);
+  });
 });
 
 describe("runBackfill snapshot edges", () => {
