@@ -3,6 +3,7 @@ import type { Directory, PocEnv, ResourceType, WorkerHandler } from "../shared/t
 import {
   deleteMapping,
   getDirectoryByToken,
+  getMapping,
   insertProxyLog,
   type ProxyLogInsert,
   shouldPersistLogs,
@@ -472,6 +473,28 @@ async function replaceWithMigratedId(
   // Group member values are written in WorkOS-id space; the top-level id is
   // keyed off the path (nativeId), so mirrorUpsert owns it.
   const body = kind === "Groups" ? translateResourceIds(parsed, kind, toWorkos) : parsed;
+  // A replace with no mapping yet self-heals by minting one keyed on the path id.
+  // That id is the tenant's own value and the mapping is this directory's claim on
+  // a native row, so where a neighbour fronts the same native app it would let a
+  // tenant name the neighbour's (or the app's own) row and have a later reconcile
+  // write over it — the same attribution the create leg refuses to derive. Fail
+  // closed: nothing exists under this id yet, so 404 is the honest SCIM answer,
+  // and the IdP's create fallback goes through the leg that mints safely.
+  if (
+    !(await getMapping(db, directory.id, kind, nativeId)) &&
+    (await nativeNamespaceIsShared(db, directory))
+  ) {
+    // The reason names the neighbour, so it goes to the operator's log rather
+    // than to the tenant that just tried to claim the id.
+    log.error =
+      `${kind}/${nativeId}: unmapped, and another directory fronts this native app, so the ` +
+      "id in the request cannot be adopted as this directory's; replace refused";
+    return scimError(
+      404,
+      `No ${kind} resource with id ${nativeId} is mapped for this directory, so it cannot be ` +
+        "replaced. Create it first and use the id the response carries.",
+    );
+  }
   const result = await mirrorUpsert(db, directory, kind, nativeId, body);
   applyMirrorResult(log, result);
   if (!result.ok) {

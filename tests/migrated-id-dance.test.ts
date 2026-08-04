@@ -956,6 +956,45 @@ describe("migrated-id dance", () => {
       });
     });
 
+    it("refuses a first-touch replace when another directory fronts the same native app", async () => {
+      // The path id is the tenant's own value and the mapping the self-heal would
+      // mint is this directory's claim on a native row, so in a shared namespace
+      // minting from it would let a tenant name a neighbour's row.
+      const { env, directory, fake } = await setup({ mode: "workos-only" });
+      await seedDirectory(env.DB, { name: "Org B" });
+
+      const res = await send(env, directory, "PUT", "/scim/v2/Users/victim-1", {
+        userName: "attacker@evil.example",
+        active: false,
+      });
+
+      expect(res.status).toBe(404);
+      const body = (await res.json()) as { detail: string };
+      // The tenant is not told a neighbour exists; that reason goes to the log.
+      expect(body.detail).toContain("is mapped for this directory, so it cannot be replaced");
+      expect(body.detail).not.toContain("another directory");
+      // Nothing was attempted upstream, and no claim was recorded.
+      expect(fake.callsTo("workos")).toHaveLength(0);
+      expect(await allMappings(env.DB, directory.id)).toEqual([]);
+    });
+
+    it("still replaces through an existing mapping in a shared namespace", async () => {
+      // The refusal is only about adopting a new id: a mapping the bridge itself
+      // minted stays addressable however many directories front the native app.
+      const { env, directory, fake } = await setup({ mode: "workos-only" });
+      await seedDirectory(env.DB, { name: "Org B" });
+      await seedMapping(env.DB, directory, "Users", "u1", "wos_9", "fallback-post");
+      fake.route("workos", "PUT", "/Users/wos_9", scimJson(200, { id: "wos_9" }));
+
+      const res = await send(env, directory, "PUT", "/scim/v2/Users/u1", {
+        userName: "ada@example.com",
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ id: "u1" });
+      expect(legs(fake.callsTo("workos"))).toEqual(["PUT /Users/wos_9"]);
+    });
+
     it("a failed replace surfaces the upstream status and keeps the mapping", async () => {
       const { env, directory, fake } = await setup({ mode: "workos-only" });
       await seedMapping(env.DB, directory, "Users", "u1", "u1", "migrated-id");
