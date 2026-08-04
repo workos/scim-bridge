@@ -1,6 +1,7 @@
 import type { Route } from "./+types/directory-activity";
 
 import { useLoaderData, useRevalidator } from "react-router";
+import { datastoreContext } from "../../context";
 import type { ProxyLogEntry } from "../../../workers/shared/types";
 import { withDatastoreRetry } from "../../../workers/shared/db";
 import { Badge } from "../../vendor/design-system/components/badge";
@@ -17,9 +18,9 @@ import { CardHeader, formatBody, StatusCodeBadge } from "./ui";
 
 export async function loader({ context, params }: Route.LoaderArgs) {
   const { results } = await withDatastoreRetry(() =>
-    context.cloudflare.env.DB.prepare(
-      "SELECT * FROM proxy_log WHERE directory_id = ? ORDER BY id DESC LIMIT 100",
-    )
+    context
+      .get(datastoreContext)
+      .prepare("SELECT * FROM proxy_log WHERE directory_id = ? ORDER BY id DESC LIMIT 100")
       .bind(params.id ?? "")
       .all<ProxyLogEntry>(),
   );

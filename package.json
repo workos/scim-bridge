@@ -34,7 +34,7 @@
     "@radix-ui/colors": "^3.0.0",
     "@radix-ui/react-icons": "^2.0.0-rc.1776195498999",
     "@radix-ui/themes": "^3.3.0",
-    "@react-router/node": "^7.10.0",
+    "@react-router/node": "^8.3.0",
     "@uiw/react-codemirror": "^4.23.6",
     "aria-hidden": "^1.2.6",
     "better-sqlite3": "^11.8.0",
@@ -51,7 +51,7 @@
     "react-hook-form": "^7.71.1",
     "react-is": "^19.2.8",
     "react-remove-scroll": "^2.6.3",
-    "react-router": "^7.10.0",
+    "react-router": "^8.3.0",
     "scroll-into-view-if-needed": "^2.2.26",
     "tslib": "^2.4.0",
     "tsx": "^4.19.2",
@@ -59,7 +59,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4",
-    "@react-router/dev": "^7.10.0",
+    "@react-router/dev": "^8.3.0",
     "@tailwindcss/vite": "^4",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22",
@@ -79,6 +79,6 @@
     "vitest": "^4.1.10"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.22.0"
   }
 }

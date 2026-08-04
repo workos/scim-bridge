@@ -1,6 +1,7 @@
 import type { Route } from "./+types/layout";
 import type { MetaFunction } from "react-router";
 import { Link, Outlet, redirect, useLoaderData, useLocation } from "react-router";
+import { demoModeContext } from "../../context";
 import { Badge } from "../../vendor/design-system/components/badge";
 import { Box } from "../../vendor/design-system/components/box";
 import { Flex } from "../../vendor/design-system/components/flex";
@@ -19,7 +20,7 @@ export const meta: MetaFunction = () => [
 const DEMO_PATHS = ["/panel/live", "/panel/native", "/panel/listener", "/panel/idp"];
 
 export function loader({ context, request }: Route.LoaderArgs) {
-  const { demoMode } = context.cloudflare;
+  const demoMode = context.get(demoModeContext);
   if (!demoMode) {
     const { pathname } = new URL(request.url);
     if (DEMO_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {

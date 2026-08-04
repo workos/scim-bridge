@@ -1,6 +1,8 @@
 import type { ActionFunctionArgs } from "react-router";
+import { RouterContextProvider } from "react-router";
 import { afterEach, describe, expect, it } from "vitest";
 import { action } from "../app/routes/panel/home";
+import { datastoreContext, demoModeContext } from "../app/context";
 import proxyWorker from "../workers/proxy/index";
 import { getDirectoryByToken, insertDirectory, listDirectories } from "../workers/shared/db";
 import { hashProxyToken } from "../workers/shared/crypto";
@@ -33,12 +35,17 @@ async function submit(
   fields: Record<string, string>,
   demoMode = false,
 ): Promise<ImportResult | Response> {
+  // The real React Router 8 provider, populated exactly as server/index.ts does
+  // — so a route reading a context the server never sets fails here too.
+  const context = new RouterContextProvider();
+  context.set(datastoreContext, env.DB);
+  context.set(demoModeContext, demoMode);
   return (await action({
     request: new Request("https://bridge.test/panel", {
       method: "POST",
       body: new URLSearchParams(fields),
     }),
-    context: { cloudflare: { env, ctx: createCtx(), demoMode } },
+    context,
     params: {},
   } as unknown as ActionFunctionArgs)) as ImportResult | Response;
 }

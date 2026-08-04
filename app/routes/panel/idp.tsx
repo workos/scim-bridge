@@ -9,6 +9,7 @@ import {
   useNavigation,
   useRevalidator,
 } from "react-router";
+import { datastoreContext } from "../../context";
 import { getConfig, listDirectories, withDatastoreRetry } from "../../../workers/shared/db";
 import type { IdpActivity } from "../../../workers/idp/types";
 import * as AlertDialog from "../../vendor/design-system/components/alert-dialog";
@@ -83,13 +84,13 @@ interface IdpActionData {
 }
 
 export async function loader({ context }: Route.LoaderArgs) {
-  const { env } = context.cloudflare;
-  const directories = await listDirectories(env.DB);
+  const db = context.get(datastoreContext);
+  const directories = await listDirectories(db);
   const directory = directories[0] ?? null;
 
   const [idpPublicUrl, proxyPublicUrl] = await Promise.all([
-    getConfig(env.DB, "idp.public_url"),
-    getConfig(env.DB, "proxy.public_url"),
+    getConfig(db, "idp.public_url"),
+    getConfig(db, "proxy.public_url"),
   ]);
 
   if (!directory) {
@@ -107,40 +108,45 @@ export async function loader({ context }: Route.LoaderArgs) {
 
   const [users, groups, members, activity, auto] = await Promise.all([
     withDatastoreRetry(() =>
-      env.DB.prepare(
-        "SELECT id, user_name, external_id, given_name, family_name, active, scim_id, last_status " +
-          "FROM idp_users WHERE directory_id = ? ORDER BY created_at, user_name",
-      )
+      db
+        .prepare(
+          "SELECT id, user_name, external_id, given_name, family_name, active, scim_id, last_status " +
+            "FROM idp_users WHERE directory_id = ? ORDER BY created_at, user_name",
+        )
         .bind(directory.id)
         .all<IdpUserRow>(),
     ),
     withDatastoreRetry(() =>
-      env.DB.prepare(
-        "SELECT id, display_name, external_id, scim_id FROM idp_groups WHERE directory_id = ? ORDER BY created_at, display_name",
-      )
+      db
+        .prepare(
+          "SELECT id, display_name, external_id, scim_id FROM idp_groups WHERE directory_id = ? ORDER BY created_at, display_name",
+        )
         .bind(directory.id)
         .all<IdpGroupRow>(),
     ),
     withDatastoreRetry(() =>
-      env.DB.prepare(
-        "SELECT m.group_id AS group_id, m.user_id AS user_id, u.user_name AS user_name " +
-          "FROM idp_group_members m " +
-          "JOIN idp_groups g ON g.id = m.group_id " +
-          "JOIN idp_users u ON u.id = m.user_id " +
-          "WHERE g.directory_id = ? ORDER BY u.user_name",
-      )
+      db
+        .prepare(
+          "SELECT m.group_id AS group_id, m.user_id AS user_id, u.user_name AS user_name " +
+            "FROM idp_group_members m " +
+            "JOIN idp_groups g ON g.id = m.group_id " +
+            "JOIN idp_users u ON u.id = m.user_id " +
+            "WHERE g.directory_id = ? ORDER BY u.user_name",
+        )
         .bind(directory.id)
         .all<IdpMemberRow>(),
     ),
     withDatastoreRetry(() =>
-      env.DB.prepare("SELECT * FROM idp_activity WHERE directory_id = ? ORDER BY id DESC LIMIT 50")
+      db
+        .prepare("SELECT * FROM idp_activity WHERE directory_id = ? ORDER BY id DESC LIMIT 50")
         .bind(directory.id)
         .all<IdpActivity>(),
     ),
     withDatastoreRetry(() =>
-      env.DB.prepare(
-        "SELECT running, interval_ms, tick_count FROM idp_auto_state WHERE directory_id = ?",
-      )
+      db
+        .prepare(
+          "SELECT running, interval_ms, tick_count FROM idp_auto_state WHERE directory_id = ?",
+        )
         .bind(directory.id)
         .first<IdpAutoStateRow>(),
     ),
@@ -162,7 +168,7 @@ export async function action({
   context,
   request,
 }: Route.ActionArgs): Promise<Response | IdpActionData> {
-  const { env } = context.cloudflare;
+  const db = context.get(datastoreContext);
   const form = await request.formData();
   const intent = String(form.get("intent") ?? "");
   const directoryId = String(form.get("directoryId") ?? "");
@@ -173,7 +179,7 @@ export async function action({
     };
   }
 
-  const idpPublicUrl = (await getConfig(env.DB, "idp.public_url")) ?? DEFAULT_IDP_URL;
+  const idpPublicUrl = (await getConfig(db, "idp.public_url")) ?? DEFAULT_IDP_URL;
 
   const endpoints: Record<string, string> = {
     seed: "seed",
