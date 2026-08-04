@@ -1,5 +1,5 @@
 import type { Directory, WorkerHandler } from "../shared/types";
-import { getDirectoryById, withDatastoreRetry } from "../shared/db";
+import { getDirectoryById, listDirectories, withDatastoreRetry } from "../shared/db";
 import * as client from "./client";
 import type { ActionContext } from "./client";
 import { seedDirectory } from "./auto";
@@ -18,13 +18,58 @@ function slug(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+/**
+ * Read a POST body as JSON *or* as a form encoding (ENT-6756).
+ *
+ * The panel always sends JSON (`callIdpSimulator`), which is why this went
+ * unnoticed: the only caller that could hit it is a human or a script driving the
+ * simulator directly, and that is exactly what DEMO_MODE invites. `curl -d …`
+ * defaults to `application/x-www-form-urlencoded`, so the JSON parse threw, the
+ * catch returned `{}`, and a perfectly valid `directoryId` was reported as
+ * "Unknown or missing" — the reported bug.
+ *
+ * Content type decides, with a fallback rather than a rejection, because a hand
+ * written request is as likely to carry the wrong content type as none at all.
+ */
 async function readBody(request: Request): Promise<Record<string, unknown>> {
-  try {
-    const parsed: unknown = await request.json();
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
-  } catch {
-    return {};
+  const contentType = request.headers.get("Content-Type") ?? "";
+
+  // multipart needs the boundary from the header, so it has to go through
+  // `formData()`; everything else is parsed from the raw text, which keeps the body
+  // to a single read and avoids cloning the request.
+  if (/^multipart\/form-data/i.test(contentType)) {
+    try {
+      const form = await request.formData();
+      return Object.fromEntries([...form.entries()].filter(([, v]) => typeof v === "string"));
+    } catch {
+      return {};
+    }
   }
+
+  const raw = await request.text();
+  if (!raw) return {};
+  if (/^application\/(json|.*\+json)/i.test(contentType)) return parseJson(raw) ?? {};
+  if (/^application\/x-www-form-urlencoded/i.test(contentType)) return parseForm(raw) ?? {};
+  // No usable content type: try both rather than guess which one was meant.
+  return parseJson(raw) ?? parseForm(raw) ?? {};
+}
+
+function parseJson(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `a=1&b=2` → `{a: "1", b: "2"}`. Null when nothing parsed out, so a caller can
+ *  fall through to another encoding: `URLSearchParams` accepts any string and would
+ *  otherwise turn a JSON body into one nonsense key. */
+function parseForm(raw: string): Record<string, unknown> | null {
+  const params = new URLSearchParams(raw);
+  const fields = Object.fromEntries(params.entries());
+  return Object.keys(fields).length > 0 ? fields : null;
 }
 
 function str(body: Record<string, unknown>, key: string): string {
@@ -53,10 +98,39 @@ async function route(request: Request, env: IdpEnv): Promise<Response> {
     }
 
     const body = request.method === "POST" ? await readBody(request) : {};
-    const directoryId = str(body, "directoryId") || (url.searchParams.get("directoryId") ?? "");
+    // Trimmed: an id pasted from a terminal or a panel URL arrives with whitespace
+    // often enough that rejecting it teaches nothing.
+    const directoryId = (
+      str(body, "directoryId") ||
+      url.searchParams.get("directoryId") ||
+      ""
+    ).trim();
     const directory = directoryId ? await getDirectoryById(env.DB, directoryId) : null;
     if (!directory) {
-      return json({ error: "Unknown or missing directoryId." }, 400);
+      // Two different mistakes, two different messages. The old single string said
+      // "Unknown or missing" for both, so a valid id that failed to parse out of the
+      // body looked like an id the database had never heard of (ENT-6756).
+      if (!directoryId) {
+        return json(
+          {
+            error:
+              'No directoryId in this request. Send it as JSON (`{"directoryId":"dir_…"}`), ' +
+              "as a form field, or as a ?directoryId= query parameter.",
+          },
+          400,
+        );
+      }
+      const known = await listDirectories(env.DB);
+      return json(
+        {
+          error: `No directory has the id ${directoryId}.`,
+          // The simulator only ever runs against a handful of demo directories, so
+          // listing them turns a dead end into the next step. Ids and names only —
+          // the rest of a directory row is credentials.
+          known: known.map((d) => ({ id: d.id, name: d.name })),
+        },
+        400,
+      );
     }
 
     if (url.pathname === "/state") {
