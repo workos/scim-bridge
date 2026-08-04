@@ -9,6 +9,7 @@ import {
   type EnvDirectory,
 } from "../workers/shared/db";
 import { rememberClientToken, storeClientToken } from "../workers/shared/client-tokens";
+import { secretsMatch } from "../workers/shared/crypto";
 import { newScimToken } from "../workers/shared/ids";
 import type { PocEnv } from "../workers/shared/types";
 
@@ -194,10 +195,10 @@ export type PanelAuthDecision = "open" | "granted" | "denied";
  * once the react-router build is mounted, and a decision this consequential
  * should be testable without one.
  */
-export function decidePanelAuth(
+export async function decidePanelAuth(
   config: Pick<AppConfig, "panelAuthUser" | "panelAuthPassword">,
   authorizationHeader: string | null,
-): PanelAuthDecision {
+): Promise<PanelAuthDecision> {
   const { panelAuthUser, panelAuthPassword } = config;
   if (!panelAuthUser && !panelAuthPassword) return "open";
   // Half a pair can never be matched: the configured side would have to equal a
@@ -213,7 +214,26 @@ export function decidePanelAuth(
   if (separator === -1) return "denied";
   const user = decoded.slice(0, separator);
   const pass = decoded.slice(separator + 1);
-  return user === panelAuthUser && pass === panelAuthPassword ? "granted" : "denied";
+
+  // Both comparisons always run, and neither is `===`.
+  //
+  // `&&` on the two `===` checks that used to be here short-circuited: a wrong
+  // username meant the password was never compared, so the two failures took
+  // measurably different work. And `===` on strings returns as soon as it finds a
+  // difference, which is the shape of comparison that leaks a secret one character
+  // at a time. `secretsMatch` hashes both sides first, so the comparison is over a
+  // fixed 64 characters and tells an observer nothing — not even the length of the
+  // right answer.
+  //
+  // Being straight about the value, as with the digest recheck in ENT-6742: timing
+  // this over a network, through Hono, react-router and a TLS terminator, is a weak
+  // attack. The reasons to do it anyway are that a plaintext credential compared
+  // with `===` is what a reviewer flags forever, and that it costs two lines.
+  const [userMatches, passwordMatches] = await Promise.all([
+    secretsMatch(user, panelAuthUser),
+    secretsMatch(pass, panelAuthPassword),
+  ]);
+  return userMatches && passwordMatches ? "granted" : "denied";
 }
 
 /**
