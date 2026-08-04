@@ -143,7 +143,8 @@ scim-bridge is a single Node process:
 
 - **`server/`** — a [Hono](https://hono.dev) server that routes `/scim/v2/*` to
   the proxy, serves the React Router control panel for everything else, applies
-  SQLite migrations on boot, and adapts SQLite to the D1 API the app code uses.
+  migrations on boot, and provides the datastore driver the app code talks to
+  (`Datastore` in `workers/shared/datastore.ts`; SQLite by default).
 - **`workers/proxy`** — the SCIM migration proxy (data-plane).
 - **`workers/shared`** — SCIM translation, id-mapping, backfill, and DB helpers.
 - **`app/`** — the React Router control panel (vendored WorkOS design system).

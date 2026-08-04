@@ -1,4 +1,5 @@
 import { decryptSecret, encryptSecret } from "./crypto";
+import type { Datastore } from "./datastore";
 import type { Directory, IdMapping, Mode, ProxyLogEntry, ResourceType } from "./types";
 
 /** Retry transient local-dev D1 errors (miniflare surfaces these when several
@@ -23,14 +24,14 @@ export async function withD1Retry<T>(fn: () => Promise<T>): Promise<T> {
   throw lastError;
 }
 
-export async function getConfig(db: D1Database, key: string): Promise<string | null> {
+export async function getConfig(db: Datastore, key: string): Promise<string | null> {
   const row = await withD1Retry(() =>
     db.prepare("SELECT value FROM poc_config WHERE key = ?").bind(key).first<{ value: string }>(),
   );
   return row?.value ?? null;
 }
 
-export async function setConfig(db: D1Database, key: string, value: string): Promise<void> {
+export async function setConfig(db: Datastore, key: string, value: string): Promise<void> {
   await withD1Retry(() =>
     db
       .prepare(
@@ -45,7 +46,7 @@ export async function setConfig(db: D1Database, key: string, value: string): Pro
 /** Decrypt the at-rest secrets on a directory row (native/WorkOS tokens). No-op
  *  when encryption is off or the value is plaintext. */
 async function decryptDirectory(
-  db: D1Database,
+  db: Datastore,
   directory: Directory | null,
 ): Promise<Directory | null> {
   if (!directory) return null;
@@ -54,10 +55,7 @@ async function decryptDirectory(
   return directory;
 }
 
-export async function getDirectoryByToken(
-  db: D1Database,
-  token: string,
-): Promise<Directory | null> {
+export async function getDirectoryByToken(db: Datastore, token: string): Promise<Directory | null> {
   if (!token) return null;
   return decryptDirectory(
     db,
@@ -70,7 +68,7 @@ export async function getDirectoryByToken(
   );
 }
 
-export async function getDirectoryById(db: D1Database, id: string): Promise<Directory | null> {
+export async function getDirectoryById(db: Datastore, id: string): Promise<Directory | null> {
   return decryptDirectory(
     db,
     await withD1Retry(() =>
@@ -79,7 +77,7 @@ export async function getDirectoryById(db: D1Database, id: string): Promise<Dire
   );
 }
 
-export async function listDirectories(db: D1Database): Promise<Directory[]> {
+export async function listDirectories(db: Datastore): Promise<Directory[]> {
   const { results } = await withD1Retry(() =>
     db.prepare("SELECT * FROM scim_directories ORDER BY created_at").all<Directory>(),
   );
@@ -101,7 +99,7 @@ export interface NewDirectory {
 
 /** Create a directory, encrypting the native/WorkOS tokens at rest. */
 export async function insertDirectory(
-  db: D1Database,
+  db: Datastore,
   directory: NewDirectory,
 ): Promise<{ id: string } | null> {
   const columns = [
@@ -164,7 +162,7 @@ export interface EnvDirectory {
  * collide with the row still holding it.
  */
 export async function reconcileDirectories(
-  db: D1Database,
+  db: Datastore,
   directories: EnvDirectory[],
 ): Promise<void> {
   const ids = directories.map((d) => d.workos_directory_id);
@@ -196,7 +194,7 @@ export async function reconcileDirectories(
 }
 
 export async function setDirectoryNative(
-  db: D1Database,
+  db: Datastore,
   id: string,
   url: string,
   token: string,
@@ -213,7 +211,7 @@ export async function setDirectoryNative(
 }
 
 export async function setDirectoryWorkos(
-  db: D1Database,
+  db: Datastore,
   id: string,
   url: string,
   token: string,
@@ -230,7 +228,7 @@ export async function setDirectoryWorkos(
 }
 
 export async function setDirectoryWorkosDirectoryId(
-  db: D1Database,
+  db: Datastore,
   id: string,
   workosDirectoryId: string,
 ): Promise<void> {
@@ -244,7 +242,7 @@ export async function setDirectoryWorkosDirectoryId(
   );
 }
 
-export async function setDirectoryMode(db: D1Database, id: string, mode: Mode): Promise<void> {
+export async function setDirectoryMode(db: Datastore, id: string, mode: Mode): Promise<void> {
   await withD1Retry(() =>
     db
       .prepare("UPDATE scim_directories SET mode = ?, updated_at = datetime('now') WHERE id = ?")
@@ -261,7 +259,7 @@ export function shouldPersistLogs(directory: Directory | null | undefined): bool
 }
 
 export async function setDirectoryLogPersistence(
-  db: D1Database,
+  db: Datastore,
   id: string,
   on: boolean,
 ): Promise<void> {
@@ -277,7 +275,7 @@ export async function setDirectoryLogPersistence(
 
 /** Bulk toggle for the control panel's multi-select. */
 export async function setDirectoriesLogPersistence(
-  db: D1Database,
+  db: Datastore,
   ids: string[],
   on: boolean,
 ): Promise<void> {
@@ -294,7 +292,7 @@ export async function setDirectoriesLogPersistence(
 }
 
 export async function getMapping(
-  db: D1Database,
+  db: Datastore,
   directoryId: string,
   resourceType: ResourceType,
   nativeId: string,
@@ -310,7 +308,7 @@ export async function getMapping(
 }
 
 export async function getMappingByWorkosId(
-  db: D1Database,
+  db: Datastore,
   directoryId: string,
   resourceType: ResourceType,
   workosId: string,
@@ -326,7 +324,7 @@ export async function getMappingByWorkosId(
 }
 
 export async function upsertMapping(
-  db: D1Database,
+  db: Datastore,
   mapping: Pick<
     IdMapping,
     "directory_id" | "resource_type" | "native_id" | "workos_id" | "strategy"
@@ -352,7 +350,7 @@ export async function upsertMapping(
 }
 
 export async function deleteMapping(
-  db: D1Database,
+  db: Datastore,
   directoryId: string,
   resourceType: ResourceType,
   nativeId: string,
@@ -369,7 +367,7 @@ export async function deleteMapping(
 
 /** Wipe the native app's directory and its DSync listener log — the customer
  *  app's own state. Leaves directories, mappings, and the WorkOS side alone. */
-export async function clearNativeDirectory(db: D1Database): Promise<void> {
+export async function clearNativeDirectory(db: Datastore): Promise<void> {
   await withD1Retry(() =>
     db.batch([
       db.prepare("DELETE FROM native_group_members"),
@@ -391,7 +389,7 @@ export function truncateBody(body: string | null | undefined): string | null {
 export type ProxyLogInsert = Partial<Omit<ProxyLogEntry, "id" | "ts">> &
   Pick<ProxyLogEntry, "mode" | "method" | "path">;
 
-export async function insertProxyLog(db: D1Database, entry: ProxyLogInsert): Promise<void> {
+export async function insertProxyLog(db: Datastore, entry: ProxyLogInsert): Promise<void> {
   await withD1Retry(() =>
     db
       .prepare(

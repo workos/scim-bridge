@@ -1,3 +1,4 @@
+import type { Datastore } from "../shared/datastore";
 import type { Directory, PocEnv, ResourceType } from "../shared/types";
 import {
   deleteMapping,
@@ -216,7 +217,7 @@ async function dualWrite(
 }
 
 async function mirrorDualWrite(
-  db: D1Database,
+  db: Datastore,
   directory: Directory,
   scimPath: ScimPath,
   method: string,
@@ -404,7 +405,7 @@ async function workosOnly(
  * which leg of the dance resolved.
  */
 async function createWithMigratedId(
-  db: D1Database,
+  db: Datastore,
   directory: Directory,
   kind: ResourceType,
   requestBody: string | null,
@@ -450,7 +451,7 @@ async function createWithMigratedId(
  * result back in native-id space so the IdP only ever sees its own id.
  */
 async function replaceWithMigratedId(
-  db: D1Database,
+  db: Datastore,
   directory: Directory,
   kind: ResourceType,
   nativeId: string,

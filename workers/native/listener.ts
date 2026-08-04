@@ -2,6 +2,7 @@ import { getConfig, listDirectories, truncateBody, withD1Retry } from "../shared
 import { fetchDirectoryStatus } from "./status-client";
 import { NATIVE_TABLES, ScimStore } from "./store";
 import type { GroupRow, ScimResource, UserRow } from "./store";
+import type { Datastore } from "../shared/datastore";
 
 const USER_SCHEMA = "urn:ietf:params:scim:core:2.0:User";
 const GROUP_SCHEMA = "urn:ietf:params:scim:core:2.0:Group";
@@ -25,7 +26,7 @@ interface Outcome {
   idpId?: string | null;
 }
 
-export async function handleDsyncWebhook(request: Request, db: D1Database): Promise<Response> {
+export async function handleDsyncWebhook(request: Request, db: Datastore): Promise<Response> {
   const rawBody = await request.text();
 
   const secret = (await getConfig(db, "native.webhook_secret")) ?? "";
@@ -135,7 +136,7 @@ export async function handleDsyncWebhook(request: Request, db: D1Database): Prom
  * redelivery can still repair a failure.
  */
 async function dispatch(
-  db: D1Database,
+  db: Datastore,
   store: ScimStore,
   eventType: string,
   data: Json,
@@ -184,7 +185,7 @@ function scopeFor(eventType: string, data: Json): string | null {
 }
 
 async function applyEvent(
-  db: D1Database,
+  db: Datastore,
   store: ScimStore,
   eventType: string,
   data: Json,
@@ -316,7 +317,7 @@ async function deleteGroupFromEvent(store: ScimStore, data: Json): Promise<Outco
 }
 
 async function changeMembership(
-  db: D1Database,
+  db: Datastore,
   store: ScimStore,
   data: Json,
   op: "add" | "remove",
@@ -534,7 +535,7 @@ function parseResource(raw: string): ScimResource {
 
 /** True unless a strictly newer event for this scope has already been applied. */
 async function isNewestEvent(
-  db: D1Database,
+  db: Datastore,
   scope: string,
   eventAt: string | null,
 ): Promise<boolean> {
@@ -551,7 +552,7 @@ async function isNewestEvent(
 
 /** Advance the ledger to this event's time (kept as the max seen for the scope). */
 async function recordEventVersion(
-  db: D1Database,
+  db: Datastore,
   scope: string,
   eventAt: string | null,
 ): Promise<void> {
@@ -590,7 +591,7 @@ async function recordEventVersion(
  * directories with no id to map, returns `null` and leaves the event unapplied
  * rather than guessed onto the wrong directory.
  */
-async function directoryModeForEvent(db: D1Database, data: Json): Promise<string | null> {
+async function directoryModeForEvent(db: Datastore, data: Json): Promise<string | null> {
   const directories = await listDirectories(db);
   const directoryId = asString(data.directory_id);
   const byId = directoryId
@@ -604,7 +605,7 @@ async function directoryModeForEvent(db: D1Database, data: Json): Promise<string
   return status?.mode ?? directory.mode;
 }
 
-async function isDuplicate(db: D1Database, eventId: string): Promise<boolean> {
+async function isDuplicate(db: Datastore, eventId: string): Promise<boolean> {
   // Only a delivery we actually processed (applied or skipped) counts as a
   // duplicate. An event merely logged as `ignored` — e.g. one that arrived while
   // the listener was inert pre-cutover — must be free to re-evaluate under the
@@ -624,7 +625,7 @@ async function isDuplicate(db: D1Database, eventId: string): Promise<boolean> {
 }
 
 async function recordEvent(
-  db: D1Database,
+  db: Datastore,
   entry: {
     eventId: string | null;
     eventType: string;

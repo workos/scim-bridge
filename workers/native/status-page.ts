@@ -1,3 +1,4 @@
+import type { Datastore } from "../shared/datastore";
 import type { ListenerEvent } from "../shared/types";
 import { MOCK_WORKOS_TABLES, NATIVE_TABLES, ScimStore } from "./store";
 import type { GroupRow, MemberRef, ScimTables, UserRow } from "./store";
@@ -7,7 +8,7 @@ interface DirectorySnapshot {
   groups: { row: GroupRow; members: MemberRef[] }[];
 }
 
-export async function renderStatusPage(db: D1Database): Promise<Response> {
+export async function renderStatusPage(db: Datastore): Promise<Response> {
   const native = await loadDirectory(db, NATIVE_TABLES);
   const mock = await loadDirectory(db, MOCK_WORKOS_TABLES);
   const events = await loadEvents(db);
@@ -82,7 +83,7 @@ export async function renderStatusPage(db: D1Database): Promise<Response> {
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
-async function loadDirectory(db: D1Database, tables: ScimTables): Promise<DirectorySnapshot> {
+async function loadDirectory(db: Datastore, tables: ScimTables): Promise<DirectorySnapshot> {
   const store = new ScimStore(db, tables);
   const { rows: users } = await store.listUsers(null, 0, 500);
   const { rows: groupRows } = await store.listGroups(null, 0, 500);
@@ -93,7 +94,7 @@ async function loadDirectory(db: D1Database, tables: ScimTables): Promise<Direct
   return { users, groups };
 }
 
-async function loadEvents(db: D1Database): Promise<ListenerEvent[]> {
+async function loadEvents(db: Datastore): Promise<ListenerEvent[]> {
   const { results } = await db
     .prepare("SELECT * FROM listener_events ORDER BY id DESC LIMIT 50")
     .all<ListenerEvent>();

@@ -1,6 +1,7 @@
 import type { Directory, IdMapping, ResourceType } from "./types";
 import { MIGRATED_ID_HEADER } from "./types";
 import { getMapping, upsertMapping, withD1Retry } from "./db";
+import type { Datastore } from "./datastore";
 
 export const SCIM_PREFIX = "/scim/v2";
 export const SCIM_CONTENT_TYPE = "application/scim+json";
@@ -212,7 +213,7 @@ export interface IdTranslationMaps {
 
 export type IdTranslator = (kind: ResourceType, id: string) => string;
 
-export async function loadIdMaps(db: D1Database, directoryId: string): Promise<IdTranslationMaps> {
+export async function loadIdMaps(db: Datastore, directoryId: string): Promise<IdTranslationMaps> {
   const { results } = await withD1Retry(() =>
     db
       .prepare("SELECT resource_type, native_id, workos_id FROM id_mappings WHERE directory_id = ?")
@@ -386,7 +387,7 @@ async function putWorkos(
  * `fallback-post` mapping so ids still translate in both directions.
  */
 export async function mirrorUpsert(
-  db: D1Database,
+  db: Datastore,
   directory: Directory,
   kind: ResourceType,
   nativeId: string,
@@ -460,7 +461,7 @@ export async function mirrorUpsert(
  * A 409 means a concurrent create won the race, so re-PUT to resolve the winner.
  */
 async function createViaPost(
-  db: D1Database,
+  db: Datastore,
   directory: Directory,
   kind: ResourceType,
   nativeId: string,
@@ -504,7 +505,7 @@ async function createViaPost(
  * know (the re-PUT 404s, so look it up by filter and map it → `fallback-post`).
  */
 async function resolveCreateRace(
-  db: D1Database,
+  db: Datastore,
   directory: Directory,
   kind: ResourceType,
   nativeId: string,

@@ -1,4 +1,5 @@
 import { getConfig } from "../../../workers/shared/db";
+import type { Datastore } from "../../../workers/shared/datastore";
 
 const DEFAULT_IDP_URL = "http://localhost:8789";
 
@@ -9,7 +10,7 @@ const DEFAULT_IDP_URL = "http://localhost:8789";
  * action data so the page revalidates in place.
  */
 export async function callIdpSimulator(
-  db: D1Database,
+  db: Datastore,
   endpoint: string,
   body: Record<string, unknown>,
 ): Promise<{ ok: boolean; error?: string }> {

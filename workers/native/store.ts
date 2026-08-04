@@ -1,4 +1,5 @@
 import { withD1Retry } from "../shared/db";
+import type { Datastore } from "../shared/datastore";
 
 export interface ScimTables {
   users: string;
@@ -52,7 +53,7 @@ export interface ListFilter {
 
 export class ScimStore {
   constructor(
-    readonly db: D1Database,
+    readonly db: Datastore,
     readonly tables: ScimTables,
   ) {}
 

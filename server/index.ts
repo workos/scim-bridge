@@ -16,7 +16,7 @@ import {
   seedNativeAppConfig,
   seedNativeAppDirectories,
 } from "./config";
-import { openDatabase, SqliteD1 } from "./db/d1-sqlite";
+import { openDatabase, SqliteDatastore, SqliteMigrator } from "./db/sqlite";
 import { runMigrations } from "./db/migrate";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -26,19 +26,18 @@ const SERVER_BUILD = join(ROOT, "build/server/index.js");
 
 const config = loadConfig();
 
-// Datastore: open the SQLite file, apply migrations, wrap it in the D1 shim so
-// every `env.DB` consumer runs unchanged.
+// Datastore: open the SQLite file, apply migrations, and hand every `env.DB`
+// consumer the driver.
 const sqlite = openDatabase(config.databasePath);
-const applied = runMigrations(sqlite, MIGRATIONS_DIR);
+const applied = await runMigrations(new SqliteMigrator(sqlite), MIGRATIONS_DIR);
 if (applied.length) console.log(`Applied ${applied.length} migration(s): ${applied.join(", ")}`);
-const sqliteD1 = new SqliteD1(sqlite);
+const store = new SqliteDatastore(sqlite);
 // Encrypt per-directory tokens at rest when a key is provided (else plaintext).
 // The key rides on the shared DB handle so both the workers and the bundled
 // panel (separate module graphs) encrypt/decrypt consistently.
-sqliteD1.encryptionKey = config.encryptionKey;
+store.encryptionKey = config.encryptionKey;
 if (config.encryptionKey) console.log("Per-directory token encryption: enabled");
-const DB = sqliteD1 as unknown as PocEnv["DB"];
-const env: PocEnv = { DB };
+const env: PocEnv = { DB: store };
 if (config.role === "native-app") {
   await seedNativeAppConfig(env, config);
   await seedNativeAppDirectories(env, config);

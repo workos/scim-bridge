@@ -23,12 +23,15 @@ Shared logic lives in `workers/shared`: `scim.ts` (translation + id rewriting),
 `db.ts` (data access), `backfill.ts`, `crypto.ts` (at-rest secret encryption),
 `types.ts`. The panel and the proxy share one database.
 
-## Data model (SQLite / D1)
+## Data model
 
-`server/db/d1-sqlite.ts` wraps a SQLite file in the small slice of the D1 API the
-code uses (`prepare().bind().first()/.all()/.run()`, `batch()`), so every
-`env.DB` caller runs unchanged on either runtime. Migrations in `migrations/*.sql`
-are applied on boot (`server/db/migrate.ts`).
+Every `env.DB` caller talks to one narrow interface — `Datastore` in
+`workers/shared/datastore.ts`: `prepare().bind().first()/.all()/.run()`,
+`batch()` (atomic in every driver), and the at-rest encryption key. Drivers
+implement it; `server/db/sqlite.ts` is the file-backed one and the default.
+Migrations in `migrations/*.sql` are applied on boot — `server/db/migrate.ts`
+orders the files, the driver's `DatastoreMigrator` applies them and owns the
+`_migrations` ledger, since migration SQL is dialect-specific.
 
 | Table | Holds |
 | --- | --- |

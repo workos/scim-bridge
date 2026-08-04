@@ -1,5 +1,6 @@
 import { handleDsyncWebhook } from "./listener";
 import type { ScimStore } from "./store";
+import type { Datastore } from "../shared/datastore";
 
 // When the mock WorkOS directory is written to, it emits the DSync webhook
 // events a real migrated WorkOS directory would — delivered to this app's own
@@ -58,11 +59,7 @@ export async function captureMockBefore(
   return before;
 }
 
-async function deliver(
-  db: D1Database,
-  event: string,
-  data: Record<string, unknown>,
-): Promise<void> {
+async function deliver(db: Datastore, event: string, data: Record<string, unknown>): Promise<void> {
   const envelope = {
     id: `evt_${crypto.randomUUID()}`,
     event,
@@ -100,7 +97,7 @@ function memberEventData(user: {
 
 /** Emit the DSync event(s) for a successful mock write, after it committed. */
 export async function emitMockEvents(
-  db: D1Database,
+  db: Datastore,
   store: ScimStore,
   method: string,
   path: MockPath,

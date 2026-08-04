@@ -1,3 +1,4 @@
+import type { Datastore } from "../shared/datastore";
 import type { Directory } from "../shared/types";
 import { getConfig } from "../shared/db";
 import * as store from "./store";
@@ -14,7 +15,7 @@ interface ScimResult {
 
 /** Where the simulated IdP points — the proxy's inbound SCIM endpoint, keyed
  *  by the directory's proxy token, exactly as a real Okta directory would. */
-async function scimBase(db: D1Database): Promise<string> {
+async function scimBase(db: Datastore): Promise<string> {
   const url = (await getConfig(db, "proxy.public_url")) ?? "http://localhost:8787";
   return `${url.replace(/\/+$/, "")}/scim/v2`;
 }
