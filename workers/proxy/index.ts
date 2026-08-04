@@ -1,5 +1,5 @@
 import type { Datastore } from "../shared/datastore";
-import type { Directory, PocEnv, ResourceType } from "../shared/types";
+import type { Directory, PocEnv, ResourceType, WorkerHandler } from "../shared/types";
 import {
   deleteMapping,
   getDirectoryByToken,
@@ -34,7 +34,7 @@ import { handleStatus, STATUS_PREFIX } from "./status";
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const BODYLESS_STATUSES = new Set([204, 205, 304]);
 
-export default {
+const handler: WorkerHandler<PocEnv> = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === "/") {
@@ -51,7 +51,9 @@ export default {
     }
     return scimError(404, `Nothing is served at ${url.pathname}.`);
   },
-} satisfies ExportedHandler<PocEnv>;
+};
+
+export default handler;
 
 async function handleScim(
   request: Request,

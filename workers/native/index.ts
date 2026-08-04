@@ -1,6 +1,6 @@
 import { getConfig } from "../shared/db";
 import type { Datastore } from "../shared/datastore";
-import type { PocEnv } from "../shared/types";
+import type { PocEnv, WorkerHandler } from "../shared/types";
 import { handleDsyncWebhook, timingSafeEqual } from "./listener";
 import { captureMockBefore, emitMockEvents, parseMockScimPath } from "./mock-emitter";
 import { handleScim, scimError } from "./scim-server";
@@ -12,7 +12,7 @@ const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const SCIM_BASE = "/scim/v2";
 const MOCK_SCIM_BASE = "/mock-workos/scim/v2";
 
-export default {
+const handler: WorkerHandler<PocEnv> = {
   async fetch(request, env) {
     const { pathname } = new URL(request.url);
 
@@ -79,7 +79,9 @@ export default {
 
     return Response.json({ error: `No route for ${pathname}.` }, { status: 404 });
   },
-} satisfies ExportedHandler<PocEnv>;
+};
+
+export default handler;
 
 async function requireBearer(
   request: Request,
