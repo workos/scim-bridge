@@ -1,6 +1,12 @@
 import type { Datastore } from "./datastore";
 import type { BackfillSummary, Directory, ResourceType } from "./types";
-import { insertProxyLog, shouldPersistLogs, upsertMapping } from "./db";
+import {
+  getMapping,
+  insertProxyLog,
+  listMappingsByNativeId,
+  shouldPersistLogs,
+  upsertMapping,
+} from "./db";
 import {
   errorMessage,
   isRecord,
@@ -353,8 +359,14 @@ interface DriftRepair {
  * Resolve the native row a 409 collided with by its unique attribute, update it
  * in place under its own id, and map shared-id -> that drifted id. Returns null
  * when the collision can't be attributed to a resolvable row (no value on the
- * WorkOS resource, or native can't find one), leaving the original 409 to be
- * reported as an unresolved failure.
+ * WorkOS resource, native can't find one, or the row isn't this directory's),
+ * leaving the original 409 to be reported as an unresolved failure.
+ *
+ * `userName`/`displayName` are unique per native namespace, not per directory, so
+ * in a deployment that fronts several directories into one native SCIM namespace
+ * a match on the attribute is not evidence that the row is this directory's. It
+ * must also be attributable to this directory — already mapped by it, or carrying
+ * the same `externalId` as the WorkOS resource — and not mapped by another one.
  */
 async function repairDrift(
   db: Datastore,
@@ -371,12 +383,33 @@ async function repairDrift(
   if (!value) return null;
 
   let driftedId: string;
+  let matched: Record<string, unknown>;
   try {
-    const resolved = await findNativeIdByAttr(directory, kind, attr, value);
-    if (!resolved || resolved === nativeId) return null;
-    driftedId = resolved;
+    const resolved = await findNativeRowByAttr(directory, kind, attr, value);
+    const resolvedId = resolved && typeof resolved.id === "string" ? resolved.id : null;
+    if (!resolved || !resolvedId || resolvedId === nativeId) return null;
+    driftedId = resolvedId;
+    matched = resolved;
   } catch (error) {
     pushError(errors, `${kind}/${nativeId}: resolving drift by ${attr}: ${errorMessage(error)}`);
+    return null;
+  }
+
+  const unowned = await unattributedReason(
+    db,
+    directory,
+    kind,
+    workosId,
+    driftedId,
+    matched,
+    resource,
+  );
+  if (unowned) {
+    pushError(
+      errors,
+      `${kind}/${nativeId}: ${attr} "${value}" is native id ${driftedId}, which ${unowned}; ` +
+        "drift left unrepaired",
+    );
     return null;
   }
 
@@ -405,13 +438,52 @@ async function repairDrift(
   return { nativeId: driftedId, attr, value, result };
 }
 
-/** GET native filtered on a unique attribute, returning the first match's id. */
-async function findNativeIdByAttr(
+/**
+ * Why the matched native row can't be treated as this directory's resource, or
+ * null when it can. Attribution is positive: the mapping table already binds the
+ * row to this directory, or the row's `externalId` is the one WorkOS holds. A row
+ * another directory maps is never written — that would be one tenant's reconcile
+ * overwriting another tenant's resource.
+ */
+async function unattributedReason(
+  db: Datastore,
+  directory: Directory,
+  kind: ResourceType,
+  workosId: string,
+  driftedId: string,
+  matched: Record<string, unknown>,
+  resource: Record<string, unknown>,
+): Promise<string | null> {
+  const mappings = await listMappingsByNativeId(db, kind, driftedId);
+  const foreign = mappings.find((mapping) => mapping.directory_id !== directory.id);
+  if (foreign) return `is already mapped by directory ${foreign.directory_id}`;
+
+  const mine = await getMapping(db, directory.id, kind, driftedId);
+  if (mine) {
+    return mine.workos_id === workosId
+      ? null
+      : `this directory already maps it to WorkOS ${mine.workos_id}`;
+  }
+
+  const theirs = externalId(matched);
+  const ours = externalId(resource);
+  if (!theirs || !ours) return "has no externalId to attribute it to this directory";
+  if (theirs !== ours) return `carries externalId ${theirs}, not ${ours}`;
+  return null;
+}
+
+function externalId(resource: Record<string, unknown>): string | null {
+  const value = resource.externalId;
+  return typeof value === "string" && value ? value : null;
+}
+
+/** GET native filtered on a unique attribute, returning the first matching row. */
+async function findNativeRowByAttr(
   directory: Directory,
   kind: ResourceType,
   attr: "userName" | "displayName",
   value: string,
-): Promise<string | null> {
+): Promise<Record<string, unknown> | null> {
   const escaped = value.replace(/([\\"])/g, "\\$1");
   const filter = encodeURIComponent(`${attr} eq "${escaped}"`);
   const page = await scimFetch(
@@ -436,7 +508,7 @@ async function findNativeIdByAttr(
           (entry[attr] as string).toLowerCase() === value.toLowerCase(),
       )
     : null;
-  return isRecord(match) && typeof match.id === "string" ? match.id : null;
+  return isRecord(match) ? match : null;
 }
 
 function describeFailure(status: number): string {

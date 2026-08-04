@@ -347,6 +347,21 @@ export async function getMappingByWorkosId(
   );
 }
 
+/** Every mapping of this native id, across all directories. */
+export async function listMappingsByNativeId(
+  db: Datastore,
+  resourceType: ResourceType,
+  nativeId: string,
+): Promise<IdMapping[]> {
+  const { results } = await withD1Retry(() =>
+    db
+      .prepare("SELECT * FROM id_mappings WHERE resource_type = ? AND native_id = ?")
+      .bind(resourceType, nativeId)
+      .all<IdMapping>(),
+  );
+  return results;
+}
+
 export async function upsertMapping(
   db: Datastore,
   mapping: Pick<
