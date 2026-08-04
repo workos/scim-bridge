@@ -663,6 +663,126 @@ describe("proxy routing", () => {
     });
   });
 
+  /**
+   * WorkOS rejects an explicit null where it expects a string (400
+   * invalidSyntax), while an absent attribute is fine — and a customer's SCIM
+   * app decides how it serializes "no value". So WorkOS-bound resource bodies
+   * drop null-valued keys; nothing else does.
+   */
+  describe("null stripping on the WorkOS leg", () => {
+    it("omits a null externalId from the mirrored group", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+      const group = {
+        displayName: "e2e-eng-a",
+        externalId: null,
+        members: [{ value: "u1", display: null }],
+      };
+      fake.route("native", "PUT", "/Groups/g1", scimJson(200, { id: "g1", ...group }));
+      fake.route("workos", "PUT", "/Groups/g1", scimJson(200, { id: "g1" }));
+
+      const ctx = createCtx();
+      await proxyWorker.fetch(
+        proxyRequest(directory, "PUT", "/scim/v2/Groups/g1", group),
+        env,
+        ctx,
+      );
+      await ctx.drain();
+
+      const mirrored = fake.callsTo("workos")[0].json() as Record<string, unknown>;
+      expect(mirrored).toEqual({
+        id: "g1",
+        displayName: "e2e-eng-a",
+        members: [{ value: "u1" }],
+      });
+      expect("externalId" in mirrored).toBe(false);
+    });
+
+    it("mirrors a translated member id, stripping only the nulls beside it", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+      await seedMapping(env, directory, "n1", "w1");
+      const group = { displayName: "Eng", externalId: null, members: [{ value: "n1" }] };
+      fake.route("native", "PUT", "/Groups/g1", scimJson(200, { id: "g1" }));
+      fake.route("workos", "PUT", "/Groups/g1", scimJson(200, { id: "g1" }));
+
+      const ctx = createCtx();
+      await proxyWorker.fetch(
+        proxyRequest(directory, "PUT", "/scim/v2/Groups/g1", group),
+        env,
+        ctx,
+      );
+      await ctx.drain();
+
+      // The strip runs after translation, so the mapped id is the one sent.
+      expect(fake.callsTo("workos")[0].json()).toEqual({
+        id: "g1",
+        displayName: "Eng",
+        members: [{ value: "w1" }],
+      });
+    });
+
+    it("leaves an explicit null inside PATCH Operations alone", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+      // A null value in a PATCH op can be a meaningful remove, so it travels.
+      const patch = {
+        schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        Operations: [{ op: "replace", path: "nickName", value: null }],
+      };
+      fake.route("native", "PATCH", "/Users/u1", scimJson(200, { id: "u1" }));
+      fake.route("workos", "PATCH", "/Users/u1", scimJson(200, { id: "u1" }));
+
+      const ctx = createCtx();
+      await proxyWorker.fetch(
+        proxyRequest(directory, "PATCH", "/scim/v2/Users/u1", patch),
+        env,
+        ctx,
+      );
+      await ctx.drain();
+
+      expect(fake.callsTo("workos")[0].json()).toEqual(patch);
+    });
+
+    it("returns the native app's own nulls to the IdP untouched", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+      const nativeBody = { id: "u1", userName: "a@b.c", externalId: null };
+      fake.route("native", "PUT", "/Users/u1", scimJson(200, nativeBody));
+      fake.route("workos", "PUT", "/Users/u1", scimJson(200, { id: "u1" }));
+
+      const ctx = createCtx();
+      const res = await proxyWorker.fetch(
+        proxyRequest(directory, "PUT", "/scim/v2/Users/u1", {
+          userName: "a@b.c",
+          externalId: null,
+        }),
+        env,
+        ctx,
+      );
+      const idpBody = await res.json();
+      await ctx.drain();
+
+      // That direction is the native app's response: verbatim, nulls and all.
+      expect(idpBody).toEqual(nativeBody);
+      expect(fake.callsTo("workos")[0].json()).toEqual({ id: "u1", userName: "a@b.c" });
+    });
+
+    it("strips nulls on the workos-only write leg too", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "workos-only" });
+      fake.route("workos", "PUT", "/Groups/g1", scimJson(200, { id: "g1" }));
+
+      const ctx = createCtx();
+      await proxyWorker.fetch(
+        proxyRequest(directory, "PUT", "/scim/v2/Groups/g1", {
+          displayName: "Eng",
+          externalId: null,
+        }),
+        env,
+        ctx,
+      );
+      await ctx.drain();
+
+      expect(fake.callsTo("workos")[0].json()).toEqual({ id: "g1", displayName: "Eng" });
+    });
+  });
+
   describe("proxy_log persistence", () => {
     it("persists nothing by default", async () => {
       const directory = await seedDirectory(env.DB, { mode: "passthrough" });

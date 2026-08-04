@@ -396,6 +396,43 @@ describe("runBackfill", () => {
     expect(summary.errors).toHaveLength(20);
     expect(summary.errors[0]).toBe("Users/user-0: WorkOS POST returned 500");
   });
+
+  // A group Okta pushed carries no externalId, and a native app may serialize
+  // that as null — which WorkOS rejects with 400 invalidSyntax on every replayed
+  // resource, failing the whole backfill.
+  it("replays a group whose externalId is null without the null", async () => {
+    const env = createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+    fake = installFakeUpstreams();
+    fake.route("native", "GET", "/Users", listPage([]));
+    fake.route(
+      "native",
+      "GET",
+      "/Groups",
+      listPage([
+        {
+          id: "g1",
+          displayName: "e2e-eng-a",
+          externalId: null,
+          members: [{ value: "u1", display: null }],
+        },
+      ]),
+    );
+    installWorkosScim(fake);
+
+    const summary = await runBackfill(env.DB, directory);
+
+    expect(summary.groups).toEqual({ total: 1, mirrored: 1, failed: 0 });
+    expect(summary.errors).toEqual([]);
+    const [put, post] = fake.callsTo("workos");
+    expect(put.json()).toEqual({
+      id: "g1",
+      displayName: "e2e-eng-a",
+      members: [{ value: "u1" }],
+    });
+    // The POST leg of the dance sends the same stripped body, minus the id.
+    expect(post.json()).toEqual({ displayName: "e2e-eng-a", members: [{ value: "u1" }] });
+  });
 });
 
 describe("runReconcileFromWorkos", () => {

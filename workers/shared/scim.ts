@@ -36,6 +36,28 @@ export function authorizationToken(header: string | null): string {
   return /\s/.test(value) ? "" : value;
 }
 
+/**
+ * The value with every null-valued key removed, recursively.
+ *
+ * Omitting an optional attribute and sending it as `null` express the same thing
+ * in SCIM, but WorkOS rejects the null — `400 invalidSyntax: 'externalId' is
+ * expected string, received null` — and the bridge cannot dictate how a
+ * customer's SCIM app serializes an attribute it has no value for.
+ *
+ * Only keys go. An empty object or array is a value, not an absence, so both
+ * survive; a null ELEMENT of an array survives too, since dropping it would
+ * renumber the ones after it.
+ */
+export function stripNulls<T>(value: T): T {
+  if (Array.isArray(value)) return value.map((entry: unknown) => stripNulls(entry)) as T;
+  if (!isRecord(value)) return value;
+  const stripped: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry !== null) stripped[key] = stripNulls(entry);
+  }
+  return stripped as T;
+}
+
 export function isSuccess(status: number): boolean {
   return status >= 200 && status < 300;
 }
@@ -368,8 +390,14 @@ export async function mirrorUpsert(
   directory: Directory,
   kind: ResourceType,
   nativeId: string,
-  resource: Record<string, unknown>,
+  rawResource: Record<string, unknown>,
 ): Promise<MirrorResult> {
+  // Every WorkOS-bound resource body funnels through here — live mirror,
+  // backfill replay, and the workos-only create/replace legs — and does so after
+  // id translation, so translated members survive the pass. PATCH deliberately
+  // does not route through this function: a null inside `Operations` can be a
+  // meaningful remove, and the reverse (WorkOS → native) replay stays verbatim.
+  const resource = stripNulls(rawResource);
   const acc: Elapsed = { ms: 0 };
   try {
     // A resource WorkOS already knows: update it in place by the id it stored
