@@ -716,7 +716,11 @@ describe("runReconcileFromWorkos", () => {
     expect(summary.users).toEqual({ total: 1, mirrored: 1, failed: 0 });
     expect(summary.groups).toEqual({ total: 1, mirrored: 1, failed: 0 });
     const groupPut = fake.callsTo("native").find((c) => c.path.startsWith("/Groups/"));
-    expect(groupPut?.json().members).toEqual([{ value: "idp-1" }]);
+    expect(groupPut?.json()).toEqual({
+      id: "shared-g1",
+      displayName: "Eng",
+      members: [{ value: "idp-1" }],
+    });
   });
 
   it("reports an unresolvable 409 distinctly and leaves it failed", async () => {
