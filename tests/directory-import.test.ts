@@ -153,10 +153,14 @@ describe("directory import", () => {
     it("lists a same-second bulk import by name, not by minted id", async () => {
       const env = await createEnv();
 
-      // Every row lands in the same second, so created_at cannot order them and
-      // the minted dir_… id is random. Without a meaningful tiebreaker the panel
-      // would list a bulk import in a different order on each engine.
+      // A bulk import lands every row in one second, so created_at cannot order
+      // them and the minted dir_… id is random. Without a meaningful tiebreaker
+      // the panel would list an import differently on each engine. The timestamps
+      // are pinned rather than assumed: the tie is the precondition under test.
       await bulkImport(env, ["Zeta,,,,,", "Acme,,,,,", "Mid,,,,,"].join("\n"));
+      await env.DB.prepare("UPDATE scim_directories SET created_at = ?")
+        .bind("2026-08-04 12:00:00")
+        .run();
 
       expect((await listDirectories(env.DB)).map((d) => d.name)).toEqual(["Acme", "Mid", "Zeta"]);
     });
