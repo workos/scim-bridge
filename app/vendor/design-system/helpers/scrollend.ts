@@ -4,12 +4,16 @@
 // Adapted from https://github.com/argyleink/scrollyfills/blob/main/src/scrollend.js
 // (c) 2023 Adam Argyle, ISC license
 
-const isSupported = () => typeof window === "undefined" || "onscrollend" in window;
+const isSupported = () =>
+  typeof window === 'undefined' || 'onscrollend' in window;
 
 let pointers: Set<number>;
 let scrollendEvent: Event;
 // Map of scroll-observed elements.
-let observedElements: WeakMap<object, { scrollListener: (evt: Event) => void; listeners: number }>;
+let observedElements: WeakMap<
+  object,
+  { scrollListener: (evt: Event) => void; listeners: number }
+>;
 
 export function addScrollendEventListener(
   element: ObservableElement,
@@ -18,17 +22,17 @@ export function addScrollendEventListener(
   if (isSupported()) {
     // If the browser supports scrollend natively, use the native event.
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    element.addEventListener("scrollend", listener as EventListener);
+    element.addEventListener('scrollend', listener as EventListener);
     return;
   }
 
   pointers = pointers || new Set();
-  scrollendEvent = scrollendEvent || new Event("scrollend");
+  scrollendEvent = scrollendEvent || new Event('scrollend');
   observedElements = observedElements || new WeakMap();
 
   // Track if any pointer is active
   document.addEventListener(
-    "touchstart",
+    'touchstart',
     (e) => {
       for (const touch of e.changedTouches) {
         pointers.add(touch.identifier);
@@ -38,7 +42,7 @@ export function addScrollendEventListener(
   );
 
   document.addEventListener(
-    "touchend",
+    'touchend',
     (e) => {
       for (const touch of e.changedTouches) {
         pointers.delete(touch.identifier);
@@ -48,7 +52,7 @@ export function addScrollendEventListener(
   );
 
   document.addEventListener(
-    "touchcancel",
+    'touchcancel',
     (e) => {
       for (const touch of e.changedTouches) {
         pointers.delete(touch.identifier);
@@ -58,7 +62,11 @@ export function addScrollendEventListener(
   );
 
   // Forward and observe calls to a native method.
-  function observe(proto: ObservableElement, method: "add" | "remove", handler: ObserveFunction) {
+  function observe(
+    proto: ObservableElement,
+    method: 'add' | 'remove',
+    handler: ObserveFunction,
+  ) {
     const _method = `${method}EventListener` as const;
     const native = proto[_method];
     proto[_method] = function () {
@@ -80,7 +88,7 @@ export function addScrollendEventListener(
     // Polyfill scrollend event on any element for which the developer listens
     // to 'scrollend' explicitly or 'scroll' (so that adding a scrollend
     // listener from within a scroll listener works).
-    if (type !== "scroll" && type !== "scrollend") {
+    if (type !== 'scroll' && type !== 'scrollend') {
       return;
     }
 
@@ -107,7 +115,7 @@ export function addScrollendEventListener(
         },
         listeners: 0, // Count of number of listeners.
       };
-      originalFn.apply(scrollport, ["scroll", data.scrollListener]);
+      originalFn.apply(scrollport, ['scroll', data.scrollListener]);
       observedElements.set(scrollport, data);
     }
 
@@ -121,7 +129,7 @@ export function addScrollendEventListener(
     _handler: Listener,
     _options: Options,
   ) {
-    if (type !== "scroll" && type !== "scrollend") {
+    if (type !== 'scroll' && type !== 'scrollend') {
       return;
     }
 
@@ -140,16 +148,16 @@ export function addScrollendEventListener(
     }
 
     // Otherwise, remove the added listeners.
-    originalFn.apply(scrollport, ["scroll", data.scrollListener]);
+    originalFn.apply(scrollport, ['scroll', data.scrollListener]);
     observedElements.delete(scrollport);
   }
 
-  observe(Element.prototype, "add", onAddListener);
-  observe(window, "add", onAddListener);
-  observe(document, "add", onAddListener);
-  observe(Element.prototype, "remove", onRemoveListener);
-  observe(window, "remove", onRemoveListener);
-  observe(document, "remove", onRemoveListener);
+  observe(Element.prototype, 'add', onAddListener);
+  observe(window, 'add', onAddListener);
+  observe(document, 'add', onAddListener);
+  observe(Element.prototype, 'remove', onRemoveListener);
+  observe(window, 'remove', onRemoveListener);
+  observe(document, 'remove', onRemoveListener);
 }
 
 type ObservableElement = Element | Window | Document;
@@ -158,7 +166,7 @@ type ObservedFunction = (
   handler: (evt: Event) => void,
   options?: boolean | AddEventListenerOptions,
 ) => void;
-type ObserveType = "scroll" | "scrollend";
+type ObserveType = 'scroll' | 'scrollend';
 type Options = boolean | AddEventListenerOptions | undefined;
 
 type ObserveFunction = (

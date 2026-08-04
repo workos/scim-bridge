@@ -1,16 +1,16 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
-import { Diagnostic, forEachDiagnostic } from "@codemirror/lint";
+'use client';
+import { Diagnostic, forEachDiagnostic } from '@codemirror/lint';
 import {
   BasicSetupOptions,
   EditorView,
   Extension,
   UseCodeMirror,
   useCodeMirror,
-} from "@uiw/react-codemirror";
-import * as React from "react";
-import { workOSOne } from "../../helpers/code-editor-theme.js";
+} from '@uiw/react-codemirror';
+import * as React from 'react';
+import { workOSOne } from '../../helpers/code-editor-theme.js';
 
 export interface CodeEditorContextType {
   diagnostics: Diagnostic[];
@@ -25,7 +25,7 @@ export const CodeEditorContext = React.createContext<CodeEditorContextType>({
 
 export const useCodeEditorContext = () => React.useContext(CodeEditorContext);
 
-export interface CodeEditorRootProps extends Omit<UseCodeMirror, "basicSetup"> {
+export interface CodeEditorRootProps extends Omit<UseCodeMirror, 'basicSetup'> {
   children?: React.ReactNode;
   className?: string;
   basicSetup?: BasicSetupOptions;
@@ -53,7 +53,11 @@ export const CodeEditorRoot = ({
         nextDiagnostics.sort((a, b) => a.from - b.from);
 
         let changed = nextDiagnostics.length !== diagnostics.length;
-        for (let i = 0; i < Math.min(nextDiagnostics.length, diagnostics.length); i++) {
+        for (
+          let i = 0;
+          i < Math.min(nextDiagnostics.length, diagnostics.length);
+          i++
+        ) {
           if (
             nextDiagnostics[i]?.from !== diagnostics[i]?.from ||
             nextDiagnostics[i]?.to !== diagnostics[i]?.to ||
@@ -95,5 +99,9 @@ export const CodeEditorRoot = ({
     [diagnostics, view, container, setContainer],
   );
 
-  return <CodeEditorContext.Provider value={contextValue}>{children}</CodeEditorContext.Provider>;
+  return (
+    <CodeEditorContext.Provider value={contextValue}>
+      {children}
+    </CodeEditorContext.Provider>
+  );
 };

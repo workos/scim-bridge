@@ -13,7 +13,13 @@
   gap: var(--space-1);
 }
 
-.Chip:where(button) {
+/*
+ * `[role='button']` covers chips that render as a `<span>` instead of a
+ * `<button>` (e.g. a CopyChip inside a read-only `<fieldset disabled>`), which
+ * don't get the `.reset-button` cursor.
+ */
+.Chip:where(button, [role='button']) {
+  cursor: pointer;
   user-select: none;
 }
 
@@ -28,10 +34,10 @@
   background-color: var(--blue-a3);
   color: var(--blue-a11);
 }
-.Chip.blue:where(button):hover {
+.Chip.blue:where(button, [role='button']):hover {
   background-color: var(--blue-a4);
 }
-.Chip.blue:where(button):active {
+.Chip.blue:where(button, [role='button']):active {
   background-color: var(--blue-a5);
 }
 .Chip.blue:where(:focus-visible) {
@@ -60,10 +66,10 @@
   background-color: var(--gray-a3);
   color: var(--gray-a11);
 }
-.Chip.gray:where(button):hover {
+.Chip.gray:where(button, [role='button']):hover {
   background-color: var(--gray-a4);
 }
-.Chip.gray:where(button):active {
+.Chip.gray:where(button, [role='button']):active {
   background-color: var(--gray-a5);
 }
 .Chip.gray:where(:focus-visible) {
@@ -92,10 +98,10 @@
   background-color: var(--green-a3);
   color: var(--green-a11);
 }
-.Chip.green:where(button):hover {
+.Chip.green:where(button, [role='button']):hover {
   background-color: var(--green-a4);
 }
-.Chip.green:where(button):active {
+.Chip.green:where(button, [role='button']):active {
   background-color: var(--green-a5);
 }
 .Chip.green:where(:focus-visible) {
@@ -124,10 +130,10 @@
   background-color: var(--red-a3);
   color: var(--red-a11);
 }
-.Chip.red:where(button):hover {
+.Chip.red:where(button, [role='button']):hover {
   background-color: var(--red-a4);
 }
-.Chip.red:where(button):active {
+.Chip.red:where(button, [role='button']):active {
   background-color: var(--red-a5);
 }
 .Chip.red:where(:focus-visible) {
@@ -155,10 +161,10 @@
 .Chip.ghost {
   background-color: transparent;
 }
-.Chip.ghost:where(button):hover {
+.Chip.ghost:where(button, [role='button']):hover {
   background-color: var(--gray-a3);
 }
-.Chip.ghost:where(button):active {
+.Chip.ghost:where(button, [role='button']):active {
   background-color: var(--gray-a4);
 }
 .Chip.ghost:where(:focus-visible) {

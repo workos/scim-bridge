@@ -1,6 +1,6 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-import * as React from "react";
+import * as React from 'react';
 
 export type As<
   DefaultTag extends React.ElementType,
@@ -30,4 +30,7 @@ export type As<
     });
 
 // `interface HTMLAttributes` includes 'color', which may lead to clashes
-type PropsWithoutColor<T extends React.ElementType> = Omit<React.ComponentPropsWithRef<T>, "color">;
+type PropsWithoutColor<T extends React.ElementType> = Omit<
+  React.ComponentPropsWithRef<T>,
+  'color'
+>;

@@ -1,8 +1,8 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
+'use client';
 
-import * as React from "react";
+import * as React from 'react';
 
 /**
  * Creates a React context with a provider and a consumer hook. This overload
@@ -27,7 +27,9 @@ function createContext<ContextValueType extends PrimitiveType | object>(
   rootComponentName: string,
   defaultValue?: ContextValueType,
 ) {
-  const Context = React.createContext<ContextValueType | null>(defaultValue ?? null);
+  const Context = React.createContext<ContextValueType | null>(
+    defaultValue ?? null,
+  );
 
   type Props = ContextValueType extends PrimitiveType
     ? { children: React.ReactNode; contextValue: ContextValueType }
@@ -40,9 +42,10 @@ function createContext<ContextValueType extends PrimitiveType | object>(
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
     const value = React.useMemo(
       () => {
-        if ("contextValue" in providerProps) {
+        if ('contextValue' in providerProps) {
           // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-          return (providerProps as { contextValue: ContextValueType }).contextValue;
+          return (providerProps as { contextValue: ContextValueType })
+            .contextValue;
         }
 
         return providerProps;
@@ -56,13 +59,15 @@ function createContext<ContextValueType extends PrimitiveType | object>(
   function useContext(consumerName: string) {
     const context = React.useContext(Context);
     if (context === null) {
-      throw new Error(`\`${consumerName}\` must be used within \`${rootComponentName}\``);
+      throw new Error(
+        `\`${consumerName}\` must be used within \`${rootComponentName}\``,
+      );
     }
 
     return context;
   }
 
-  Provider.displayName = rootComponentName + "Provider";
+  Provider.displayName = rootComponentName + 'Provider';
   return [Provider, useContext] as const;
 }
 
@@ -73,7 +78,9 @@ type PrimitiveContextReturnType<ContextValueType extends PrimitiveType> = [
   (consumerName: string) => ContextValueType,
 ];
 
-type ObjectContextReturnType<ContextValueType extends object & { contextValue?: never }> = [
+type ObjectContextReturnType<
+  ContextValueType extends object & { contextValue?: never },
+> = [
   React.FC<ContextValueType & { children: React.ReactNode }>,
   (consumerName: string) => ContextValueType,
 ];

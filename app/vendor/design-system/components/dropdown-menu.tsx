@@ -1,14 +1,16 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-import * as ThemesDropdownMenu from "@radix-ui/themes/dist/esm/components/dropdown-menu.js";
-import * as React from "react";
+import * as React from 'react';
+import * as ThemesDropdownMenu from '../radix-themes/components/dropdown-menu.js';
 
-type DropdownMenuContentProps = React.ComponentPropsWithoutRef<typeof ThemesDropdownMenu.Content>;
+type DropdownMenuContentProps = React.ComponentPropsWithoutRef<
+  typeof ThemesDropdownMenu.Content
+>;
 
 const DropdownMenuContent = React.forwardRef<
   React.ElementRef<typeof ThemesDropdownMenu.Content>,
   DropdownMenuContentProps
->(({ color = "gray", sideOffset = 5, ...props }, forwardedRef) => (
+>(({ color = 'gray', sideOffset = 5, ...props }, forwardedRef) => (
   <ThemesDropdownMenu.Content
     ref={forwardedRef}
     color={color}
@@ -18,7 +20,7 @@ const DropdownMenuContent = React.forwardRef<
   />
 ));
 
-DropdownMenuContent.displayName = "DropdownMenuContent";
+DropdownMenuContent.displayName = 'DropdownMenuContent';
 
 export const Root = ThemesDropdownMenu.Root;
 export const Trigger = ThemesDropdownMenu.Trigger;

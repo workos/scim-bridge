@@ -10,7 +10,7 @@
 }
 
 .CodeBlockRoot::after {
-  content: "";
+  content: '';
   position: absolute;
   border-radius: inherit;
   pointer-events: none;
@@ -50,7 +50,7 @@
 
 .CodeBlockHeader::before,
 .CodeBlockFooter::before {
-  content: "";
+  content: '';
   position: absolute;
   box-shadow: inset 0 -1px var(--gray-a5);
   left: 1px;
@@ -82,7 +82,7 @@
 }
 
 .CodeBlockOutput::after {
-  content: "";
+  content: '';
   position: absolute;
   box-shadow: inset 0 -1px var(--gray-a5);
   bottom: 0;
@@ -137,10 +137,14 @@
 .CodeBlockContentInner {
   --code-block-pad-top: var(--space-2);
   --code-block-pad-bottom: var(--space-2);
-  --code-block-pad-y: calc(var(--code-block-pad-top) + var(--code-block-pad-bottom));
+  --code-block-pad-y: calc(
+    var(--code-block-pad-top) + var(--code-block-pad-bottom)
+  );
   --code-block-pad-left: var(--space-3);
   --code-block-pad-right: var(--space-1);
-  --code-block-pad-x: calc(var(--code-block-pad-left) + var(--code-block-pad-right));
+  --code-block-pad-x: calc(
+    var(--code-block-pad-left) + var(--code-block-pad-right)
+  );
   display: block;
   padding-top: var(--code-block-pad-top);
   padding-bottom: var(--code-block-pad-bottom);
@@ -236,7 +240,8 @@
   --code-block-line-border-bottom: var(--red-a5);
 }
 
-.CodeBlockLine:is(.yellow, .blue, .green, .red) + .CodeBlockLine:is(.yellow, .blue, .green, .red) {
+.CodeBlockLine:is(.yellow, .blue, .green, .red)
+  + .CodeBlockLine:is(.yellow, .blue, .green, .red) {
   --code-block-line-border-top: transparent;
 }
 
@@ -271,12 +276,16 @@
   padding-left: var(--space-3);
 }
 
-.CodeBlockLineGroup.gutter-cli .CodeBlockLine:first-child .CodeBlockLineGutter::before {
-  content: "$";
+.CodeBlockLineGroup.gutter-cli
+  .CodeBlockLine:first-child
+  .CodeBlockLineGutter::before {
+  content: '$';
 }
 
-.CodeBlockLineGroup.gutter-cli .CodeBlockLine:nth-child(n + 2) .CodeBlockLineGutter::before {
-  content: ">";
+.CodeBlockLineGroup.gutter-cli
+  .CodeBlockLine:nth-child(n + 2)
+  .CodeBlockLineGutter::before {
+  content: '>';
 }
 
 .CodeBlockLineGroup.gutter-numbers .CodeBlockLineGutter::before {
@@ -284,11 +293,11 @@
 }
 
 .CodeBlockLine.green .CodeBlockLineGutter::before {
-  content: "+";
+  content: '+';
 }
 
 .CodeBlockLine.red .CodeBlockLineGutter::before {
-  content: "−";
+  content: '−';
 }
 
 .CodeBlockLineContent {

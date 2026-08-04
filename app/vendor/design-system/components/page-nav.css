@@ -43,11 +43,11 @@
     }
   }
 
-  .PageNavSubContent[data-state="open"] {
+  .PageNavSubContent[data-state='open'] {
     animation: PageNavSubSlideDown 175ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  .PageNavSubContent[data-state="closed"] {
+  .PageNavSubContent[data-state='closed'] {
     animation: PageNavSubSlideUp 175ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 }
@@ -75,7 +75,7 @@
 }
 
 .PageNavLink.active,
-.PageNavSub[data-state="open"] > :first-child {
+.PageNavSub[data-state='open'] > :first-child {
   font-weight: bold;
 }
 

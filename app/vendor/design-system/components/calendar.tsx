@@ -1,9 +1,9 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
+'use client';
 
-import { ChevronLeftIcon, ChevronRightIcon } from "@radix-ui/react-icons";
-import classNames from "classnames";
+import { ChevronLeftIcon, ChevronRightIcon } from '@radix-ui/react-icons';
+import classNames from 'classnames';
 import {
   addDays,
   addMonths,
@@ -21,13 +21,13 @@ import {
   startOfWeek,
   subDays,
   subMonths,
-} from "date-fns";
-import * as React from "react";
-import { ComposedDate } from "../helpers/date-picker-helpers.js";
-import type { MarginProps } from "../props.js";
-import { Button } from "./button.js";
-import { IconButton } from "./icon-button.js";
-import { Text } from "./text.js";
+} from 'date-fns';
+import * as React from 'react';
+import { ComposedDate } from '../helpers/date-picker-helpers.js';
+import type { MarginProps } from '../props.js';
+import { Button } from './button.js';
+import { IconButton } from './icon-button.js';
+import { Text } from './text.js';
 
 interface CalendarRef {
   focus: () => void;
@@ -43,28 +43,42 @@ interface CalendarProps extends MarginProps {
   className?: string;
 }
 
-const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
 const Calendar = React.forwardRef<CalendarRef, CalendarProps>(
   (
-    { value, onChange, partialDate, minDate, maxDate, disabled = false, className, ...props },
+    {
+      value,
+      onChange,
+      partialDate,
+      minDate,
+      maxDate,
+      disabled = false,
+      className,
+      ...props
+    },
     forwardedRef,
   ) => {
     const calendarGridRef = React.useRef<HTMLDivElement>(null);
     const focusedButtonRef = React.useRef<HTMLButtonElement>(null);
     const focusedDateRef = React.useRef<Date>(startOfDay(value || new Date()));
-    const [currentMonth, setCurrentMonth] = React.useState(() => value || new Date());
+    const [currentMonth, setCurrentMonth] = React.useState(
+      () => value || new Date(),
+    );
     const [focusRenderKey, setFocusRenderKey] = React.useState(0);
-    const updateFocusedDate = React.useCallback((newDate: Date, shouldFocus = false) => {
-      focusedDateRef.current = startOfDay(newDate);
-      setFocusRenderKey((prev) => prev + 1);
+    const updateFocusedDate = React.useCallback(
+      (newDate: Date, shouldFocus = false) => {
+        focusedDateRef.current = startOfDay(newDate);
+        setFocusRenderKey((prev) => prev + 1);
 
-      if (shouldFocus) {
-        requestAnimationFrame(() => {
-          focusedButtonRef.current?.focus();
-        });
-      }
-    }, []);
+        if (shouldFocus) {
+          requestAnimationFrame(() => {
+            focusedButtonRef.current?.focus();
+          });
+        }
+      },
+      [],
+    );
 
     React.useImperativeHandle(
       forwardedRef,
@@ -195,24 +209,24 @@ const Calendar = React.forwardRef<CalendarRef, CalendarProps>(
         let newFocusedDate: Date | null = null;
 
         switch (event.key) {
-          case "ArrowLeft":
+          case 'ArrowLeft':
             event.preventDefault();
             newFocusedDate = subDays(currentFocused, 1);
             break;
-          case "ArrowRight":
+          case 'ArrowRight':
             event.preventDefault();
             newFocusedDate = addDays(currentFocused, 1);
             break;
-          case "ArrowUp":
+          case 'ArrowUp':
             event.preventDefault();
             newFocusedDate = subDays(currentFocused, 7);
             break;
-          case "ArrowDown":
+          case 'ArrowDown':
             event.preventDefault();
             newFocusedDate = addDays(currentFocused, 7);
             break;
-          case "Enter":
-          case " ":
+          case 'Enter':
+          case ' ':
             event.preventDefault();
             if (!isDateDisabled(currentFocused)) {
               onChange?.(currentFocused);
@@ -228,7 +242,8 @@ const Calendar = React.forwardRef<CalendarRef, CalendarProps>(
           const calendarEnd = endOfWeek(endOfMonth(currentMonth));
 
           // Only change month if the new date is outside the current grid
-          const isOutsideGrid = newFocusedDate < calendarStart || newFocusedDate > calendarEnd;
+          const isOutsideGrid =
+            newFocusedDate < calendarStart || newFocusedDate > calendarEnd;
 
           if (isOutsideGrid) {
             setCurrentMonth(newFocusedDate);
@@ -252,7 +267,7 @@ const Calendar = React.forwardRef<CalendarRef, CalendarProps>(
             isToday: isToday(date),
             shouldFocus: isSameDay(date, focusedDateRef.current),
             isDisabled: isDateDisabled(date),
-            dayString: format(date, "d"),
+            dayString: format(date, 'd'),
           };
         }),
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -266,7 +281,7 @@ const Calendar = React.forwardRef<CalendarRef, CalendarProps>(
     );
 
     return (
-      <div className={classNames("calendar", className)} {...props}>
+      <div className={classNames('calendar', className)} {...props}>
         <div className="CalendarHeader">
           <IconButton
             aria-label="Previous month"
@@ -278,7 +293,7 @@ const Calendar = React.forwardRef<CalendarRef, CalendarProps>(
           </IconButton>
 
           <Text className="CalendarHeading" size="2" weight="bold">
-            {format(currentMonth, "MMMM yyyy")}
+            {format(currentMonth, 'MMMM yyyy')}
           </Text>
 
           <IconButton
@@ -301,7 +316,7 @@ const Calendar = React.forwardRef<CalendarRef, CalendarProps>(
 
         <div
           ref={calendarGridRef}
-          aria-label={format(currentMonth, "MMMM yyyy")}
+          aria-label={format(currentMonth, 'MMMM yyyy')}
           className="CalendarGrid"
           role="grid"
         >
@@ -315,9 +330,9 @@ const Calendar = React.forwardRef<CalendarRef, CalendarProps>(
                 disabled={day.isDisabled}
                 role="gridcell"
                 tabIndex={day.shouldFocus ? 0 : -1}
-                className={classNames("CalendarDayButton", {
-                  "calendar-cell--today": day.isToday && !day.isSelected,
-                  "calendar-cell--other-month": !day.isCurrentMonth,
+                className={classNames('CalendarDayButton', {
+                  'calendar-cell--today': day.isToday && !day.isSelected,
+                  'calendar-cell--other-month': !day.isCurrentMonth,
                 })}
                 onClick={() => handleDateClick(day.date)}
                 onKeyDown={day.shouldFocus ? handleKeyDown : undefined}
@@ -332,7 +347,7 @@ const Calendar = React.forwardRef<CalendarRef, CalendarProps>(
   },
 );
 
-Calendar.displayName = "Calendar";
+Calendar.displayName = 'Calendar';
 
 export { Calendar };
 export type { CalendarProps, CalendarRef };

@@ -1,3 +1,3 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-export { Switch } from "@radix-ui/themes/dist/esm/components/switch.js";
+export { Switch } from '../radix-themes/components/switch.js';

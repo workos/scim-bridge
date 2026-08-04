@@ -1,6 +1,6 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-import * as React from "react";
+import * as React from 'react';
 
 type ObjectUrlSource = string | null | File | Blob | MediaSource | undefined;
 
@@ -22,5 +22,6 @@ export function useObjectUrl(source: ObjectUrlSource) {
   return isPrimitiveSource(source) ? (source ?? null) : objectURL;
 }
 
-const isPrimitiveSource = (source: ObjectUrlSource): source is string | undefined | null =>
-  !source || typeof source === "string";
+const isPrimitiveSource = (
+  source: ObjectUrlSource,
+): source is string | undefined | null => !source || typeof source === 'string';

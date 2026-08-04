@@ -7,7 +7,7 @@
 }
 
 .PermanentLink::before {
-  content: "";
+  content: '';
   position: absolute;
   inset: calc(-1 * var(--space-3));
 }

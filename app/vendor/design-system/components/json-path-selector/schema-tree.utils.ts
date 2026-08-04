@@ -4,8 +4,8 @@
  * Schema tree utilities for building, flattening, searching, and navigating schema trees.
  */
 
-import { PATH_SEPARATOR } from "./internal-path.utils.js";
-import { removeAccents } from "./remove-accents.js";
+import { PATH_SEPARATOR } from './internal-path.utils.js';
+import { removeAccents } from './remove-accents.js';
 
 // Type definitions
 export type JsonPrimitive = string | number | boolean | null;
@@ -16,10 +16,10 @@ export interface JsonObject {
   [key: string]: JsonPrimitive | JsonObject;
 }
 
-export type SchemaNodeType = "primitive" | "object" | "array";
+export type SchemaNodeType = 'primitive' | 'object' | 'array';
 
 const isJsonObject = (value: unknown): value is JsonObject =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 interface SchemaNodeSharedProperties {
   key: string;
@@ -31,17 +31,17 @@ interface SchemaNodeSharedProperties {
 export type SchemaNode = SchemaNodeSharedProperties &
   (
     | {
-        type: Extract<SchemaNodeType, "object">;
+        type: Extract<SchemaNodeType, 'object'>;
         children: SchemaNode[];
         value?: never;
       }
     | {
-        type: Extract<SchemaNodeType, "array">;
+        type: Extract<SchemaNodeType, 'array'>;
         children?: SchemaNode[];
         value?: never;
       }
     | {
-        type: Extract<SchemaNodeType, "primitive">;
+        type: Extract<SchemaNodeType, 'primitive'>;
         value: JsonPrimitive;
         children?: never;
       }
@@ -75,7 +75,7 @@ export function buildSchemaTree(
       const childResult = buildSchemaTree(value, path);
       const node: SchemaNode = {
         key,
-        type: "object",
+        type: 'object',
         path,
         parent: parentPath,
         children: childResult.nodes,
@@ -91,7 +91,7 @@ export function buildSchemaTree(
       // Handle primitives
       const node: SchemaNode = {
         key,
-        type: "primitive",
+        type: 'primitive',
         value,
         path,
         parent: parentPath,
@@ -107,7 +107,9 @@ export function buildSchemaTree(
 export const flattenSchemaTree = (items: SchemaNode[]): SchemaNode[] =>
   items.flatMap((item) => [
     item,
-    ...("children" in item && item.children ? flattenSchemaTree(item.children) : []),
+    ...('children' in item && item.children
+      ? flattenSchemaTree(item.children)
+      : []),
   ]);
 
 export function searchSchemaTree(
@@ -176,7 +178,10 @@ export function getParentNode(
   return nodeMap.get(item.parent);
 }
 
-export function getAncestors(item: SchemaNode, nodeMap: Map<string, SchemaNode>): SchemaNode[] {
+export function getAncestors(
+  item: SchemaNode,
+  nodeMap: Map<string, SchemaNode>,
+): SchemaNode[] {
   const parent = getParentNode(item, nodeMap);
   if (!parent) {
     return [];
@@ -185,11 +190,17 @@ export function getAncestors(item: SchemaNode, nodeMap: Map<string, SchemaNode>)
   return [parent, ...getAncestors(parent, nodeMap)];
 }
 
-export function getDescendants(item: SchemaNode, nodeMap: Map<string, SchemaNode>): SchemaNode[] {
+export function getDescendants(
+  item: SchemaNode,
+  nodeMap: Map<string, SchemaNode>,
+): SchemaNode[] {
   if (!item.children) {
     return [];
   }
 
   // Get direct descendants from children array
-  return item.children.flatMap((child) => [child, ...getDescendants(child, nodeMap)]);
+  return item.children.flatMap((child) => [
+    child,
+    ...getDescendants(child, nodeMap),
+  ]);
 }

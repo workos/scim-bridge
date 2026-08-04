@@ -13,7 +13,7 @@
 }
 
 .InfoTooltip::before {
-  content: "";
+  content: '';
   position: absolute;
   border-radius: inherit;
   top: calc(-1 * var(--space-1));
@@ -41,7 +41,7 @@
   color: var(--gray-a11);
 }
 
-.InfoTooltip.gray[data-state="open"]::before {
+.InfoTooltip.gray[data-state='open']::before {
   background-color: var(--gray-a4);
 }
 
@@ -55,7 +55,7 @@
   color: var(--purple-a11);
 }
 
-.InfoTooltip.purple[data-state="open"]::before {
+.InfoTooltip.purple[data-state='open']::before {
   background-color: var(--purple-a4);
 }
 
@@ -69,7 +69,7 @@
   color: var(--green-a11);
 }
 
-.InfoTooltip.green[data-state="open"]::before {
+.InfoTooltip.green[data-state='open']::before {
   background-color: var(--green-a4);
 }
 
@@ -83,7 +83,7 @@
   color: var(--red-a11);
 }
 
-.InfoTooltip.red[data-state="open"]::before {
+.InfoTooltip.red[data-state='open']::before {
   background-color: var(--red-a4);
 }
 

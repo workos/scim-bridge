@@ -57,7 +57,7 @@
   outline: 0;
 
   &::after {
-    content: "";
+    content: '';
     position: absolute;
     inset: 1px 0px;
     outline: 2px solid var(--focus-8);
@@ -78,7 +78,8 @@
 }
 
 /* Handle when inside a card list and it's the first item */
-.CardListRoot:not(:has(.CardListHeader)):not(:has(.CardListSearch)) .ListCellItem:first-child {
+.CardListRoot:not(:has(.CardListHeader)):not(:has(.CardListSearch))
+  .ListCellItem:first-child {
   border-top-left-radius: var(--card-border-radius);
   border-top-right-radius: var(--card-border-radius);
 }

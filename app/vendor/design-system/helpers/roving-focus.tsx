@@ -1,6 +1,6 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
+'use client';
 
 // Fork of https://github.com/radix-ui/primitives/blob/main/packages/react/roving-focus/src/RovingFocusGroup.tsx
 //
@@ -9,7 +9,7 @@
 // - Allow roving focus even when row contents are focused (2)
 // - Don't prevent default onMouseDown to allow text selection (3)
 
-import { Direction } from "radix-ui";
+import { Direction } from 'radix-ui';
 import {
   Collection,
   composeEventHandlers,
@@ -18,32 +18,28 @@ import {
   useCallbackRef,
   useComposedRefs,
   useControllableState,
-} from "radix-ui/internal";
-import * as React from "react";
+} from 'radix-ui/internal';
+import * as React from 'react';
 
-const ENTRY_FOCUS = "rovingFocusGroup.onEntryFocus";
+const ENTRY_FOCUS = 'rovingFocusGroup.onEntryFocus';
 const EVENT_OPTIONS = { bubbles: false, cancelable: true };
 
 // -----------------------------------------------------------------------------------------------
 // RovingFocusGroup
 // -----------------------------------------------------------------------------------------------
 
-const GROUP_NAME = "RovingFocusGroup";
+const GROUP_NAME = 'RovingFocusGroup';
 
 type ItemData = { id: string; focusable: boolean; active: boolean };
-const [RovingFocusCollection, useCollection, createCollectionScope] = Collection.createCollection<
-  HTMLSpanElement,
-  ItemData
->(GROUP_NAME);
+const [RovingFocusCollection, useCollection, createCollectionScope] =
+  Collection.createCollection<HTMLSpanElement, ItemData>(GROUP_NAME);
 
 type ScopedProps<P> = P & { __scopeRovingFocusGroup?: Context.Scope };
-const [createRovingFocusGroupContext, createRovingFocusGroupScope] = Context.createContextScope(
-  GROUP_NAME,
-  [createCollectionScope],
-);
+const [createRovingFocusGroupContext, createRovingFocusGroupScope] =
+  Context.createContextScope(GROUP_NAME, [createCollectionScope]);
 
-type Orientation = React.AriaAttributes["aria-orientation"];
-type Direction = "ltr" | "rtl";
+type Orientation = React.AriaAttributes['aria-orientation'];
+type Direction = 'ltr' | 'rtl';
 
 interface RovingFocusGroupOptions {
   /**
@@ -76,15 +72,16 @@ const [RovingFocusProvider, useRovingFocusContext] =
 type RovingFocusGroupElement = RovingFocusGroupImplElement;
 type RovingFocusGroupProps = RovingFocusGroupImplProps;
 
-const RovingFocusGroup = React.forwardRef<RovingFocusGroupElement, RovingFocusGroupProps>(
-  (props: ScopedProps<RovingFocusGroupProps>, forwardedRef) => (
-    <RovingFocusCollection.Provider scope={props.__scopeRovingFocusGroup}>
-      <RovingFocusCollection.Slot scope={props.__scopeRovingFocusGroup}>
-        <RovingFocusGroupImpl {...props} ref={forwardedRef} />
-      </RovingFocusCollection.Slot>
-    </RovingFocusCollection.Provider>
-  ),
-);
+const RovingFocusGroup = React.forwardRef<
+  RovingFocusGroupElement,
+  RovingFocusGroupProps
+>((props: ScopedProps<RovingFocusGroupProps>, forwardedRef) => (
+  <RovingFocusCollection.Provider scope={props.__scopeRovingFocusGroup}>
+    <RovingFocusCollection.Slot scope={props.__scopeRovingFocusGroup}>
+      <RovingFocusGroupImpl {...props} ref={forwardedRef} />
+    </RovingFocusCollection.Slot>
+  </RovingFocusCollection.Provider>
+));
 
 RovingFocusGroup.displayName = GROUP_NAME;
 
@@ -93,7 +90,7 @@ RovingFocusGroup.displayName = GROUP_NAME;
 type RovingFocusGroupImplElement = React.ElementRef<typeof Primitive.div>;
 type PrimitiveDivProps = React.ComponentPropsWithoutRef<typeof Primitive.div>;
 interface RovingFocusGroupImplProps
-  extends Omit<PrimitiveDivProps, "dir">, RovingFocusGroupOptions {
+  extends Omit<PrimitiveDivProps, 'dir'>, RovingFocusGroupOptions {
   currentTabStopId?: string | null;
   defaultCurrentTabStopId?: string;
   onCurrentTabStopIdChange?: (tabStopId: string | null) => void;
@@ -166,7 +163,7 @@ const RovingFocusGroupImpl = React.forwardRef<
         tabIndex={isTabbingBackOut || focusableItemsCount === 0 ? -1 : 0}
         {...groupProps}
         ref={composedRefs}
-        style={{ outline: "none", ...props.style }}
+        style={{ outline: 'none', ...props.style }}
         onBlur={composeEventHandlers(props.onBlur, () => {
           setIsTabbingBackOut(false);
         })}
@@ -177,20 +174,28 @@ const RovingFocusGroupImpl = React.forwardRef<
           // instead, the wrapper will get focused and not through a bubbling event.
           const isKeyboardFocus = !isClickFocusRef.current;
 
-          if (event.target === event.currentTarget && isKeyboardFocus && !isTabbingBackOut) {
+          if (
+            event.target === event.currentTarget &&
+            isKeyboardFocus &&
+            !isTabbingBackOut
+          ) {
             const entryFocusEvent = new CustomEvent(ENTRY_FOCUS, EVENT_OPTIONS);
             event.currentTarget.dispatchEvent(entryFocusEvent);
 
             if (!entryFocusEvent.defaultPrevented) {
               const items = getItems().filter((item) => item.focusable);
               const activeItem = items.find((item) => item.active);
-              const currentItem = items.find((item) => item.id === currentTabStopId);
+              const currentItem = items.find(
+                (item) => item.id === currentTabStopId,
+              );
               // Introducing lint rule banning type assertions
               // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
               const candidateItems = [activeItem, currentItem, ...items].filter(
                 Boolean,
               ) as typeof items;
-              const candidateNodes = candidateItems.map((item) => item.ref.current);
+              const candidateNodes = candidateItems.map(
+                (item) => item.ref.current,
+              );
               focusFirst(candidateNodes);
             }
           }
@@ -205,13 +210,13 @@ const RovingFocusGroupImpl = React.forwardRef<
   );
 });
 
-RovingFocusGroupImpl.displayName = "RovingFocusGroupImpl";
+RovingFocusGroupImpl.displayName = 'RovingFocusGroupImpl';
 
 // -----------------------------------------------------------------------------------------------
 // RovingFocusGroupItem
 // -----------------------------------------------------------------------------------------------
 
-const ITEM_NAME = "RovingFocusGroupItem";
+const ITEM_NAME = 'RovingFocusGroupItem';
 
 type RovingFocusItemElement = React.ElementRef<typeof Primitive.span>;
 type PrimitiveSpanProps = React.ComponentPropsWithoutRef<typeof Primitive.span>;
@@ -221,100 +226,106 @@ interface RovingFocusItemProps extends PrimitiveSpanProps {
   active?: boolean;
 }
 
-const RovingFocusGroupItem = React.forwardRef<RovingFocusItemElement, RovingFocusItemProps>(
-  (props: ScopedProps<RovingFocusItemProps>, forwardedRef) => {
-    const {
-      __scopeRovingFocusGroup: scopeRovingFocusGroup,
-      focusable = true,
-      active = false,
-      tabStopId,
-      ...itemProps
-    } = props;
-    const autoId = React.useId();
-    const id = tabStopId || autoId;
-    const context = useRovingFocusContext(ITEM_NAME, scopeRovingFocusGroup);
-    const isCurrentTabStop = context.currentTabStopId === id;
-    const getItems = useCollection(scopeRovingFocusGroup);
+const RovingFocusGroupItem = React.forwardRef<
+  RovingFocusItemElement,
+  RovingFocusItemProps
+>((props: ScopedProps<RovingFocusItemProps>, forwardedRef) => {
+  const {
+    __scopeRovingFocusGroup: scopeRovingFocusGroup,
+    focusable = true,
+    active = false,
+    tabStopId,
+    ...itemProps
+  } = props;
+  const autoId = React.useId();
+  const id = tabStopId || autoId;
+  const context = useRovingFocusContext(ITEM_NAME, scopeRovingFocusGroup);
+  const isCurrentTabStop = context.currentTabStopId === id;
+  const getItems = useCollection(scopeRovingFocusGroup);
 
-    React.useEffect(() => {
-      if (focusable) {
-        context.onFocusableItemAdd();
-        return () => context.onFocusableItemRemove();
-      }
+  React.useEffect(() => {
+    if (focusable) {
+      context.onFocusableItemAdd();
+      return () => context.onFocusableItemRemove();
+    }
 
-      return;
-    }, [focusable, context]);
+    return;
+  }, [focusable, context]);
 
-    return (
-      <RovingFocusCollection.ItemSlot
-        active={active}
-        focusable={focusable}
-        id={id}
-        scope={scopeRovingFocusGroup}
-      >
-        <Primitive.span
-          data-orientation={context.orientation}
-          // Enforce tabIndex={-1} for non-focusable items (1)
-          tabIndex={focusable && isCurrentTabStop ? 0 : -1}
-          {...itemProps}
-          ref={forwardedRef}
-          onFocus={composeEventHandlers(props.onFocus, () => context.onItemFocus(id))}
-          onKeyDown={composeEventHandlers(props.onKeyDown, (event) => {
-            if (event.key === "Tab" && event.shiftKey) {
-              context.onItemShiftTab();
-              return;
-            }
+  return (
+    <RovingFocusCollection.ItemSlot
+      active={active}
+      focusable={focusable}
+      id={id}
+      scope={scopeRovingFocusGroup}
+    >
+      <Primitive.span
+        data-orientation={context.orientation}
+        // Enforce tabIndex={-1} for non-focusable items (1)
+        tabIndex={focusable && isCurrentTabStop ? 0 : -1}
+        {...itemProps}
+        ref={forwardedRef}
+        onFocus={composeEventHandlers(props.onFocus, () =>
+          context.onItemFocus(id),
+        )}
+        onKeyDown={composeEventHandlers(props.onKeyDown, (event) => {
+          if (event.key === 'Tab' && event.shiftKey) {
+            context.onItemShiftTab();
+            return;
+          }
 
-            // Allow roving focus even when row contents are focused (2)
-            // Original implementation:
-            // if (event.target !== event.currentTarget) {
-            //   return;
-            // }
+          // Allow roving focus even when row contents are focused (2)
+          // Original implementation:
+          // if (event.target !== event.currentTarget) {
+          //   return;
+          // }
 
-            const focusIntent = getFocusIntent(event, context.orientation, context.dir);
+          const focusIntent = getFocusIntent(
+            event,
+            context.orientation,
+            context.dir,
+          );
 
-            if (focusIntent !== undefined) {
-              event.preventDefault();
-              const items = getItems().filter((item) => item.focusable);
-              let candidateNodes: (HTMLSpanElement | null | undefined)[] = items.map(
-                (item) => item.ref.current,
-              );
+          if (focusIntent !== undefined) {
+            event.preventDefault();
+            const items = getItems().filter((item) => item.focusable);
+            let candidateNodes: (HTMLSpanElement | null | undefined)[] =
+              items.map((item) => item.ref.current);
 
-              if (focusIntent === "last") {
+            if (focusIntent === 'last') {
+              candidateNodes.reverse();
+            } else if (focusIntent === 'prev' || focusIntent === 'next') {
+              if (focusIntent === 'prev') {
                 candidateNodes.reverse();
-              } else if (focusIntent === "prev" || focusIntent === "next") {
-                if (focusIntent === "prev") {
-                  candidateNodes.reverse();
-                }
-
-                const currentIndex = candidateNodes.indexOf(event.currentTarget);
-                candidateNodes = context.loop
-                  ? wrapArray(candidateNodes, currentIndex + 1)
-                  : candidateNodes.slice(currentIndex + 1);
               }
 
-              /**
-               * Imperative focus during keydown is risky so we prevent React's batching updates
-               * to avoid potential bugs. See: https://github.com/facebook/react/issues/20332
-               */
-              setTimeout(() => focusFirst(candidateNodes));
+              const currentIndex = candidateNodes.indexOf(event.currentTarget);
+              candidateNodes = context.loop
+                ? wrapArray(candidateNodes, currentIndex + 1)
+                : candidateNodes.slice(currentIndex + 1);
             }
-          })}
-          onMouseDown={composeEventHandlers(props.onMouseDown, () => {
-            // Don't prevent default onMouseDown to allow text selection (3)
-            // Original implementation:
-            // if (!focusable) event.preventDefault();
 
-            // Safari doesn't focus a button when clicked so we run our logic on mousedown also
-            if (focusable) {
-              context.onItemFocus(id);
-            }
-          })}
-        />
-      </RovingFocusCollection.ItemSlot>
-    );
-  },
-);
+            /**
+             * Imperative focus during keydown is risky so we prevent React's batching updates
+             * to avoid potential bugs. See: https://github.com/facebook/react/issues/20332
+             */
+            setTimeout(() => focusFirst(candidateNodes));
+          }
+        })}
+        onMouseDown={composeEventHandlers(props.onMouseDown, () => {
+          // Don't prevent default onMouseDown to allow text selection (3)
+          // Original implementation:
+          // if (!focusable) event.preventDefault();
+
+          // Safari doesn't focus a button when clicked so we run our logic on mousedown also
+          if (focusable) {
+            context.onItemFocus(id);
+          }
+        })}
+      />
+    </RovingFocusCollection.ItemSlot>
+  );
+});
 
 RovingFocusGroupItem.displayName = ITEM_NAME;
 
@@ -329,30 +340,34 @@ const MAP_KEY_TO_FOCUS_INTENT: Record<string, FocusIntent> = {
 };
 
 function getDirectionAwareKey(key: string, dir?: Direction) {
-  if (dir !== "rtl") {
+  if (dir !== 'rtl') {
     return key;
   }
 
-  if (key === "ArrowLeft") {
-    return "ArrowRight";
+  if (key === 'ArrowLeft') {
+    return 'ArrowRight';
   }
 
-  if (key === "ArrowRight") {
-    return "ArrowLeft";
+  if (key === 'ArrowRight') {
+    return 'ArrowLeft';
   }
 
   return key;
 }
 
-type FocusIntent = "first" | "last" | "prev" | "next";
+type FocusIntent = 'first' | 'last' | 'prev' | 'next';
 
-function getFocusIntent(event: React.KeyboardEvent, orientation?: Orientation, dir?: Direction) {
+function getFocusIntent(
+  event: React.KeyboardEvent,
+  orientation?: Orientation,
+  dir?: Direction,
+) {
   const key = getDirectionAwareKey(event.key, dir);
-  if (orientation === "vertical" && ["ArrowLeft", "ArrowRight"].includes(key)) {
+  if (orientation === 'vertical' && ['ArrowLeft', 'ArrowRight'].includes(key)) {
     return undefined;
   }
 
-  if (orientation === "horizontal" && ["ArrowUp", "ArrowDown"].includes(key)) {
+  if (orientation === 'horizontal' && ['ArrowUp', 'ArrowDown'].includes(key)) {
     return undefined;
   }
 
@@ -388,5 +403,11 @@ const wrapArray = <T,>(array: T[], startIndex: number) =>
 const Root = RovingFocusGroup;
 const Item = RovingFocusGroupItem;
 
-export { createRovingFocusGroupScope, Item, Root, RovingFocusGroup, RovingFocusGroupItem };
+export {
+  createRovingFocusGroupScope,
+  Item,
+  Root,
+  RovingFocusGroup,
+  RovingFocusGroupItem,
+};
 export type { RovingFocusGroupProps, RovingFocusItemProps };

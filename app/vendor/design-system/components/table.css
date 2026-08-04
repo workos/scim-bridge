@@ -31,8 +31,8 @@
   overflow: hidden;
   position: relative;
   height: 100%;
-  border-radius: var(--table-br-top-left) var(--table-br-top-right) var(--table-br-bottom-right)
-    var(--table-br-bottom-left);
+  border-radius: var(--table-br-top-left) var(--table-br-top-right)
+    var(--table-br-bottom-right) var(--table-br-bottom-left);
 }
 
 .TableContentTable {
@@ -71,12 +71,14 @@
 
 .TableCell:first-child {
   box-shadow:
-    var(--table-row-border-left), var(--table-row-border-top), var(--table-row-border-bottom);
+    var(--table-row-border-left), var(--table-row-border-top),
+    var(--table-row-border-bottom);
 }
 
 .TableCell:last-child {
   box-shadow:
-    var(--table-row-border-right), var(--table-row-border-top), var(--table-row-border-bottom);
+    var(--table-row-border-right), var(--table-row-border-top),
+    var(--table-row-border-bottom);
 }
 
 .TableHeader :where(.TableRow:first-child .TableCell:first-child) {
@@ -208,7 +210,10 @@
   border-top: 1px solid var(--gray-a5);
 }
 
-.TableRoot:has(.TableContent[data-has-vertical-scroll]) .TableBody .TableRow:last-child .TableCell {
+.TableRoot:has(.TableContent[data-has-vertical-scroll])
+  .TableBody
+  .TableRow:last-child
+  .TableCell {
   --table-row-border-bottom: transparent;
 }
 
@@ -264,7 +269,7 @@
 .TableContent[data-has-horizontal-scroll] .TableCell:first-child::after {
   border-right: 1px solid var(--table-separator-color);
   position: absolute;
-  content: "";
+  content: '';
   right: 0;
   top: var(--table-sticky-cell-border-right-position-top);
   bottom: var(--table-sticky-cell-border-right-position-bottom);
@@ -282,7 +287,9 @@
  */
 @supports selector(:has(a)) {
   .TableRow:has(+ .TableRow[data-clickable]:focus-visible),
-  .TableHeader:has(+ .TableBody .TableRow[data-clickable]:first-child:focus-visible) {
+  .TableHeader:has(
+    + .TableBody .TableRow[data-clickable]:first-child:focus-visible
+  ) {
     /* Adjust bottom border of the row preceding the focused row */
     --table-row-border-bottom: inset 0 -1px var(--focus-8);
     /* Adjust right border position for the sticky cell of the row preceding the focused row */
@@ -333,7 +340,8 @@
 }
 
 /* Set darker header background with sticky cell color acrobatics */
-:is(.dark, .dark-theme) :where(.TableRoot .TableContent[data-has-horizontal-scroll] .TableHeader) {
+:is(.dark, .dark-theme)
+  :where(.TableRoot .TableContent[data-has-horizontal-scroll] .TableHeader) {
   --table-row-background-normal: hsl(240, 5%, 4%);
   --table-row-background-inactive-focus: var(--color-background);
 }
@@ -352,7 +360,7 @@
 
 .TableRoot:has(.TableDetail) {
   display: grid;
-  grid-template-areas: "content detail";
+  grid-template-areas: 'content detail';
   grid-template-columns: 1fr auto;
 }
 
@@ -401,8 +409,8 @@
   display: grid;
   grid-template-rows: 1fr auto;
   grid-template-areas:
-    "content"
-    "footer";
+    'content'
+    'footer';
 }
 
 .TableRoot:has(.TableFooter) :where(.TableContent) {
@@ -433,8 +441,8 @@
 .TableRoot:has(.TableFooter):has(.TableDetail) {
   display: grid;
   grid-template-areas:
-    "content detail"
-    "footer detail";
+    'content detail'
+    'footer detail';
 }
 
 /* * * * * * * * * * * * * * * * * * * */

@@ -1,22 +1,22 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
-import { Flex } from "@radix-ui/themes/dist/esm/components/flex.js";
-import { type TextProps, Text } from "@radix-ui/themes/dist/esm/components/text.js";
-import * as React from "react";
-import { type ButtonProps, Button } from "./button.js";
+'use client';
+import * as React from 'react';
+import { Flex } from '../radix-themes/components/flex.js';
+import { type TextProps, Text } from '../radix-themes/components/text.js';
+import { type ButtonProps, Button } from './button.js';
 
 const EmptyStateContext = React.createContext<{
-  size: "1" | "2";
-}>({ size: "2" });
-EmptyStateContext.displayName = "EmptyStateContext";
+  size: '1' | '2';
+}>({ size: '2' });
+EmptyStateContext.displayName = 'EmptyStateContext';
 
 interface EmptyStateProps {
   action?: React.ReactNode;
   children?: React.ReactNode;
   icon?: React.ElementType;
   minHeight?: number;
-  size?: "1" | "2";
+  size?: '1' | '2';
   subtitle?: string | React.ReactElement;
   title: string | React.ReactElement;
 }
@@ -26,11 +26,11 @@ const EmptyState: React.FC<EmptyStateProps> = ({
   children,
   icon: Icon,
   minHeight,
-  size = "2",
+  size = '2',
   subtitle: subtitleProp,
   title: titleProp,
 }) => {
-  const iconSize = size === "1" ? 24 : 32;
+  const iconSize = size === '1' ? 24 : 32;
 
   const title = (() => {
     if (!titleProp) {
@@ -63,11 +63,16 @@ const EmptyState: React.FC<EmptyStateProps> = ({
       gap="3"
       justify="center"
       px="5"
-      py={size === "1" ? "6" : "7"}
+      py={size === '1' ? '6' : '7'}
       style={minHeight ? { minHeight } : undefined}
     >
       <EmptyStateContext.Provider value={{ size }}>
-        <Flex align="center" direction="column" gap={size === "2" ? "1" : "0"} justify="center">
+        <Flex
+          align="center"
+          direction="column"
+          gap={size === '2' ? '1' : '0'}
+          justify="center"
+        >
           {Icon && <Icon color="gray" height={iconSize} width={iconSize} />}
           <Flex align="center" direction="column" gap="1" justify="center">
             {title}
@@ -81,24 +86,23 @@ const EmptyState: React.FC<EmptyStateProps> = ({
   );
 };
 
-const EmptyStateTitle = React.forwardRef<HTMLParagraphElement, TextProps>(function EmptyStateTitle(
-  { children, ...props },
-  ref,
-) {
-  const context = React.useContext(EmptyStateContext);
-  return (
-    <Text
-      align="center"
-      as="p"
-      size={context.size === "2" ? "3" : "2"}
-      weight={context.size === "2" ? "medium" : "regular"}
-      {...props}
-      ref={ref}
-    >
-      {children}
-    </Text>
-  );
-});
+const EmptyStateTitle = React.forwardRef<HTMLParagraphElement, TextProps>(
+  function EmptyStateTitle({ children, ...props }, ref) {
+    const context = React.useContext(EmptyStateContext);
+    return (
+      <Text
+        align="center"
+        as="p"
+        size={context.size === '2' ? '3' : '2'}
+        weight={context.size === '2' ? 'medium' : 'regular'}
+        {...props}
+        ref={ref}
+      >
+        {children}
+      </Text>
+    );
+  },
+);
 
 const EmptyStateSubtitle = React.forwardRef<HTMLParagraphElement, TextProps>(
   function EmptyStateSubtitle({ children, ...props }, ref) {
@@ -109,7 +113,7 @@ const EmptyStateSubtitle = React.forwardRef<HTMLParagraphElement, TextProps>(
         as="p"
         color="gray"
         size="2"
-        weight={context.size === "2" ? "regular" : "light"}
+        weight={context.size === '2' ? 'regular' : 'light'}
         {...props}
         ref={ref}
       >
@@ -129,7 +133,7 @@ const EmptyStateAction = React.forwardRef<HTMLButtonElement, ButtonProps>(
     );
   },
 );
-EmptyStateAction.displayName = "EmptyStateAction";
+EmptyStateAction.displayName = 'EmptyStateAction';
 
 export {
   EmptyStateAction as Action,

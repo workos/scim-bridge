@@ -1,33 +1,38 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
+'use client';
 
-import classNames from "classnames";
-import { Collapsible, NavigationMenu } from "radix-ui";
-import { useComposedRefs } from "radix-ui/internal";
-import * as React from "react";
-import scrollIntoView from "scroll-into-view-if-needed";
-import { extractProps, getSubtree } from "../helpers/themes.js";
-import { marginPropDefs, MarginProps } from "../props.js";
+import classNames from 'classnames';
+import { Collapsible, NavigationMenu } from 'radix-ui';
+import { useComposedRefs } from 'radix-ui/internal';
+import * as React from 'react';
+import scrollIntoView from 'scroll-into-view-if-needed';
+import { extractProps, getSubtree } from '../helpers/themes.js';
+import { marginPropDefs, MarginProps } from '../props.js';
 
 interface PageNavRootOwnProps {
-  color?: "gray" | "purple";
+  color?: 'gray' | 'purple';
 }
 
 interface PageNavRootProps
   extends
-    Omit<React.ComponentPropsWithRef<"div">, "defaultValue" | "dir" | "color">,
+    Omit<React.ComponentPropsWithRef<'div'>, 'defaultValue' | 'dir' | 'color'>,
     PageNavRootOwnProps,
     MarginProps {}
 
 const PageNavRoot = (props: PageNavRootProps) => {
-  const { children, color = "gray", className, ...rootProps } = extractProps(props, marginPropDefs);
+  const {
+    children,
+    color = 'gray',
+    className,
+    ...rootProps
+  } = extractProps(props, marginPropDefs);
   return (
     <NavigationMenu.Root
       orientation="vertical"
-      className={classNames(className, "PageNavRoot", {
-        gray: color === "gray",
-        purple: color === "purple",
+      className={classNames(className, 'PageNavRoot', {
+        gray: color === 'gray',
+        purple: color === 'purple',
       })}
       {...rootProps}
     >
@@ -38,30 +43,37 @@ const PageNavRoot = (props: PageNavRootProps) => {
   );
 };
 
-const PageNavSub = (props: React.ComponentPropsWithoutRef<typeof Collapsible.Root>) => (
-  <Collapsible.Root className="PageNavSub" {...props} />
-);
+const PageNavSub = (
+  props: React.ComponentPropsWithoutRef<typeof Collapsible.Root>,
+) => <Collapsible.Root className="PageNavSub" {...props} />;
 
-const PageNavSubContent = (props: React.ComponentPropsWithoutRef<typeof Collapsible.Content>) => (
-  <Collapsible.Content className="PageNavSubContent" {...props} />
-);
+const PageNavSubContent = (
+  props: React.ComponentPropsWithoutRef<typeof Collapsible.Content>,
+) => <Collapsible.Content className="PageNavSubContent" {...props} />;
 
 interface PageNavLinkOwnProps {
-  state?: "normal" | "active" | "disabled";
+  state?: 'normal' | 'active' | 'disabled';
 }
 
 interface PageNavLinkProps
-  extends PageNavLinkOwnProps, React.ComponentPropsWithRef<typeof NavigationMenu.Link> {}
+  extends
+    PageNavLinkOwnProps,
+    React.ComponentPropsWithRef<typeof NavigationMenu.Link> {}
 
 const PageNavLink = React.forwardRef<HTMLAnchorElement, PageNavLinkProps>(
-  ({ asChild, className, children, state = "normal", onSelect, ...props }, forwardedRef) => {
+  (
+    { asChild, className, children, state = 'normal', onSelect, ...props },
+    forwardedRef,
+  ) => {
     const ref = React.useRef<HTMLAnchorElement>(null);
     const composedRef = useComposedRefs(ref, forwardedRef);
 
     React.useEffect(() => {
       // Scroll active links into view when in a Scroll Area
-      if (ref.current && state === "active") {
-        const container = document.querySelector("[data-radix-scroll-area-viewport]");
+      if (ref.current && state === 'active') {
+        const container = document.querySelector(
+          '[data-radix-scroll-area-viewport]',
+        );
 
         if (!container) {
           return;
@@ -70,8 +82,8 @@ const PageNavLink = React.forwardRef<HTMLAnchorElement, PageNavLinkProps>(
         // Tread very, very, very carefully if changing this.
         // Sneaky bugs reproduced only on select cursed devices may show up.
         scrollIntoView(ref.current, {
-          block: "nearest",
-          scrollMode: "if-needed",
+          block: 'nearest',
+          scrollMode: 'if-needed',
           boundary: (parent) => Boolean(container.contains(parent)),
           behavior: (actions) => {
             actions.forEach(({ el, top }) => {
@@ -83,11 +95,11 @@ const PageNavLink = React.forwardRef<HTMLAnchorElement, PageNavLinkProps>(
       }
     }, [state]);
 
-    if (state === "disabled") {
+    if (state === 'disabled') {
       return (
         <span
           ref={composedRef}
-          className={classNames(className, "PageNavLink disabled")}
+          className={classNames(className, 'PageNavLink disabled')}
           {...props}
         >
           <span className="PageNavLinkInnerVisible">
@@ -104,9 +116,9 @@ const PageNavLink = React.forwardRef<HTMLAnchorElement, PageNavLinkProps>(
       <NavigationMenu.Link
         ref={composedRef}
         asChild={asChild}
-        className={classNames(className, "PageNavLink reset-a", {
-          active: state === "active",
-          normal: state === "normal",
+        className={classNames(className, 'PageNavLink reset-a', {
+          active: state === 'active',
+          normal: state === 'normal',
         })}
         onSelect={onSelect}
         {...props}
@@ -126,7 +138,7 @@ const PageNavLink = React.forwardRef<HTMLAnchorElement, PageNavLinkProps>(
   },
 );
 
-PageNavLink.displayName = "PageNavLink";
+PageNavLink.displayName = 'PageNavLink';
 
 const PageNavLinkIcon = (props: React.PropsWithChildren) => (
   <div className="PageNavLinkIcon" {...props} />

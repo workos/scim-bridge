@@ -45,7 +45,7 @@
 }
 
 .MarkerCircle::before {
-  content: "";
+  content: '';
   position: absolute;
   inset: -10%;
   border-radius: 1em;

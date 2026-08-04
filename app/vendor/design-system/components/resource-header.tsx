@@ -1,9 +1,18 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
+'use client';
 
-import * as React from "react";
-import { Avatar, Box, Code, CopyChip, Flex, Heading, IconPanel, Skeleton } from "../index.js";
+import * as React from 'react';
+import {
+  Avatar,
+  Box,
+  Code,
+  CopyChip,
+  Flex,
+  Heading,
+  IconPanel,
+  Skeleton,
+} from '../index.js';
 
 // ---------------------------------------------------------------------------
 // Context
@@ -29,45 +38,66 @@ const useResourceHeader = () => React.useContext(ResourceHeaderContext);
 
 type FlexProps = React.ComponentPropsWithoutRef<typeof Flex>;
 
-interface ResourceHeaderRootProps extends Omit<FlexProps, "align" | "gap" | "justify" | "width"> {
+interface ResourceHeaderRootProps extends Omit<
+  FlexProps,
+  'align' | 'gap' | 'justify' | 'width'
+> {
   loading?: boolean;
 }
 
-const ResourceHeaderRoot = React.forwardRef<HTMLDivElement, ResourceHeaderRootProps>(
-  ({ loading = false, children, ...props }, forwardedRef) => {
-    const [hasLeftAccessory, setHasLeftAccessory] = React.useState(false);
-    const registerLeftAccessory = React.useCallback(() => setHasLeftAccessory(true), []);
+const ResourceHeaderRoot = React.forwardRef<
+  HTMLDivElement,
+  ResourceHeaderRootProps
+>(({ loading = false, children, ...props }, forwardedRef) => {
+  const [hasLeftAccessory, setHasLeftAccessory] = React.useState(false);
+  const registerLeftAccessory = React.useCallback(
+    () => setHasLeftAccessory(true),
+    [],
+  );
 
-    const contextValue = React.useMemo(
-      () => ({ loading, hasLeftAccessory, registerLeftAccessory }),
-      [loading, hasLeftAccessory, registerLeftAccessory],
-    );
+  const contextValue = React.useMemo(
+    () => ({ loading, hasLeftAccessory, registerLeftAccessory }),
+    [loading, hasLeftAccessory, registerLeftAccessory],
+  );
 
-    return (
-      <ResourceHeaderContext.Provider value={contextValue}>
-        <Flex ref={forwardedRef} align="center" gap="5" justify="between" width="100%" {...props}>
-          {children}
-        </Flex>
-      </ResourceHeaderContext.Provider>
-    );
-  },
-);
-ResourceHeaderRoot.displayName = "ResourceHeaderRoot";
+  return (
+    <ResourceHeaderContext.Provider value={contextValue}>
+      <Flex
+        ref={forwardedRef}
+        align="center"
+        gap="5"
+        justify="between"
+        width="100%"
+        {...props}
+      >
+        {children}
+      </Flex>
+    </ResourceHeaderContext.Provider>
+  );
+});
+ResourceHeaderRoot.displayName = 'ResourceHeaderRoot';
 
 // ---------------------------------------------------------------------------
 // Content
 // ---------------------------------------------------------------------------
 
-interface ResourceHeaderContentProps extends Omit<FlexProps, "align" | "gap"> {}
+interface ResourceHeaderContentProps extends Omit<FlexProps, 'align' | 'gap'> {}
 
-const ResourceHeaderContent = React.forwardRef<HTMLDivElement, ResourceHeaderContentProps>(
-  ({ children, style, ...props }, forwardedRef) => (
-    <Flex ref={forwardedRef} align="center" gap="4" style={{ minWidth: 0, ...style }} {...props}>
-      {children}
-    </Flex>
-  ),
-);
-ResourceHeaderContent.displayName = "ResourceHeaderContent";
+const ResourceHeaderContent = React.forwardRef<
+  HTMLDivElement,
+  ResourceHeaderContentProps
+>(({ children, style, ...props }, forwardedRef) => (
+  <Flex
+    ref={forwardedRef}
+    align="center"
+    gap="4"
+    style={{ minWidth: 0, ...style }}
+    {...props}
+  >
+    {children}
+  </Flex>
+));
+ResourceHeaderContent.displayName = 'ResourceHeaderContent';
 
 // ---------------------------------------------------------------------------
 // Icon
@@ -75,37 +105,47 @@ ResourceHeaderContent.displayName = "ResourceHeaderContent";
 
 type IconPanelProps = React.ComponentPropsWithoutRef<typeof IconPanel>;
 
-interface ResourceHeaderIconProps extends Omit<IconPanelProps, "size" | "children"> {
+interface ResourceHeaderIconProps extends Omit<
+  IconPanelProps,
+  'size' | 'children'
+> {
   children: React.ReactNode;
-  variant?: "classic" | "solid";
+  variant?: 'classic' | 'solid';
 }
 
-const ResourceHeaderIcon = React.forwardRef<HTMLDivElement, ResourceHeaderIconProps>(
-  ({ children, variant = "classic", ...props }, forwardedRef) => {
-    const { loading, registerLeftAccessory } = useResourceHeader();
+const ResourceHeaderIcon = React.forwardRef<
+  HTMLDivElement,
+  ResourceHeaderIconProps
+>(({ children, variant = 'classic', ...props }, forwardedRef) => {
+  const { loading, registerLeftAccessory } = useResourceHeader();
 
-    React.useLayoutEffect(() => {
-      registerLeftAccessory();
-    }, [registerLeftAccessory]);
+  React.useLayoutEffect(() => {
+    registerLeftAccessory();
+  }, [registerLeftAccessory]);
 
-    if (loading) {
-      return (
-        <Skeleton>
-          <Box height="56px" style={{ borderRadius: "14px" }} width="56px" />
-        </Skeleton>
-      );
-    }
-
+  if (loading) {
     return (
-      <IconPanel ref={forwardedRef} aria-hidden size="4" variant={variant} {...props}>
-        <Flex align="center" height="100%" justify="center">
-          {children}
-        </Flex>
-      </IconPanel>
+      <Skeleton>
+        <Box height="56px" style={{ borderRadius: '14px' }} width="56px" />
+      </Skeleton>
     );
-  },
-);
-ResourceHeaderIcon.displayName = "ResourceHeaderIcon";
+  }
+
+  return (
+    <IconPanel
+      ref={forwardedRef}
+      aria-hidden
+      size="4"
+      variant={variant}
+      {...props}
+    >
+      <Flex align="center" height="100%" justify="center">
+        {children}
+      </Flex>
+    </IconPanel>
+  );
+});
+ResourceHeaderIcon.displayName = 'ResourceHeaderIcon';
 
 // ---------------------------------------------------------------------------
 // Avatar
@@ -116,70 +156,72 @@ interface ResourceHeaderAvatarProps {
   fallback: string;
 }
 
-const ResourceHeaderAvatar = React.forwardRef<HTMLDivElement, ResourceHeaderAvatarProps>(
-  ({ src, fallback }, forwardedRef) => {
-    const { loading, registerLeftAccessory } = useResourceHeader();
+const ResourceHeaderAvatar = React.forwardRef<
+  HTMLDivElement,
+  ResourceHeaderAvatarProps
+>(({ src, fallback }, forwardedRef) => {
+  const { loading, registerLeftAccessory } = useResourceHeader();
 
-    React.useLayoutEffect(() => {
-      registerLeftAccessory();
-    }, [registerLeftAccessory]);
+  React.useLayoutEffect(() => {
+    registerLeftAccessory();
+  }, [registerLeftAccessory]);
 
-    if (loading) {
-      return (
-        <Skeleton>
-          <Box height="56px" style={{ borderRadius: "100%" }} width="56px" />
-        </Skeleton>
-      );
-    }
-
+  if (loading) {
     return (
-      <Box ref={forwardedRef} flexShrink="0">
-        <Avatar.Root size="3" src={src}>
-          {!src && <Avatar.Text>{fallback}</Avatar.Text>}
-        </Avatar.Root>
-      </Box>
+      <Skeleton>
+        <Box height="56px" style={{ borderRadius: '100%' }} width="56px" />
+      </Skeleton>
     );
-  },
-);
-ResourceHeaderAvatar.displayName = "ResourceHeaderAvatar";
+  }
+
+  return (
+    <Box ref={forwardedRef} flexShrink="0">
+      <Avatar.Root size="3" src={src}>
+        {!src && <Avatar.Text>{fallback}</Avatar.Text>}
+      </Avatar.Root>
+    </Box>
+  );
+});
+ResourceHeaderAvatar.displayName = 'ResourceHeaderAvatar';
 
 // ---------------------------------------------------------------------------
 // Title
 // ---------------------------------------------------------------------------
 
 type HeadingProps = React.ComponentPropsWithoutRef<typeof Heading>;
-type ResourceHeaderTitleProps = Omit<HeadingProps, "size" | "as">;
+type ResourceHeaderTitleProps = Omit<HeadingProps, 'size' | 'as'>;
 
-const ResourceHeaderTitle = React.forwardRef<HTMLHeadingElement, ResourceHeaderTitleProps>(
-  ({ children, style, ...props }, forwardedRef) => {
-    const { loading, hasLeftAccessory } = useResourceHeader();
-    const size = hasLeftAccessory ? "5" : "6";
+const ResourceHeaderTitle = React.forwardRef<
+  HTMLHeadingElement,
+  ResourceHeaderTitleProps
+>(({ children, style, ...props }, forwardedRef) => {
+  const { loading, hasLeftAccessory } = useResourceHeader();
+  const size = hasLeftAccessory ? '5' : '6';
 
-    if (loading) {
-      return (
-        <Skeleton>
-          <Heading aria-hidden as="h2" size={size}>
-            {"\u00A0".repeat(56)}
-          </Heading>
-        </Skeleton>
-      );
-    }
-
+  if (loading) {
     return (
-      <Heading
-        ref={forwardedRef}
-        as="h2"
-        size={size}
-        style={{ overflowWrap: "break-word", ...style }}
-        {...props}
-        asChild={false}
-      >
-        {children}
-      </Heading>
+      <Skeleton>
+        <Heading aria-hidden as="h2" size={size}>
+          {'\u00A0'.repeat(56)}
+        </Heading>
+      </Skeleton>
     );
-  },
-);
-ResourceHeaderTitle.displayName = "ResourceHeaderTitle";
+  }
+
+  return (
+    <Heading
+      ref={forwardedRef}
+      as="h2"
+      size={size}
+      style={{ overflowWrap: 'break-word', ...style }}
+      {...props}
+      asChild={false}
+    >
+      {children}
+    </Heading>
+  );
+});
+ResourceHeaderTitle.displayName = 'ResourceHeaderTitle';
 
 // ---------------------------------------------------------------------------
 // Id
@@ -190,33 +232,34 @@ interface ResourceHeaderIdProps {
   label?: string;
 }
 
-const ResourceHeaderId = React.forwardRef<HTMLButtonElement, ResourceHeaderIdProps>(
-  ({ children, label = "ID" }, forwardedRef) => {
-    const { loading } = useResourceHeader();
+const ResourceHeaderId = React.forwardRef<
+  HTMLButtonElement,
+  ResourceHeaderIdProps
+>(({ children, label = 'ID' }, forwardedRef) => {
+  const { loading } = useResourceHeader();
 
-    if (loading) {
-      return (
-        <Skeleton>
-          <Code aria-hidden variant="ghost">
-            {"\u00A0".repeat(24)}
-          </Code>
-        </Skeleton>
-      );
-    }
-
+  if (loading) {
     return (
-      <CopyChip
-        ref={forwardedRef}
-        aria-label={`Copy ${label}`}
-        color="gray"
-        style={{ alignSelf: "start" }}
-      >
-        <Code variant="ghost">{children}</Code>
-      </CopyChip>
+      <Skeleton>
+        <Code aria-hidden variant="ghost">
+          {'\u00A0'.repeat(24)}
+        </Code>
+      </Skeleton>
     );
-  },
-);
-ResourceHeaderId.displayName = "ResourceHeaderId";
+  }
+
+  return (
+    <CopyChip
+      ref={forwardedRef}
+      aria-label={`Copy ${label}`}
+      color="gray"
+      style={{ alignSelf: 'start' }}
+    >
+      <Code variant="ghost">{children}</Code>
+    </CopyChip>
+  );
+});
+ResourceHeaderId.displayName = 'ResourceHeaderId';
 
 // ---------------------------------------------------------------------------
 // Accessories
@@ -226,66 +269,81 @@ interface ResourceHeaderAccessoriesProps extends React.HTMLAttributes<HTMLDivEle
   children: React.ReactNode;
 }
 
-const ResourceHeaderAccessories = React.forwardRef<HTMLDivElement, ResourceHeaderAccessoriesProps>(
-  ({ children, style, ...props }, forwardedRef) => {
-    const { loading } = useResourceHeader();
+const ResourceHeaderAccessories = React.forwardRef<
+  HTMLDivElement,
+  ResourceHeaderAccessoriesProps
+>(({ children, style, ...props }, forwardedRef) => {
+  const { loading } = useResourceHeader();
 
-    if (loading) {
-      return null;
-    }
+  if (loading) {
+    return null;
+  }
 
-    return (
-      <Flex
-        ref={forwardedRef}
-        align="center"
-        gap="4"
-        style={{ minWidth: 0, ...style }}
-        wrap="nowrap"
-        {...props}
-      >
-        {children}
-      </Flex>
-    );
-  },
-);
-ResourceHeaderAccessories.displayName = "ResourceHeaderAccessories";
+  return (
+    <Flex
+      ref={forwardedRef}
+      align="center"
+      gap="4"
+      style={{ minWidth: 0, ...style }}
+      wrap="nowrap"
+      {...props}
+    >
+      {children}
+    </Flex>
+  );
+});
+ResourceHeaderAccessories.displayName = 'ResourceHeaderAccessories';
 
 // ---------------------------------------------------------------------------
 // TextColumn
 // ---------------------------------------------------------------------------
 
-interface ResourceHeaderTextColumnProps extends Omit<FlexProps, "align" | "direction" | "gap"> {}
+interface ResourceHeaderTextColumnProps extends Omit<
+  FlexProps,
+  'align' | 'direction' | 'gap'
+> {}
 
-const ResourceHeaderTextColumn = React.forwardRef<HTMLDivElement, ResourceHeaderTextColumnProps>(
-  ({ children, style, ...props }, forwardedRef) => (
-    <Flex
-      ref={forwardedRef}
-      align="start"
-      direction="column"
-      gap="2"
-      style={{ minWidth: 0, ...style }}
-      {...props}
-    >
-      {children}
-    </Flex>
-  ),
-);
-ResourceHeaderTextColumn.displayName = "ResourceHeaderTextColumn";
+const ResourceHeaderTextColumn = React.forwardRef<
+  HTMLDivElement,
+  ResourceHeaderTextColumnProps
+>(({ children, style, ...props }, forwardedRef) => (
+  <Flex
+    ref={forwardedRef}
+    align="start"
+    direction="column"
+    gap="2"
+    style={{ minWidth: 0, ...style }}
+    {...props}
+  >
+    {children}
+  </Flex>
+));
+ResourceHeaderTextColumn.displayName = 'ResourceHeaderTextColumn';
 
 // ---------------------------------------------------------------------------
 // MetaRow
 // ---------------------------------------------------------------------------
 
-interface ResourceHeaderMetaRowProps extends Omit<FlexProps, "align" | "direction" | "gap"> {}
+interface ResourceHeaderMetaRowProps extends Omit<
+  FlexProps,
+  'align' | 'direction' | 'gap'
+> {}
 
-const ResourceHeaderMetaRow = React.forwardRef<HTMLDivElement, ResourceHeaderMetaRowProps>(
-  ({ children, style, ...props }, forwardedRef) => (
-    <Flex ref={forwardedRef} align="center" gap="4" style={{ minWidth: 0, ...style }} {...props}>
-      {children}
-    </Flex>
-  ),
-);
-ResourceHeaderMetaRow.displayName = "ResourceHeaderMetaRow";
+const ResourceHeaderMetaRow = React.forwardRef<
+  HTMLDivElement,
+  ResourceHeaderMetaRowProps
+>(({ children, style, ...props }, forwardedRef) => (
+  <Flex
+    ref={forwardedRef}
+    align="center"
+    gap="4"
+    style={{ minWidth: 0, ...style }}
+    {...props}
+  >
+    {children}
+  </Flex>
+));
+ResourceHeaderMetaRow.displayName = 'ResourceHeaderMetaRow';
 
 // ---------------------------------------------------------------------------
 // Actions
@@ -295,22 +353,23 @@ interface ResourceHeaderActionsProps extends React.HTMLAttributes<HTMLDivElement
   children: React.ReactNode;
 }
 
-const ResourceHeaderActions = React.forwardRef<HTMLDivElement, ResourceHeaderActionsProps>(
-  ({ children, ...props }, forwardedRef) => {
-    const { loading } = useResourceHeader();
+const ResourceHeaderActions = React.forwardRef<
+  HTMLDivElement,
+  ResourceHeaderActionsProps
+>(({ children, ...props }, forwardedRef) => {
+  const { loading } = useResourceHeader();
 
-    if (loading) {
-      return null;
-    }
+  if (loading) {
+    return null;
+  }
 
-    return (
-      <Flex ref={forwardedRef} align="center" flexShrink="0" gap="2" {...props}>
-        {children}
-      </Flex>
-    );
-  },
-);
-ResourceHeaderActions.displayName = "ResourceHeaderActions";
+  return (
+    <Flex ref={forwardedRef} align="center" flexShrink="0" gap="2" {...props}>
+      {children}
+    </Flex>
+  );
+});
+ResourceHeaderActions.displayName = 'ResourceHeaderActions';
 
 // ---------------------------------------------------------------------------
 // Exports

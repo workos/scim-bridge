@@ -1,13 +1,13 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
+'use client';
 
-import { CheckIcon, Link2Icon } from "@radix-ui/react-icons";
-import classNames from "classnames";
-import * as React from "react";
-import { extractProps } from "../helpers/themes.js";
-import { marginPropDefs, MarginProps } from "../props.js";
-import { Tooltip } from "./tooltip.js";
+import { CheckIcon, Link2Icon } from '@radix-ui/react-icons';
+import classNames from 'classnames';
+import * as React from 'react';
+import { extractProps } from '../helpers/themes.js';
+import { marginPropDefs, MarginProps } from '../props.js';
+import { Tooltip } from './tooltip.js';
 
 interface PermanentLinkOwnProps {
   href: string;
@@ -15,14 +15,15 @@ interface PermanentLinkOwnProps {
 }
 
 interface PermanentLinkProps
-  extends Omit<React.ComponentPropsWithRef<"a">, "href">, PermanentLinkOwnProps, MarginProps {}
+  extends
+    Omit<React.ComponentPropsWithRef<'a'>, 'href'>,
+    PermanentLinkOwnProps,
+    MarginProps {}
 
 const PermanentLink = React.forwardRef<HTMLAnchorElement, PermanentLinkProps>(
   (props, forwardedRef) => {
-    const { children, className, style, label, href, ...permanentLinkProps } = extractProps(
-      props,
-      marginPropDefs,
-    );
+    const { children, className, style, label, href, ...permanentLinkProps } =
+      extractProps(props, marginPropDefs);
 
     const [copied, setCopied] = React.useState(false);
     const timeoutRef = React.useRef<number | null>(null);
@@ -32,7 +33,7 @@ const PermanentLink = React.forwardRef<HTMLAnchorElement, PermanentLinkProps>(
 
       const fullUrl = new URL(
         href,
-        href.startsWith("#") ? window.location.href : window.location.origin,
+        href.startsWith('#') ? window.location.href : window.location.origin,
       ).toString();
 
       setCopied(true);
@@ -60,7 +61,7 @@ const PermanentLink = React.forwardRef<HTMLAnchorElement, PermanentLinkProps>(
     );
 
     return (
-      <div className={classNames(className, "PermanentLink")} style={style}>
+      <div className={classNames(className, 'PermanentLink')} style={style}>
         <div className="PermanentLinkInner">{children}</div>
         <Tooltip content="Copy link to section">
           <a
@@ -83,6 +84,6 @@ const PermanentLink = React.forwardRef<HTMLAnchorElement, PermanentLinkProps>(
   },
 );
 
-PermanentLink.displayName = "PermanentLink";
+PermanentLink.displayName = 'PermanentLink';
 
 export { PermanentLink };

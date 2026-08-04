@@ -1,7 +1,7 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-import * as ThemesTextField from "@radix-ui/themes/dist/esm/components/text-field.js";
-import * as React from "react";
+import * as React from 'react';
+import * as ThemesTextField from '../radix-themes/components/text-field.js';
 
 interface TextFieldRootOwnProps {
   invalid?: boolean;
@@ -9,13 +9,16 @@ interface TextFieldRootOwnProps {
    * @deprecated Different state types now use different props as they are no
    * longer mutually exclusive. Use `disabled`, `readOnly` or `invalid` instead.
    */
-  state?: "normal" | "disabled" | "read-only" | "invalid";
+  state?: 'normal' | 'disabled' | 'read-only' | 'invalid';
   suppressPasswordManagers?: boolean;
 }
 
 interface TextFieldRootProps
   extends
-    Omit<React.ComponentPropsWithoutRef<typeof ThemesTextField.Root>, "color" | "radius">,
+    Omit<
+      React.ComponentPropsWithoutRef<typeof ThemesTextField.Root>,
+      'color' | 'radius'
+    >,
     TextFieldRootOwnProps {}
 
 const TextFieldRoot = React.forwardRef<HTMLInputElement, TextFieldRootProps>(
@@ -24,7 +27,7 @@ const TextFieldRoot = React.forwardRef<HTMLInputElement, TextFieldRootProps>(
       invalid = false,
       disabled = false,
       readOnly = false,
-      variant = "surface",
+      variant = 'surface',
       state,
       suppressPasswordManagers = false,
       ...props
@@ -33,15 +36,15 @@ const TextFieldRoot = React.forwardRef<HTMLInputElement, TextFieldRootProps>(
   ) => {
     // TODO remove all of this when state prop is removed
     if (state !== undefined) {
-      if (state === "read-only") {
+      if (state === 'read-only') {
         readOnly = true;
         disabled = false;
         invalid = false;
-      } else if (state === "disabled") {
+      } else if (state === 'disabled') {
         readOnly = false;
         disabled = true;
         invalid = false;
-      } else if (state === "invalid") {
+      } else if (state === 'invalid') {
         readOnly = false;
         disabled = false;
         invalid = true;
@@ -61,21 +64,21 @@ const TextFieldRoot = React.forwardRef<HTMLInputElement, TextFieldRootProps>(
         variant={variant}
         color={(() => {
           if (invalid) {
-            return "red";
+            return 'red';
           }
 
-          if (variant === "soft") {
-            return "gray";
+          if (variant === 'soft') {
+            return 'gray';
           }
 
           return undefined;
         })()}
         {...(suppressPasswordManagers
           ? {
-              "data-1p-ignore": "true",
-              "data-lpignore": "true",
-              "data-protonpass-ignore": "true",
-              "data-bwignore": "true",
+              'data-1p-ignore': 'true',
+              'data-lpignore': 'true',
+              'data-protonpass-ignore': 'true',
+              'data-bwignore': 'true',
             }
           : null)}
         {...props}
@@ -84,7 +87,7 @@ const TextFieldRoot = React.forwardRef<HTMLInputElement, TextFieldRootProps>(
   },
 );
 
-TextFieldRoot.displayName = "TextFieldRoot";
+TextFieldRoot.displayName = 'TextFieldRoot';
 
 export const Root = TextFieldRoot;
 export const Slot = ThemesTextField.Slot;

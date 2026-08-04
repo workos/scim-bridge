@@ -1,26 +1,29 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-import { Theme as ThemeProvider } from "@radix-ui/themes/dist/esm/components/theme.js";
-import classNames from "classnames";
-import * as React from "react";
+import classNames from 'classnames';
+import * as React from 'react';
+import { Theme as ThemeProvider } from '../radix-themes/components/theme.js';
 
-interface ThemeProps extends React.ComponentPropsWithoutRef<typeof ThemeProvider> {
+interface ThemeProps extends React.ComponentPropsWithoutRef<
+  typeof ThemeProvider
+> {
   branded?: boolean;
 }
 
-const Theme = React.forwardRef<React.ElementRef<typeof ThemeProvider>, ThemeProps>(
-  ({ branded, className, ...props }, forwardedRef) => (
-    <ThemeProvider
-      ref={forwardedRef}
-      accentColor={branded ? "gray" : "purple"}
-      className={classNames(className, { branded })}
-      grayColor={branded ? "gray" : "slate"}
-      radius="medium"
-      {...props}
-    />
-  ),
-);
+const Theme = React.forwardRef<
+  React.ElementRef<typeof ThemeProvider>,
+  ThemeProps
+>(({ branded, className, ...props }, forwardedRef) => (
+  <ThemeProvider
+    ref={forwardedRef}
+    accentColor={branded ? 'gray' : 'purple'}
+    className={classNames(className, { branded })}
+    grayColor={branded ? 'gray' : 'slate'}
+    radius="medium"
+    {...props}
+  />
+));
 
-Theme.displayName = "DesignSystemTheme";
+Theme.displayName = 'DesignSystemTheme';
 
 export { Theme };

@@ -1,15 +1,15 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-import { isValid, lastDayOfMonth, parse } from "date-fns";
+import { isValid, lastDayOfMonth, parse } from 'date-fns';
 
 export const formatDateValue = (date?: Date) =>
   date
     ? {
         year: String(date.getFullYear()),
-        month: String(date.getMonth() + 1).padStart(2, "0"),
-        day: String(date.getDate()).padStart(2, "0"),
+        month: String(date.getMonth() + 1).padStart(2, '0'),
+        day: String(date.getDate()).padStart(2, '0'),
       }
-    : { year: "", month: "", day: "" };
+    : { year: '', month: '', day: '' };
 
 export type ComposedDate = {
   year: string;
@@ -41,8 +41,8 @@ export const isValidDate = (dateValues: ComposedDate): boolean => {
   }
 
   const parsed = parse(
-    `${year.padStart(4, "0")}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`,
-    "yyyy-MM-dd",
+    `${year.padStart(4, '0')}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`,
+    'yyyy-MM-dd',
     new Date(),
   );
 
@@ -62,11 +62,18 @@ export const clampDayForYearMonth = (dateValues: ComposedDate): string => {
   const yearNum = parseInt(year, 10);
   const monthNum = parseInt(month, 10);
 
-  if (Number.isNaN(yearNum) || Number.isNaN(monthNum) || monthNum < 1 || monthNum > 12) {
+  if (
+    Number.isNaN(yearNum) ||
+    Number.isNaN(monthNum) ||
+    monthNum < 1 ||
+    monthNum > 12
+  ) {
     return day;
   }
 
-  const lastDayOfSelectedMonth = lastDayOfMonth(new Date(yearNum, monthNum - 1)).getDate();
+  const lastDayOfSelectedMonth = lastDayOfMonth(
+    new Date(yearNum, monthNum - 1),
+  ).getDate();
 
   const dayNum = parseInt(day, 10);
   if (Number.isNaN(dayNum)) {
@@ -74,12 +81,12 @@ export const clampDayForYearMonth = (dateValues: ComposedDate): string => {
   }
 
   if (dayNum < 1) {
-    return "01";
+    return '01';
   }
 
   if (dayNum > lastDayOfSelectedMonth) {
-    return String(lastDayOfSelectedMonth).padStart(2, "0");
+    return String(lastDayOfSelectedMonth).padStart(2, '0');
   }
 
-  return day.padStart(2, "0");
+  return day.padStart(2, '0');
 };

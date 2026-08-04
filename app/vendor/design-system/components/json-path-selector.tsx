@@ -1,6 +1,6 @@
 // @ts-nocheck — vendored from workos/packages/design-system by
 // `npm run sync-design-system`, which overwrites this file. Edit it upstream.
-"use client";
+'use client';
 
 import {
   ChevronDownIcon,
@@ -8,16 +8,19 @@ import {
   TrashIcon,
   TriangleDownIcon,
   TriangleRightIcon,
-} from "@radix-ui/react-icons";
-import classNames from "classnames";
-import { composeEventHandlers, useComposedRefs } from "radix-ui/internal";
-import * as React from "react";
-import { flushSync } from "react-dom";
-import { Box } from "./box.js";
-import * as Combobox from "./combobox.js";
-import { Flex } from "./flex.js";
-import { IconButton } from "./icon-button.js";
-import { keysToPath, pathToKeys } from "./json-path-selector/internal-path.utils.js";
+} from '@radix-ui/react-icons';
+import classNames from 'classnames';
+import { composeEventHandlers, useComposedRefs } from 'radix-ui/internal';
+import * as React from 'react';
+import { flushSync } from 'react-dom';
+import { Box } from './box.js';
+import * as Combobox from './combobox.js';
+import { Flex } from './flex.js';
+import { IconButton } from './icon-button.js';
+import {
+  keysToPath,
+  pathToKeys,
+} from './json-path-selector/internal-path.utils.js';
 import {
   type JsonObject,
   type SchemaNode,
@@ -27,11 +30,11 @@ import {
   getDescendants,
   getParentNode,
   searchSchemaTree,
-} from "./json-path-selector/schema-tree.utils.js";
-import { Text } from "./text.js";
-import * as TextField from "./text-field.js";
-import { Tooltip } from "./tooltip.js";
-import { VisuallyHidden } from "./visually-hidden.js";
+} from './json-path-selector/schema-tree.utils.js';
+import { Text } from './text.js';
+import * as TextField from './text-field.js';
+import { Tooltip } from './tooltip.js';
+import { VisuallyHidden } from './visually-hidden.js';
 
 type JsonPrimitive = string | number | boolean | null;
 
@@ -43,7 +46,7 @@ interface JsonPathSelectorProps {
   selectedValue?: string[] | null;
   defaultSelectedValue?: string[] | null;
   disabled?: boolean;
-  align?: "start" | "center" | "end";
+  align?: 'start' | 'center' | 'end';
   emptyMessage?: string;
   notFoundMessage?: string;
   popoverWidth?: string;
@@ -53,370 +56,404 @@ interface JsonPathSelectorProps {
   }) => React.ReactNode;
 }
 
-const JsonPathSelector = React.forwardRef<HTMLDivElement, JsonPathSelectorProps>(
-  function JsonPathSelector(
-    {
-      data,
-      placeholder = "Select an attribute",
-      label = "Attributes",
-      onSelectionChange,
-      defaultSelectedValue = null,
-      selectedValue: externalSelectedValue,
-      disabled = false,
-      align = "start",
-      popoverWidth = "min(400px, 100svw)",
-      emptyMessage = "No data to display",
-      notFoundMessage = "No attributes found",
-      footer,
-    },
-    ref,
-  ) {
-    const [searchValue, setSearchValue] = React.useState("");
-    const [internalSelectedValue, setInternalSelectedValue] = React.useState<string[] | null>(
-      defaultSelectedValue,
-    );
-    const [comboboxOpen, setComboboxOpen] = React.useState(false);
-    const scrollAreaViewportRef = React.useRef<HTMLDivElement>(null);
-    const selectionMadeRef = React.useRef(false);
+const JsonPathSelector = React.forwardRef<
+  HTMLDivElement,
+  JsonPathSelectorProps
+>(function JsonPathSelector(
+  {
+    data,
+    placeholder = 'Select an attribute',
+    label = 'Attributes',
+    onSelectionChange,
+    defaultSelectedValue = null,
+    selectedValue: externalSelectedValue,
+    disabled = false,
+    align = 'start',
+    popoverWidth = 'min(400px, 100svw)',
+    emptyMessage = 'No data to display',
+    notFoundMessage = 'No attributes found',
+    footer,
+  },
+  ref,
+) {
+  const [searchValue, setSearchValue] = React.useState('');
+  const [internalSelectedValue, setInternalSelectedValue] = React.useState<
+    string[] | null
+  >(defaultSelectedValue);
+  const [comboboxOpen, setComboboxOpen] = React.useState(false);
+  const scrollAreaViewportRef = React.useRef<HTMLDivElement>(null);
+  const selectionMadeRef = React.useRef(false);
 
-    // Use external selected value if provided, otherwise use internal state
-    const selectedValue =
-      externalSelectedValue !== undefined ? externalSelectedValue : internalSelectedValue;
+  // Use external selected value if provided, otherwise use internal state
+  const selectedValue =
+    externalSelectedValue !== undefined
+      ? externalSelectedValue
+      : internalSelectedValue;
 
-    // Convert selectedValue (key array) to internal path for Combobox
-    const selectedPath = selectedValue ? keysToPath(selectedValue) : null;
+  // Convert selectedValue (key array) to internal path for Combobox
+  const selectedPath = selectedValue ? keysToPath(selectedValue) : null;
 
-    const [expandedKeysState, setExpandedKeysState] = React.useState(new Set<string>());
+  const [expandedKeysState, setExpandedKeysState] = React.useState(
+    new Set<string>(),
+  );
 
-    // Build schema tree from data and flatten for searching with O(1) lookups
-    const schemaTree = React.useMemo<{
-      flattened: SchemaNode[];
-      nested: SchemaNode[];
-      nodeMap: Map<string, SchemaNode>;
-    }>(() => {
-      const { nodes, nodeMap } = buildSchemaTree(data);
-      const flattened = flattenSchemaTree(nodes);
+  // Build schema tree from data and flatten for searching with O(1) lookups
+  const schemaTree = React.useMemo<{
+    flattened: SchemaNode[];
+    nested: SchemaNode[];
+    nodeMap: Map<string, SchemaNode>;
+  }>(() => {
+    const { nodes, nodeMap } = buildSchemaTree(data);
+    const flattened = flattenSchemaTree(nodes);
 
-      return { flattened, nested: nodes, nodeMap };
-    }, [data]);
+    return { flattened, nested: nodes, nodeMap };
+  }, [data]);
 
-    const matches = React.useMemo(
-      () => searchSchemaTree(searchValue, schemaTree.flattened, schemaTree.nodeMap),
-      [schemaTree.flattened, schemaTree.nodeMap, searchValue],
-    );
+  const matches = React.useMemo(
+    () =>
+      searchSchemaTree(searchValue, schemaTree.flattened, schemaTree.nodeMap),
+    [schemaTree.flattened, schemaTree.nodeMap, searchValue],
+  );
 
-    // expandedKeys is a derived state that is computed from the expandedKeysState
-    // and matches. If there is a search value, and an item or any of its
-    // descendants is in matches, the item should be expanded. If there is no
-    // search value, just use the expandedKeysState.
-    const expandedKeys = React.useMemo(() => {
-      if (searchValue) {
-        return new Set(matches.map((item) => item.path));
+  // expandedKeys is a derived state that is computed from the expandedKeysState
+  // and matches. If there is a search value, and an item or any of its
+  // descendants is in matches, the item should be expanded. If there is no
+  // search value, just use the expandedKeysState.
+  const expandedKeys = React.useMemo(() => {
+    if (searchValue) {
+      return new Set(matches.map((item) => item.path));
+    }
+
+    return expandedKeysState;
+  }, [expandedKeysState, matches, searchValue]);
+
+  // Handle expanded state when combobox opens/closes
+  React.useEffect(() => {
+    if (comboboxOpen) {
+      // When opening, expand ancestors of selected path
+      if (selectedPath) {
+        const selectedNode = schemaTree.nodeMap.get(selectedPath);
+        if (selectedNode) {
+          const ancestors = getAncestors(selectedNode, schemaTree.nodeMap);
+          const ancestorPaths = ancestors.map((ancestor) => ancestor.path);
+          setExpandedKeysState(new Set(ancestorPaths));
+        }
       }
 
-      return expandedKeysState;
-    }, [expandedKeysState, matches, searchValue]);
+      // Reset selection flag when opening
+      selectionMadeRef.current = false;
+    } else {
+      // When closing, reset expanded keys
+      setExpandedKeysState((set) => (set.size ? new Set<string>() : set));
+    }
+  }, [comboboxOpen, selectedPath, schemaTree.nodeMap]);
 
-    // Handle expanded state when combobox opens/closes
-    React.useEffect(() => {
-      if (comboboxOpen) {
-        // When opening, expand ancestors of selected path
-        if (selectedPath) {
-          const selectedNode = schemaTree.nodeMap.get(selectedPath);
-          if (selectedNode) {
-            const ancestors = getAncestors(selectedNode, schemaTree.nodeMap);
-            const ancestorPaths = ancestors.map((ancestor) => ancestor.path);
-            setExpandedKeysState(new Set(ancestorPaths));
-          }
-        }
+  React.useEffect(() => {
+    if (comboboxOpen && selectedPath) {
+      requestAnimationFrame(() => {
+        // scroll to the selected path
+        scrollAreaViewportRef.current
+          ?.querySelector('[data-selected]')
+          ?.scrollIntoView({
+            block: 'center',
+          });
+      });
+    }
+  }, [comboboxOpen, selectedPath]);
 
-        // Reset selection flag when opening
-        selectionMadeRef.current = false;
+  // Handle focus return to trigger when selection is made
+  const prevOpenRef = React.useRef(comboboxOpen);
+  React.useEffect(() => {
+    const wasOpen = prevOpenRef.current;
+    prevOpenRef.current = comboboxOpen;
+
+    // Only focus trigger if we were open and are now closed AND a selection was made
+    if (wasOpen && !comboboxOpen && selectionMadeRef.current) {
+      triggerRef.current?.focus();
+    }
+  }, [comboboxOpen]);
+
+  const handleSelectionChange = React.useCallback(
+    (path: string | null) => {
+      // Convert internal path to key array
+      const keys = path ? pathToKeys(path) : null;
+
+      // Mark that a selection was made
+      selectionMadeRef.current = true;
+
+      if (externalSelectedValue !== undefined) {
+        // Controlled component - call external handler
+        onSelectionChange?.(keys);
       } else {
-        // When closing, reset expanded keys
-        setExpandedKeysState((set) => (set.size ? new Set<string>() : set));
+        // Uncontrolled component - update internal state
+        setInternalSelectedValue(keys);
+        onSelectionChange?.(keys);
       }
-    }, [comboboxOpen, selectedPath, schemaTree.nodeMap]);
+    },
+    [externalSelectedValue, onSelectionChange],
+  );
 
-    React.useEffect(() => {
-      if (comboboxOpen && selectedPath) {
-        requestAnimationFrame(() => {
-          // scroll to the selected path
-          scrollAreaViewportRef.current?.querySelector("[data-selected]")?.scrollIntoView({
-            block: "center",
-          });
-        });
-      }
-    }, [comboboxOpen, selectedPath]);
+  const triggerRef = React.useRef<HTMLDivElement>(null);
+  const triggerId = `path-selector-trigger${React.useId()}`;
+  const composedRefs = useComposedRefs(ref, triggerRef);
 
-    // Handle focus return to trigger when selection is made
-    const prevOpenRef = React.useRef(comboboxOpen);
-    React.useEffect(() => {
-      const wasOpen = prevOpenRef.current;
-      prevOpenRef.current = comboboxOpen;
-
-      // Only focus trigger if we were open and are now closed AND a selection was made
-      if (wasOpen && !comboboxOpen && selectionMadeRef.current) {
-        triggerRef.current?.focus();
-      }
-    }, [comboboxOpen]);
-
-    const handleSelectionChange = React.useCallback(
-      (path: string | null) => {
-        // Convert internal path to key array
-        const keys = path ? pathToKeys(path) : null;
-
-        // Mark that a selection was made
-        selectionMadeRef.current = true;
-
-        if (externalSelectedValue !== undefined) {
-          // Controlled component - call external handler
-          onSelectionChange?.(keys);
-        } else {
-          // Uncontrolled component - update internal state
-          setInternalSelectedValue(keys);
-          onSelectionChange?.(keys);
+  return (
+    <Combobox.Root
+      disabled={disabled}
+      open={comboboxOpen}
+      selectedValue={selectedPath}
+      onOpenChange={setComboboxOpen}
+      onSelectedValueChange={(value) => {
+        // Only handle selection for items without children - O(1) lookup
+        if (!value) {
+          handleSelectionChange(null);
+          return;
         }
-      },
-      [externalSelectedValue, onSelectionChange],
-    );
 
-    const triggerRef = React.useRef<HTMLDivElement>(null);
-    const triggerId = `path-selector-trigger${React.useId()}`;
-    const composedRefs = useComposedRefs(ref, triggerRef);
-
-    return (
-      <Combobox.Root
-        disabled={disabled}
-        open={comboboxOpen}
-        selectedValue={selectedPath}
-        onOpenChange={setComboboxOpen}
-        onSelectedValueChange={(value) => {
-          // Only handle selection for items without children - O(1) lookup
-          if (!value) {
-            handleSelectionChange(null);
-            return;
-          }
-
-          const item = schemaTree.nodeMap.get(value);
-          if (!item?.children) {
-            handleSelectionChange(value);
-          } else {
-            // For items with children, don't select them
-            handleSelectionChange(null);
-          }
-        }}
-        onValueChange={(value) => {
-          React.startTransition(() => {
-            setSearchValue(value);
-          });
-        }}
-      >
-        <Combobox.Label asChild>
-          <VisuallyHidden>{label}</VisuallyHidden>
-        </Combobox.Label>
-        <Combobox.Anchor>
-          <Combobox.Trigger
-            // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-            ref={composedRefs as React.Ref<HTMLButtonElement>}
-            returnFocusOnClose={false}
+        const item = schemaTree.nodeMap.get(value);
+        if (!item?.children) {
+          handleSelectionChange(value);
+        } else {
+          // For items with children, don't select them
+          handleSelectionChange(null);
+        }
+      }}
+      onValueChange={(value) => {
+        React.startTransition(() => {
+          setSearchValue(value);
+        });
+      }}
+    >
+      <Combobox.Label asChild>
+        <VisuallyHidden>{label}</VisuallyHidden>
+      </Combobox.Label>
+      <Combobox.Anchor>
+        <Combobox.Trigger
+          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+          ref={composedRefs as React.Ref<HTMLButtonElement>}
+          returnFocusOnClose={false}
+        >
+          <div
+            aria-label="Select an attribute"
+            className="JsonPathSelectorTrigger"
+            data-disabled={disabled ? '' : undefined}
+            id={triggerId}
+            role="button"
+            tabIndex={disabled ? -1 : 0}
+            onKeyDown={(event) => {
+              if (event.key === 'Backspace') {
+                // Backspace provides a keyboard shortcut to clear the selection
+                // when the trigger is focused, as an alternative to tabbing to
+                // the clear button.
+                event.preventDefault();
+                handleSelectionChange(null);
+              }
+              // Let Combobox.Trigger handle Enter, Space, ArrowUp, ArrowDown
+              // by allowing event to propagate
+            }}
           >
-            <div
-              aria-label="Select an attribute"
-              className="JsonPathSelectorTrigger"
-              data-disabled={disabled ? "" : undefined}
-              id={triggerId}
-              role="button"
-              tabIndex={disabled ? -1 : 0}
-              onKeyDown={(event) => {
-                if (event.key === "Backspace") {
-                  // Backspace provides a keyboard shortcut to clear the selection
-                  // when the trigger is focused, as an alternative to tabbing to
-                  // the clear button.
-                  event.preventDefault();
-                  handleSelectionChange(null);
-                }
-                // Let Combobox.Trigger handle Enter, Space, ArrowUp, ArrowDown
-                // by allowing event to propagate
+            <TextField.Root
+              aria-hidden
+              suppressPasswordManagers
+              autoComplete="off"
+              className="JsonPathSelectorTriggerTextField"
+              disabled={disabled}
+              placeholder={placeholder}
+              role="presentation"
+              size="2"
+              tabIndex={-1}
+              type="text"
+              value={selectedValue ? renderInputValue(selectedValue) : ''}
+              variant="surface"
+              onKeyDown={(event) => event.preventDefault()}
+              onFocus={(event) => {
+                // In the event that the input is focused programmatically,
+                // redirect focus to the trigger
+                event.preventDefault();
+                triggerRef.current?.focus();
               }}
             >
-              <TextField.Root
-                aria-hidden
-                suppressPasswordManagers
-                autoComplete="off"
-                className="JsonPathSelectorTriggerTextField"
-                disabled={disabled}
-                placeholder={placeholder}
-                role="presentation"
-                size="2"
-                tabIndex={-1}
-                type="text"
-                value={selectedValue ? renderInputValue(selectedValue) : ""}
-                variant="surface"
-                onKeyDown={(event) => event.preventDefault()}
-                onFocus={(event) => {
-                  // In the event that the input is focused programmatically,
-                  // redirect focus to the trigger
-                  event.preventDefault();
-                  triggerRef.current?.focus();
-                }}
-              >
-                <TextField.Slot>
-                  <BracesIcon />
-                </TextField.Slot>
-                <TextField.Slot>
-                  <Flex align="center" height="16px" justify="center" width="16px">
-                    {selectedValue && !disabled ? (
-                      <ComboboxClear
-                        className="JsonPathSelectorClearButton"
-                        disabled={disabled}
-                        triggerId={triggerId}
-                        onClear={() => {
-                          flushSync(() => {
-                            handleSelectionChange(null);
-                          });
-                          triggerRef.current?.focus();
-                        }}
-                      />
-                    ) : (
-                      <ChevronDownIcon />
-                    )}
-                  </Flex>
-                </TextField.Slot>
-              </TextField.Root>
-            </div>
-          </Combobox.Trigger>
-        </Combobox.Anchor>
-        <Combobox.Popover
-          align={align}
-          className="JsonPathSelectorComboboxPopover"
-          style={{ borderRadius: "var(--radius-3)" }}
-          width={popoverWidth}
-        >
-          <Combobox.Content>
-            {schemaTree.flattened.length === 0 ? (
-              <Flex align="center" gap="2" px="2" py="2">
-                <Text color="gray" size="2">
-                  {emptyMessage}
-                </Text>
-              </Flex>
-            ) : (
-              <>
-                <Combobox.Header>
-                  <Combobox.Input placeholder="Search">
-                    <TextField.Slot>
-                      <MagnifyingGlassIcon />
-                    </TextField.Slot>
-                  </Combobox.Input>
-                </Combobox.Header>
-                <Combobox.ScrollArea
-                  ref={scrollAreaViewportRef}
-                  className="JsonPathSelectorComboboxScrollArea"
-                  maxItems={8}
+              <TextField.Slot>
+                <BracesIcon />
+              </TextField.Slot>
+              <TextField.Slot>
+                <Flex
+                  align="center"
+                  height="16px"
+                  justify="center"
+                  width="16px"
                 >
-                  {(() => {
-                    if (!searchValue || matches.length > 0) {
-                      const items = matches.length > 0 ? matches : schemaTree.flattened;
+                  {selectedValue && !disabled ? (
+                    <ComboboxClear
+                      className="JsonPathSelectorClearButton"
+                      disabled={disabled}
+                      triggerId={triggerId}
+                      onClear={() => {
+                        flushSync(() => {
+                          handleSelectionChange(null);
+                        });
+                        triggerRef.current?.focus();
+                      }}
+                    />
+                  ) : (
+                    <ChevronDownIcon />
+                  )}
+                </Flex>
+              </TextField.Slot>
+            </TextField.Root>
+          </div>
+        </Combobox.Trigger>
+      </Combobox.Anchor>
+      <Combobox.Popover
+        align={align}
+        className="JsonPathSelectorComboboxPopover"
+        style={{ borderRadius: 'var(--radius-3)' }}
+        width={popoverWidth}
+      >
+        <Combobox.Content>
+          {schemaTree.flattened.length === 0 ? (
+            <Flex align="center" gap="2" px="2" py="2">
+              <Text color="gray" size="2">
+                {emptyMessage}
+              </Text>
+            </Flex>
+          ) : (
+            <>
+              <Combobox.Header>
+                <Combobox.Input placeholder="Search">
+                  <TextField.Slot>
+                    <MagnifyingGlassIcon />
+                  </TextField.Slot>
+                </Combobox.Input>
+              </Combobox.Header>
+              <Combobox.ScrollArea
+                ref={scrollAreaViewportRef}
+                className="JsonPathSelectorComboboxScrollArea"
+                maxItems={8}
+              >
+                {(() => {
+                  if (!searchValue || matches.length > 0) {
+                    const items =
+                      matches.length > 0 ? matches : schemaTree.flattened;
 
-                      return items.map((item) => {
-                        const ancestors = getAncestors(item, schemaTree.nodeMap).map((n) => n.path);
-                        const descendants = getDescendants(item, schemaTree.nodeMap).map(
-                          (n) => n.path,
-                        );
+                    return items.map((item) => {
+                      const ancestors = getAncestors(
+                        item,
+                        schemaTree.nodeMap,
+                      ).map((n) => n.path);
+                      const descendants = getDescendants(
+                        item,
+                        schemaTree.nodeMap,
+                      ).map((n) => n.path);
 
-                        const hidden = (() => {
-                          // if there's a search value, show all items
-                          if (searchValue) {
-                            return false;
-                          }
-
-                          // if any ancestor is collapsed, the item should be hidden
-                          if (ancestors.some((ancestor) => !expandedKeys.has(ancestor))) {
-                            return true;
-                          }
-
-                          // if immediate ancestor is expanded, the item should be shown
-                          const parent = getParentNode(item, schemaTree.nodeMap);
-                          if (parent && expandedKeys.has(parent.path)) {
-                            return false;
-                          }
-
-                          // if any child is expanded, the item should be shown
-                          if (descendants.some((descendant) => expandedKeys.has(descendant))) {
-                            return false;
-                          }
-
-                          // Only hide items that have a parent (nested items)
-                          const shouldHide = !!item.parent;
-                          return shouldHide;
-                        })();
-
-                        if (hidden) {
-                          return null;
+                      const hidden = (() => {
+                        // if there's a search value, show all items
+                        if (searchValue) {
+                          return false;
                         }
 
-                        const nestingLevel = getNestingLevel(item);
-                        const childCount = item.children?.length ?? 0;
-                        const isExpandable = !!item.children;
+                        // if any ancestor is collapsed, the item should be hidden
+                        if (
+                          ancestors.some(
+                            (ancestor) => !expandedKeys.has(ancestor),
+                          )
+                        ) {
+                          return true;
+                        }
 
-                        return (
-                          <JsonPathSelectorItem
-                            key={item.path}
-                            childCount={childCount}
-                            expandable={isExpandable}
-                            expanded={expandedKeys.has(item.path)}
-                            label={item.key}
-                            nestingLevel={nestingLevel}
-                            path={item.path}
-                            type={item.type}
-                            value={item.value}
-                            onToggleExpanded={(path) => {
-                              setExpandedKeysState((set) => {
-                                const updatedSet = new Set(set);
-                                if (set.has(path)) {
-                                  updatedSet.delete(path);
-                                } else {
-                                  updatedSet.add(path);
-                                }
+                        // if immediate ancestor is expanded, the item should be shown
+                        const parent = getParentNode(item, schemaTree.nodeMap);
+                        if (parent && expandedKeys.has(parent.path)) {
+                          return false;
+                        }
 
-                                return updatedSet.size === set.size ? set : updatedSet;
-                              });
-                            }}
-                          />
-                        );
-                      });
-                    }
+                        // if any child is expanded, the item should be shown
+                        if (
+                          descendants.some((descendant) =>
+                            expandedKeys.has(descendant),
+                          )
+                        ) {
+                          return false;
+                        }
 
-                    return (
-                      <Flex align="center" gap="2" justify="between" px="2" py="1">
-                        <Text size="2">{notFoundMessage}</Text>
-                      </Flex>
-                    );
-                  })()}
-                </Combobox.ScrollArea>
-                {(() => {
-                  const selectedValueFooter = selectedValue ? (
-                    <FormattedAttributeMappingValue value={selectedValue} />
-                  ) : null;
+                        // Only hide items that have a parent (nested items)
+                        const shouldHide = !!item.parent;
+                        return shouldHide;
+                      })();
 
-                  const footerContent = footer
-                    ? footer({ searchValue, selectedValueFooter })
-                    : selectedValueFooter;
+                      if (hidden) {
+                        return null;
+                      }
 
-                  if (!footerContent) {
-                    return null;
+                      const nestingLevel = getNestingLevel(item);
+                      const childCount = item.children?.length ?? 0;
+                      const isExpandable = !!item.children;
+
+                      return (
+                        <JsonPathSelectorItem
+                          key={item.path}
+                          childCount={childCount}
+                          expandable={isExpandable}
+                          expanded={expandedKeys.has(item.path)}
+                          label={item.key}
+                          nestingLevel={nestingLevel}
+                          path={item.path}
+                          type={item.type}
+                          value={item.value}
+                          onToggleExpanded={(path) => {
+                            setExpandedKeysState((set) => {
+                              const updatedSet = new Set(set);
+                              if (set.has(path)) {
+                                updatedSet.delete(path);
+                              } else {
+                                updatedSet.add(path);
+                              }
+
+                              return updatedSet.size === set.size
+                                ? set
+                                : updatedSet;
+                            });
+                          }}
+                        />
+                      );
+                    });
                   }
 
-                  return <Combobox.Footer>{footerContent}</Combobox.Footer>;
+                  return (
+                    <Flex
+                      align="center"
+                      gap="2"
+                      justify="between"
+                      px="2"
+                      py="1"
+                    >
+                      <Text size="2">{notFoundMessage}</Text>
+                    </Flex>
+                  );
                 })()}
-              </>
-            )}
-          </Combobox.Content>
-        </Combobox.Popover>
-      </Combobox.Root>
-    );
-  },
-);
+              </Combobox.ScrollArea>
+              {(() => {
+                const selectedValueFooter = selectedValue ? (
+                  <FormattedAttributeMappingValue value={selectedValue} />
+                ) : null;
+
+                const footerContent = footer
+                  ? footer({ searchValue, selectedValueFooter })
+                  : selectedValueFooter;
+
+                if (!footerContent) {
+                  return null;
+                }
+
+                return <Combobox.Footer>{footerContent}</Combobox.Footer>;
+              })()}
+            </>
+          )}
+        </Combobox.Content>
+      </Combobox.Popover>
+    </Combobox.Root>
+  );
+});
 
 interface JsonPathSelectorItemProps {
   expandable: boolean;
@@ -429,125 +466,134 @@ interface JsonPathSelectorItemProps {
   onKeyDown?: React.KeyboardEventHandler<HTMLDivElement>;
   nestingLevel: number;
   childCount: number;
-  type: "object" | "array" | "primitive";
+  type: 'object' | 'array' | 'primitive';
   value: JsonPrimitive | undefined;
   path: string;
   label: string;
 }
 
-const JsonPathSelectorItem = React.forwardRef<HTMLDivElement, JsonPathSelectorItemProps>(
-  function JsonPathSelectorItem(
-    {
-      expandable,
-      expanded,
-      onToggleExpanded,
-      disabled,
-      className,
-      style,
-      onClick,
-      onKeyDown,
-      nestingLevel,
-      childCount,
-      type,
-      value,
-      path,
-      label,
-      ...comboboxItemProps
-    },
-    ref,
-  ) {
-    if (expandable && childCount === 0) {
-      disabled = true;
-    }
-
-    if (!expandable) {
-      expanded = false;
-    }
-
-    const handleClick = (event: React.MouseEvent | React.KeyboardEvent) => {
-      if (expandable) {
-        event.preventDefault();
-        event.stopPropagation();
-        onToggleExpanded?.(path);
-      }
-    };
-
-    return (
-      <Combobox.Item
-        ref={ref}
-        className={classNames("JsonPathSelectorComboboxItem", className)}
-        data-nesting-level={nestingLevel}
-        disabled={disabled}
-        style={{ "--_nesting-level": nestingLevel, ...style }}
-        value={path}
-        onClick={composeEventHandlers(onClick, handleClick)}
-        onKeyDown={composeEventHandlers(onKeyDown, (event) => {
-          // Only expand on Enter, as spacebar is used for searching.
-          if (event.key === "Enter") {
-            handleClick(event);
-          }
-        })}
-        {...comboboxItemProps}
-      >
-        <Flex asChild align="center" gap="6px" minWidth="0">
-          <Text as="span" size="2">
-            <Flex align="center" gap="1" minWidth="0">
-              {expandable && (
-                <Box className="JsonPathSelectorArrow" flexShrink="0">
-                  {expanded ? <TriangleDownIcon /> : <TriangleRightIcon />}
-                </Box>
-              )}
-              <Text truncate as="span" className="JsonPathSelectorComboboxItemKey">
-                {label}
-              </Text>
-            </Flex>
-
-            {!expanded && (
-              <>
-                <Box asChild flexShrink="0">
-                  <Text aria-hidden as="span" className="JsonPathSelectorComboboxItemSeparator">
-                    :
-                  </Text>
-                </Box>
-                <Box asChild flexShrink="0">
-                  <Text
-                    as="span"
-                    className="JsonPathSelectorComboboxItemValue"
-                    color={(() => {
-                      switch (type) {
-                        case "array":
-                          return "purple";
-                        case "object":
-                          return "blue";
-                        case "primitive":
-                        default:
-                          return "blue";
-                      }
-                    })()}
-                  >
-                    {(() => {
-                      if (expandable) {
-                        if (type === "object") {
-                          return "{…}";
-                        }
-
-                        if (type === "array") {
-                          return "[…]";
-                        }
-                      }
-
-                      return String(value);
-                    })()}
-                  </Text>
-                </Box>
-              </>
-            )}
-          </Text>
-        </Flex>
-      </Combobox.Item>
-    );
+const JsonPathSelectorItem = React.forwardRef<
+  HTMLDivElement,
+  JsonPathSelectorItemProps
+>(function JsonPathSelectorItem(
+  {
+    expandable,
+    expanded,
+    onToggleExpanded,
+    disabled,
+    className,
+    style,
+    onClick,
+    onKeyDown,
+    nestingLevel,
+    childCount,
+    type,
+    value,
+    path,
+    label,
+    ...comboboxItemProps
   },
-);
+  ref,
+) {
+  if (expandable && childCount === 0) {
+    disabled = true;
+  }
+
+  if (!expandable) {
+    expanded = false;
+  }
+
+  const handleClick = (event: React.MouseEvent | React.KeyboardEvent) => {
+    if (expandable) {
+      event.preventDefault();
+      event.stopPropagation();
+      onToggleExpanded?.(path);
+    }
+  };
+
+  return (
+    <Combobox.Item
+      ref={ref}
+      className={classNames('JsonPathSelectorComboboxItem', className)}
+      data-nesting-level={nestingLevel}
+      disabled={disabled}
+      style={{ '--_nesting-level': nestingLevel, ...style }}
+      value={path}
+      onClick={composeEventHandlers(onClick, handleClick)}
+      onKeyDown={composeEventHandlers(onKeyDown, (event) => {
+        // Only expand on Enter, as spacebar is used for searching.
+        if (event.key === 'Enter') {
+          handleClick(event);
+        }
+      })}
+      {...comboboxItemProps}
+    >
+      <Flex asChild align="center" gap="6px" minWidth="0">
+        <Text as="span" size="2">
+          <Flex align="center" gap="1" minWidth="0">
+            {expandable && (
+              <Box className="JsonPathSelectorArrow" flexShrink="0">
+                {expanded ? <TriangleDownIcon /> : <TriangleRightIcon />}
+              </Box>
+            )}
+            <Text
+              truncate
+              as="span"
+              className="JsonPathSelectorComboboxItemKey"
+            >
+              {label}
+            </Text>
+          </Flex>
+
+          {!expanded && (
+            <>
+              <Box asChild flexShrink="0">
+                <Text
+                  aria-hidden
+                  as="span"
+                  className="JsonPathSelectorComboboxItemSeparator"
+                >
+                  :
+                </Text>
+              </Box>
+              <Box asChild flexShrink="0">
+                <Text
+                  as="span"
+                  className="JsonPathSelectorComboboxItemValue"
+                  color={(() => {
+                    switch (type) {
+                      case 'array':
+                        return 'purple';
+                      case 'object':
+                        return 'blue';
+                      case 'primitive':
+                      default:
+                        return 'blue';
+                    }
+                  })()}
+                >
+                  {(() => {
+                    if (expandable) {
+                      if (type === 'object') {
+                        return '{…}';
+                      }
+
+                      if (type === 'array') {
+                        return '[…]';
+                      }
+                    }
+
+                    return String(value);
+                  })()}
+                </Text>
+              </Box>
+            </>
+          )}
+        </Text>
+      </Flex>
+    </Combobox.Item>
+  );
+});
 
 const BracesIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
   <svg
@@ -568,7 +614,8 @@ const BracesIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
   </svg>
 );
 
-const renderInputValue = (keys: string[]): string => keys[keys.length - 1] ?? "";
+const renderInputValue = (keys: string[]): string =>
+  keys[keys.length - 1] ?? '';
 
 function getNestingLevel(item: SchemaNode) {
   if (!item.parent) {
@@ -580,9 +627,9 @@ function getNestingLevel(item: SchemaNode) {
 
 interface ComboboxClearProps extends Omit<
   React.ComponentPropsWithoutRef<typeof IconButton>,
-  "children"
+  'children'
 > {
-  size?: "1" | "2" | "3";
+  size?: '1' | '2' | '3';
   onClear: () => void;
   triggerId: string;
 }
@@ -595,8 +642,15 @@ interface ComboboxClearProps extends Omit<
  */
 const ComboboxClear = React.forwardRef<HTMLButtonElement, ComboboxClearProps>(
   function ComboboxClear(props, ref) {
-    const { className, size = "1", disabled, onClear, triggerId, ...buttonProps } = props;
-    const label = "Remove selection";
+    const {
+      className,
+      size = '1',
+      disabled,
+      onClear,
+      triggerId,
+      ...buttonProps
+    } = props;
+    const label = 'Remove selection';
     return (
       <Tooltip content={label}>
         <IconButton
@@ -605,7 +659,7 @@ const ComboboxClear = React.forwardRef<HTMLButtonElement, ComboboxClearProps>(
           aria-label={label}
           disabled={disabled || undefined}
           {...buttonProps}
-          className={classNames("ComboboxClear ComboboxIconButton", className)}
+          className={classNames('ComboboxClear ComboboxIconButton', className)}
           fullyDisabled={disabled}
           size={size}
           type="button"
@@ -626,7 +680,7 @@ const ComboboxClear = React.forwardRef<HTMLButtonElement, ComboboxClearProps>(
 
             // Stop propagation for Enter/Space to prevent the Combobox.Trigger
             // from treating these as OPEN_KEYS and reopening the combobox
-            if (event.key === "Enter" || event.key === " ") {
+            if (event.key === 'Enter' || event.key === ' ') {
               event.stopPropagation();
             }
           }}
@@ -654,9 +708,9 @@ interface FormattedAttributeMappingValueProps {
  * Displays a selected nested attribute path in arrow notation format.
  * Example: parent > child > child > leaf
  */
-const FormattedAttributeMappingValue: React.FC<FormattedAttributeMappingValueProps> = ({
-  value,
-}) => {
+const FormattedAttributeMappingValue: React.FC<
+  FormattedAttributeMappingValueProps
+> = ({ value }) => {
   if (!value || value.length === 0) {
     return (
       <Text color="gray" size="2">
@@ -669,10 +723,10 @@ const FormattedAttributeMappingValue: React.FC<FormattedAttributeMappingValuePro
     <Box
       className="JsonPathSelectorFooterValueContainer"
       style={{
-        lineHeight: "20px",
-        fontSize: "12.8px",
-        fontFamily: "var(--code-font-family)",
-        color: "var(--gray-a11)",
+        lineHeight: '20px',
+        fontSize: '12.8px',
+        fontFamily: 'var(--code-font-family)',
+        color: 'var(--gray-a11)',
       }}
     >
       {value.map((key, index) => (
@@ -681,10 +735,10 @@ const FormattedAttributeMappingValue: React.FC<FormattedAttributeMappingValuePro
             <Box
               asChild
               style={{
-                color: "var(--gray-a10)",
-                display: "inline-block",
-                verticalAlign: "middle",
-                margin: "0 var(--space-1)",
+                color: 'var(--gray-a10)',
+                display: 'inline-block',
+                verticalAlign: 'middle',
+                margin: '0 var(--space-1)',
               }}
             >
               <TriangleRightIcon />
@@ -694,7 +748,7 @@ const FormattedAttributeMappingValue: React.FC<FormattedAttributeMappingValuePro
             asChild
             className="JsonPathSelectorFooterValue"
             style={{
-              display: "inline",
+              display: 'inline',
             }}
           >
             <span>{key}</span>

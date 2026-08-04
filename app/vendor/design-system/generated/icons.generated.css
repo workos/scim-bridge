@@ -36,7 +36,7 @@
   --provider-icon-duo: url(https://cdn.workos.com/provider-icons/light/duo.svg);
   --provider-icon-facebook: url(https://images.workoscdn.com/images/0e6d8dea-d502-442f-8976-02c3e5192e2a.svg);
   --provider-icon-firebase: url(https://cdn.workos.com/provider-icons/light/firebase.svg);
-  --provider-icon-fly-io: url(https://images.workoscdn.com/images/c62b386d-c343-4158-8106-f4a324ac3383.svg);
+  --provider-icon-fly-io: url(https://images.workoscdn.com/images/7a3661d5-6405-40fe-b60b-85dd238b3521.svg);
   --provider-icon-fourth: url(https://cdn.workos.com/provider-icons/light/fourth.svg);
   --provider-icon-frame-io: url(https://images.workoscdn.com/images/6c533c08-3723-451e-9ee1-bfda6b9c99e5.svg);
   --provider-icon-front: url(https://images.workoscdn.com/images/9fccae28-46cd-4a48-b789-b1c30d393adb.svg);
@@ -152,7 +152,7 @@
   --provider-icon-duo: url(https://cdn.workos.com/provider-icons/dark/duo.svg);
   --provider-icon-facebook: url(https://images.workoscdn.com/images/e25739c9-c4e1-4e7a-8665-7617eee5eca5.svg);
   --provider-icon-firebase: url(https://cdn.workos.com/provider-icons/dark/firebase.svg);
-  --provider-icon-fly-io: url(https://images.workoscdn.com/images/c7036d06-57bb-499e-ba09-c192b6a82d33.svg);
+  --provider-icon-fly-io: url(https://images.workoscdn.com/images/bf86c6b5-08c3-41f2-9771-680f036a62c0.svg);
   --provider-icon-fourth: url(https://cdn.workos.com/provider-icons/dark/fourth.svg);
   --provider-icon-frame-io: url(https://images.workoscdn.com/images/675956c4-c609-4d3b-8823-eb121de4e233.svg);
   --provider-icon-front: url(https://images.workoscdn.com/images/e543441c-76b4-4ba1-b99f-4b13036e3a1f.svg);
@@ -225,458 +225,458 @@
   --provider-icon-zoom: url(https://images.workoscdn.com/images/99c4cfa2-f86f-4e2c-83a1-cb768847e166.svg);
 }
 
-.ProviderIcon[data-provider="access-people-hr"] {
+.ProviderIcon[data-provider='access-people-hr'] {
   background-image: var(--provider-icon-access-people-hr);
 }
 
-.ProviderIcon[data-provider="adp"] {
+.ProviderIcon[data-provider='adp'] {
   background-image: var(--provider-icon-adp);
 }
 
-.ProviderIcon[data-provider="apple"] {
+.ProviderIcon[data-provider='apple'] {
   background-image: var(--provider-icon-apple);
 }
 
-.ProviderIcon[data-provider="asana"] {
+.ProviderIcon[data-provider='asana'] {
   background-image: var(--provider-icon-asana);
 }
 
-.ProviderIcon[data-provider="attio"] {
+.ProviderIcon[data-provider='attio'] {
   background-image: var(--provider-icon-attio);
 }
 
-.ProviderIcon[data-provider="auth0"] {
+.ProviderIcon[data-provider='auth0'] {
   background-image: var(--provider-icon-auth0);
 }
 
-.ProviderIcon[data-provider="aws"] {
+.ProviderIcon[data-provider='aws'] {
   background-image: var(--provider-icon-aws);
 }
 
-.ProviderIcon[data-provider="azure"] {
+.ProviderIcon[data-provider='azure'] {
   background-image: var(--provider-icon-azure);
 }
 
-.ProviderIcon[data-provider="bamboo-hr"] {
+.ProviderIcon[data-provider='bamboo-hr'] {
   background-image: var(--provider-icon-bamboo-hr);
 }
 
-.ProviderIcon[data-provider="better-auth"] {
+.ProviderIcon[data-provider='better-auth'] {
   background-image: var(--provider-icon-better-auth);
 }
 
-.ProviderIcon[data-provider="bitbucket"] {
+.ProviderIcon[data-provider='bitbucket'] {
   background-image: var(--provider-icon-bitbucket);
 }
 
-.ProviderIcon[data-provider="box"] {
+.ProviderIcon[data-provider='box'] {
   background-image: var(--provider-icon-box);
 }
 
-.ProviderIcon[data-provider="breathe-hr"] {
+.ProviderIcon[data-provider='breathe-hr'] {
   background-image: var(--provider-icon-breathe-hr);
 }
 
-.ProviderIcon[data-provider="bubble"] {
+.ProviderIcon[data-provider='bubble'] {
   background-image: var(--provider-icon-bubble);
 }
 
-.ProviderIcon[data-provider="cal-dot-com"] {
+.ProviderIcon[data-provider='cal-dot-com'] {
   background-image: var(--provider-icon-cal-dot-com);
 }
 
-.ProviderIcon[data-provider="calendly"] {
+.ProviderIcon[data-provider='calendly'] {
   background-image: var(--provider-icon-calendly);
 }
 
-.ProviderIcon[data-provider="cas"] {
+.ProviderIcon[data-provider='cas'] {
   background-image: var(--provider-icon-cas);
 }
 
-.ProviderIcon[data-provider="cezanne-hr"] {
+.ProviderIcon[data-provider='cezanne-hr'] {
   background-image: var(--provider-icon-cezanne-hr);
 }
 
-.ProviderIcon[data-provider="classlink"] {
+.ProviderIcon[data-provider='classlink'] {
   background-image: var(--provider-icon-classlink);
 }
 
-.ProviderIcon[data-provider="clerk"] {
+.ProviderIcon[data-provider='clerk'] {
   background-image: var(--provider-icon-clerk);
 }
 
-.ProviderIcon[data-provider="clever"] {
+.ProviderIcon[data-provider='clever'] {
   background-image: var(--provider-icon-clever);
 }
 
-.ProviderIcon[data-provider="cloudflare"] {
+.ProviderIcon[data-provider='cloudflare'] {
   background-image: var(--provider-icon-cloudflare);
 }
 
-.ProviderIcon[data-provider="confluence"] {
+.ProviderIcon[data-provider='confluence'] {
   background-image: var(--provider-icon-confluence);
 }
 
-.ProviderIcon[data-provider="cyberark"] {
+.ProviderIcon[data-provider='cyberark'] {
   background-image: var(--provider-icon-cyberark);
 }
 
-.ProviderIcon[data-provider="datadog"] {
+.ProviderIcon[data-provider='datadog'] {
   background-image: var(--provider-icon-datadog);
 }
 
-.ProviderIcon[data-provider="datasite"] {
+.ProviderIcon[data-provider='datasite'] {
   background-image: var(--provider-icon-datasite);
 }
 
-.ProviderIcon[data-provider="descope"] {
+.ProviderIcon[data-provider='descope'] {
   background-image: var(--provider-icon-descope);
 }
 
-.ProviderIcon[data-provider="discord"] {
+.ProviderIcon[data-provider='discord'] {
   background-image: var(--provider-icon-discord);
 }
 
-.ProviderIcon[data-provider="dropbox"] {
+.ProviderIcon[data-provider='dropbox'] {
   background-image: var(--provider-icon-dropbox);
 }
 
-.ProviderIcon[data-provider="duo"] {
+.ProviderIcon[data-provider='duo'] {
   background-image: var(--provider-icon-duo);
 }
 
-.ProviderIcon[data-provider="facebook"] {
+.ProviderIcon[data-provider='facebook'] {
   background-image: var(--provider-icon-facebook);
 }
 
-.ProviderIcon[data-provider="firebase"] {
+.ProviderIcon[data-provider='firebase'] {
   background-image: var(--provider-icon-firebase);
 }
 
-.ProviderIcon[data-provider="fly-io"] {
+.ProviderIcon[data-provider='fly-io'] {
   background-image: var(--provider-icon-fly-io);
 }
 
-.ProviderIcon[data-provider="fourth"] {
+.ProviderIcon[data-provider='fourth'] {
   background-image: var(--provider-icon-fourth);
 }
 
-.ProviderIcon[data-provider="frame-io"] {
+.ProviderIcon[data-provider='frame-io'] {
   background-image: var(--provider-icon-frame-io);
 }
 
-.ProviderIcon[data-provider="front"] {
+.ProviderIcon[data-provider='front'] {
   background-image: var(--provider-icon-front);
 }
 
-.ProviderIcon[data-provider="generic-oauth"] {
+.ProviderIcon[data-provider='generic-oauth'] {
   background-image: var(--provider-icon-generic-oauth);
 }
 
-.ProviderIcon[data-provider="generic-oidc"] {
+.ProviderIcon[data-provider='generic-oidc'] {
   background-image: var(--provider-icon-generic-oidc);
 }
 
-.ProviderIcon[data-provider="github"] {
+.ProviderIcon[data-provider='github'] {
   background-image: var(--provider-icon-github);
 }
 
-.ProviderIcon[data-provider="gitlab"] {
+.ProviderIcon[data-provider='gitlab'] {
   background-image: var(--provider-icon-gitlab);
 }
 
-.ProviderIcon[data-provider="godaddy"] {
+.ProviderIcon[data-provider='godaddy'] {
   background-image: var(--provider-icon-godaddy);
 }
 
-.ProviderIcon[data-provider="gong"] {
+.ProviderIcon[data-provider='gong'] {
   background-image: var(--provider-icon-gong);
 }
 
-.ProviderIcon[data-provider="google"] {
+.ProviderIcon[data-provider='google'] {
   background-image: var(--provider-icon-google);
 }
 
-.ProviderIcon[data-provider="google-analytics"] {
+.ProviderIcon[data-provider='google-analytics'] {
   background-image: var(--provider-icon-google-analytics);
 }
 
-.ProviderIcon[data-provider="google-calendar"] {
+.ProviderIcon[data-provider='google-calendar'] {
   background-image: var(--provider-icon-google-calendar);
 }
 
-.ProviderIcon[data-provider="google-cloud"] {
+.ProviderIcon[data-provider='google-cloud'] {
   background-image: var(--provider-icon-google-cloud);
 }
 
-.ProviderIcon[data-provider="google-drive"] {
+.ProviderIcon[data-provider='google-drive'] {
   background-image: var(--provider-icon-google-drive);
 }
 
-.ProviderIcon[data-provider="google-mail"] {
+.ProviderIcon[data-provider='google-mail'] {
   background-image: var(--provider-icon-google-mail);
 }
 
-.ProviderIcon[data-provider="greenhouse"] {
+.ProviderIcon[data-provider='greenhouse'] {
   background-image: var(--provider-icon-greenhouse);
 }
 
-.ProviderIcon[data-provider="helpscout"] {
+.ProviderIcon[data-provider='helpscout'] {
   background-image: var(--provider-icon-helpscout);
 }
 
-.ProviderIcon[data-provider="hibob"] {
+.ProviderIcon[data-provider='hibob'] {
   background-image: var(--provider-icon-hibob);
 }
 
-.ProviderIcon[data-provider="hubspot"] {
+.ProviderIcon[data-provider='hubspot'] {
   background-image: var(--provider-icon-hubspot);
 }
 
-.ProviderIcon[data-provider="intercom"] {
+.ProviderIcon[data-provider='intercom'] {
   background-image: var(--provider-icon-intercom);
 }
 
-.ProviderIcon[data-provider="intralinks"] {
+.ProviderIcon[data-provider='intralinks'] {
   background-image: var(--provider-icon-intralinks);
 }
 
-.ProviderIcon[data-provider="intuit"] {
+.ProviderIcon[data-provider='intuit'] {
   background-image: var(--provider-icon-intuit);
 }
 
-.ProviderIcon[data-provider="jira"] {
+.ProviderIcon[data-provider='jira'] {
   background-image: var(--provider-icon-jira);
 }
 
-.ProviderIcon[data-provider="jumpcloud"] {
+.ProviderIcon[data-provider='jumpcloud'] {
   background-image: var(--provider-icon-jumpcloud);
 }
 
-.ProviderIcon[data-provider="kakao"] {
+.ProviderIcon[data-provider='kakao'] {
   background-image: var(--provider-icon-kakao);
 }
 
-.ProviderIcon[data-provider="keycloak"] {
+.ProviderIcon[data-provider='keycloak'] {
   background-image: var(--provider-icon-keycloak);
 }
 
-.ProviderIcon[data-provider="lastpass"] {
+.ProviderIcon[data-provider='lastpass'] {
   background-image: var(--provider-icon-lastpass);
 }
 
-.ProviderIcon[data-provider="linear"] {
+.ProviderIcon[data-provider='linear'] {
   background-image: var(--provider-icon-linear);
 }
 
-.ProviderIcon[data-provider="linkedin"] {
+.ProviderIcon[data-provider='linkedin'] {
   background-image: var(--provider-icon-linkedin);
 }
 
-.ProviderIcon[data-provider="login-gov"] {
+.ProviderIcon[data-provider='login-gov'] {
   background-image: var(--provider-icon-login-gov);
 }
 
-.ProviderIcon[data-provider="microsoft"] {
+.ProviderIcon[data-provider='microsoft'] {
   background-image: var(--provider-icon-microsoft);
 }
 
-.ProviderIcon[data-provider="microsoft-onedrive"] {
+.ProviderIcon[data-provider='microsoft-onedrive'] {
   background-image: var(--provider-icon-microsoft-onedrive);
 }
 
-.ProviderIcon[data-provider="microsoft-onenote"] {
+.ProviderIcon[data-provider='microsoft-onenote'] {
   background-image: var(--provider-icon-microsoft-onenote);
 }
 
-.ProviderIcon[data-provider="microsoft-outlook"] {
+.ProviderIcon[data-provider='microsoft-outlook'] {
   background-image: var(--provider-icon-microsoft-outlook);
 }
 
-.ProviderIcon[data-provider="microsoft-outlook-calendar"] {
+.ProviderIcon[data-provider='microsoft-outlook-calendar'] {
   background-image: var(--provider-icon-microsoft-outlook-calendar);
 }
 
-.ProviderIcon[data-provider="microsoft-sharepoint"] {
+.ProviderIcon[data-provider='microsoft-sharepoint'] {
   background-image: var(--provider-icon-microsoft-sharepoint);
 }
 
-.ProviderIcon[data-provider="microsoft-teams"] {
+.ProviderIcon[data-provider='microsoft-teams'] {
   background-image: var(--provider-icon-microsoft-teams);
 }
 
-.ProviderIcon[data-provider="microsoft-todo"] {
+.ProviderIcon[data-provider='microsoft-todo'] {
   background-image: var(--provider-icon-microsoft-todo);
 }
 
-.ProviderIcon[data-provider="miniorange"] {
+.ProviderIcon[data-provider='miniorange'] {
   background-image: var(--provider-icon-miniorange);
 }
 
-.ProviderIcon[data-provider="naver"] {
+.ProviderIcon[data-provider='naver'] {
   background-image: var(--provider-icon-naver);
 }
 
-.ProviderIcon[data-provider="net-iq"] {
+.ProviderIcon[data-provider='net-iq'] {
   background-image: var(--provider-icon-net-iq);
 }
 
-.ProviderIcon[data-provider="netlify"] {
+.ProviderIcon[data-provider='netlify'] {
   background-image: var(--provider-icon-netlify);
 }
 
-.ProviderIcon[data-provider="next-auth"] {
+.ProviderIcon[data-provider='next-auth'] {
   background-image: var(--provider-icon-next-auth);
 }
 
-.ProviderIcon[data-provider="notion"] {
+.ProviderIcon[data-provider='notion'] {
   background-image: var(--provider-icon-notion);
 }
 
-.ProviderIcon[data-provider="okta"] {
+.ProviderIcon[data-provider='okta'] {
   background-image: var(--provider-icon-okta);
 }
 
-.ProviderIcon[data-provider="onelogin"] {
+.ProviderIcon[data-provider='onelogin'] {
   background-image: var(--provider-icon-onelogin);
 }
 
-.ProviderIcon[data-provider="oracle"] {
+.ProviderIcon[data-provider='oracle'] {
   background-image: var(--provider-icon-oracle);
 }
 
-.ProviderIcon[data-provider="patreon"] {
+.ProviderIcon[data-provider='patreon'] {
   background-image: var(--provider-icon-patreon);
 }
 
-.ProviderIcon[data-provider="personio"] {
+.ProviderIcon[data-provider='personio'] {
   background-image: var(--provider-icon-personio);
 }
 
-.ProviderIcon[data-provider="ping-identity"] {
+.ProviderIcon[data-provider='ping-identity'] {
   background-image: var(--provider-icon-ping-identity);
 }
 
-.ProviderIcon[data-provider="pipedrive"] {
+.ProviderIcon[data-provider='pipedrive'] {
   background-image: var(--provider-icon-pipedrive);
 }
 
-.ProviderIcon[data-provider="prefect"] {
+.ProviderIcon[data-provider='prefect'] {
   background-image: var(--provider-icon-prefect);
 }
 
-.ProviderIcon[data-provider="pydantic-logfire"] {
+.ProviderIcon[data-provider='pydantic-logfire'] {
   background-image: var(--provider-icon-pydantic-logfire);
 }
 
-.ProviderIcon[data-provider="quickbooks"] {
+.ProviderIcon[data-provider='quickbooks'] {
   background-image: var(--provider-icon-quickbooks);
 }
 
-.ProviderIcon[data-provider="react-native-expo"] {
+.ProviderIcon[data-provider='react-native-expo'] {
   background-image: var(--provider-icon-react-native-expo);
 }
 
-.ProviderIcon[data-provider="rippling"] {
+.ProviderIcon[data-provider='rippling'] {
   background-image: var(--provider-icon-rippling);
 }
 
-.ProviderIcon[data-provider="sailpoint"] {
+.ProviderIcon[data-provider='sailpoint'] {
   background-image: var(--provider-icon-sailpoint);
 }
 
-.ProviderIcon[data-provider="salesforce"] {
+.ProviderIcon[data-provider='salesforce'] {
   background-image: var(--provider-icon-salesforce);
 }
 
-.ProviderIcon[data-provider="segment"] {
+.ProviderIcon[data-provider='segment'] {
   background-image: var(--provider-icon-segment);
 }
 
-.ProviderIcon[data-provider="sentry"] {
+.ProviderIcon[data-provider='sentry'] {
   background-image: var(--provider-icon-sentry);
 }
 
-.ProviderIcon[data-provider="shibboleth"] {
+.ProviderIcon[data-provider='shibboleth'] {
   background-image: var(--provider-icon-shibboleth);
 }
 
-.ProviderIcon[data-provider="simple-saml-php"] {
+.ProviderIcon[data-provider='simple-saml-php'] {
   background-image: var(--provider-icon-simple-saml-php);
 }
 
-.ProviderIcon[data-provider="slack"] {
+.ProviderIcon[data-provider='slack'] {
   background-image: var(--provider-icon-slack);
 }
 
-.ProviderIcon[data-provider="snowflake"] {
+.ProviderIcon[data-provider='snowflake'] {
   background-image: var(--provider-icon-snowflake);
 }
 
-.ProviderIcon[data-provider="splunk"] {
+.ProviderIcon[data-provider='splunk'] {
   background-image: var(--provider-icon-splunk);
 }
 
-.ProviderIcon[data-provider="stripe"] {
+.ProviderIcon[data-provider='stripe'] {
   background-image: var(--provider-icon-stripe);
 }
 
-.ProviderIcon[data-provider="stripe-connect"] {
+.ProviderIcon[data-provider='stripe-connect'] {
   background-image: var(--provider-icon-stripe-connect);
 }
 
-.ProviderIcon[data-provider="stytch"] {
+.ProviderIcon[data-provider='stytch'] {
   background-image: var(--provider-icon-stytch);
 }
 
-.ProviderIcon[data-provider="supabase"] {
+.ProviderIcon[data-provider='supabase'] {
   background-image: var(--provider-icon-supabase);
 }
 
-.ProviderIcon[data-provider="test-idp"] {
+.ProviderIcon[data-provider='test-idp'] {
   background-image: var(--provider-icon-test-idp);
 }
 
-.ProviderIcon[data-provider="tiktok"] {
+.ProviderIcon[data-provider='tiktok'] {
   background-image: var(--provider-icon-tiktok);
 }
 
-.ProviderIcon[data-provider="vercel"] {
+.ProviderIcon[data-provider='vercel'] {
   background-image: var(--provider-icon-vercel);
 }
 
-.ProviderIcon[data-provider="vmware"] {
+.ProviderIcon[data-provider='vmware'] {
   background-image: var(--provider-icon-vmware);
 }
 
-.ProviderIcon[data-provider="workday"] {
+.ProviderIcon[data-provider='workday'] {
   background-image: var(--provider-icon-workday);
 }
 
-.ProviderIcon[data-provider="workos"] {
+.ProviderIcon[data-provider='workos'] {
   background-image: var(--provider-icon-workos);
 }
 
-.ProviderIcon[data-provider="x"] {
+.ProviderIcon[data-provider='x'] {
   background-image: var(--provider-icon-x);
 }
 
-.ProviderIcon[data-provider="xero"] {
+.ProviderIcon[data-provider='xero'] {
   background-image: var(--provider-icon-xero);
 }
 
-.ProviderIcon[data-provider="zapier"] {
+.ProviderIcon[data-provider='zapier'] {
   background-image: var(--provider-icon-zapier);
 }
 
-.ProviderIcon[data-provider="zendesk"] {
+.ProviderIcon[data-provider='zendesk'] {
   background-image: var(--provider-icon-zendesk);
 }
 
-.ProviderIcon[data-provider="zoho-mail"] {
+.ProviderIcon[data-provider='zoho-mail'] {
   background-image: var(--provider-icon-zoho-mail);
 }
 
-.ProviderIcon[data-provider="zoom"] {
+.ProviderIcon[data-provider='zoom'] {
   background-image: var(--provider-icon-zoom);
 }

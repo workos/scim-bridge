@@ -78,7 +78,7 @@
   margin-right: var(--space-1);
 }
 
-.AccordionTrigger[aria-expanded="true"] .AccordionChevron {
+.AccordionTrigger[aria-expanded='true'] .AccordionChevron {
   transform: rotate(90deg);
 }
 
@@ -92,7 +92,7 @@
   padding-left: calc(var(--space-4) + var(--accordion-root-margin-left) * -1);
 }
 
-.AccordionContent[data-state="closed"] {
+.AccordionContent[data-state='closed'] {
   height: 0;
 }
 
@@ -115,11 +115,11 @@
     }
   }
 
-  .AccordionContent[data-state="open"] {
+  .AccordionContent[data-state='open'] {
     animation: AccordionSlideDown 175ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  .AccordionContent[data-state="closed"] {
+  .AccordionContent[data-state='closed'] {
     animation: AccordionSlideUp 175ms cubic-bezier(0.22, 1, 0.36, 1);
   }
 }

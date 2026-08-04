@@ -6,35 +6,35 @@ import {
   CrossCircledIcon,
   ExclamationTriangleIcon,
   InfoCircledIcon,
-} from "@radix-ui/react-icons";
-import * as React from "react";
-import { isReactElement } from "../helpers/is-react-element.js";
-import * as Accordion from "./accordion.js";
-import * as Avatar from "./avatar.js";
-import { Badge } from "./badge.js";
-import { Box } from "./box.js";
-import { Callout } from "./callout.js";
-import { Checkbox } from "./checkbox.js";
-import { Code } from "./code.js";
-import * as CodeBlock from "./code-block.js";
-import * as Combobox from "./combobox.js";
-import * as DefinitionList from "./definition-list.js";
-import { Em } from "./em.js";
-import { Flex } from "./flex.js";
-import { Heading } from "./heading.js";
-import { Image } from "./image.js";
-import { Link } from "./link.js";
-import { Marker } from "./marker.js";
-import { PermanentLink } from "./permanent-link.js";
-import * as QuickNav from "./quick-nav.js";
-import { RadioGroup } from "./radio-group.js";
-import * as Screenshot from "./screenshot.js";
-import { Separator } from "./separator.js";
-import { TabNav } from "./tab-nav.js";
-import * as Table from "./table.js";
-import * as Tabs from "./tabs.js";
-import { Text } from "./text.js";
-import { Zoomable } from "./zoomable.js";
+} from '@radix-ui/react-icons';
+import * as React from 'react';
+import { isReactElement } from '../helpers/is-react-element.js';
+import * as Accordion from './accordion.js';
+import * as Avatar from './avatar.js';
+import { Badge } from './badge.js';
+import { Box } from './box.js';
+import { Callout } from './callout.js';
+import { Checkbox } from './checkbox.js';
+import { Code } from './code.js';
+import * as CodeBlock from './code-block.js';
+import * as Combobox from './combobox.js';
+import * as DefinitionList from './definition-list.js';
+import { Em } from './em.js';
+import { Flex } from './flex.js';
+import { Heading } from './heading.js';
+import { Image } from './image.js';
+import { Link } from './link.js';
+import { Marker } from './marker.js';
+import { PermanentLink } from './permanent-link.js';
+import * as QuickNav from './quick-nav.js';
+import { RadioGroup } from './radio-group.js';
+import * as Screenshot from './screenshot.js';
+import { Separator } from './separator.js';
+import { TabNav } from './tab-nav.js';
+import * as Table from './table.js';
+import * as Tabs from './tabs.js';
+import { Text } from './text.js';
+import { Zoomable } from './zoomable.js';
 
 interface MdxComponents {
   [key: string]: // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -81,7 +81,7 @@ const mdxComponents: MdxComponents = {
   thead: Table.Header,
   tbody: Table.Body,
   th: (props: React.PropsWithChildren<{ scope?: string }>) => {
-    if (props.scope === "row") {
+    if (props.scope === 'row') {
       return <Table.RowHeader {...props} />;
     }
 
@@ -91,17 +91,17 @@ const mdxComponents: MdxComponents = {
   td: (props) => {
     // Instead of rendering dashes or empty string, render a separator instead
     const cellText = getTextFromReactElement(props.children).trim();
-    if (["–", "-", "—", ""].includes(cellText)) {
+    if (['–', '-', '—', ''].includes(cellText)) {
       return (
-        <Table.Cell style={{ verticalAlign: "middle" }}>
+        <Table.Cell style={{ verticalAlign: 'middle' }}>
           <Separator size="1" />
         </Table.Cell>
       );
     }
 
-    if (["required"].includes(cellText)) {
+    if (['required'].includes(cellText)) {
       return (
-        <Table.Cell style={{ verticalAlign: "middle" }}>
+        <Table.Cell style={{ verticalAlign: 'middle' }}>
           <Badge color="purple" size="1">
             required
           </Badge>
@@ -141,9 +141,9 @@ const mdxComponents: MdxComponents = {
     type,
   }: {
     children?: React.ReactNode;
-    type?: "warning" | "error" | "info";
+    type?: 'warning' | 'error' | 'info';
   }) => {
-    const colorMap = { warning: "yellow", error: "red", info: "blue" } as const;
+    const colorMap = { warning: 'yellow', error: 'red', info: 'blue' } as const;
     const iconMap = {
       warning: ExclamationTriangleIcon,
       error: CrossCircledIcon,
@@ -151,7 +151,7 @@ const mdxComponents: MdxComponents = {
     } as const;
     const Icon = type ? iconMap[type] : InfoCircledIcon;
     return (
-      <Callout.Root color={type ? colorMap[type] : "gray"} my="5">
+      <Callout.Root color={type ? colorMap[type] : 'gray'} my="5">
         <Callout.Icon>
           <Icon height="16" width="16" />
         </Callout.Icon>
@@ -162,7 +162,7 @@ const mdxComponents: MdxComponents = {
     );
   },
   Checklist: {
-    Root: (props: React.ComponentProps<"div">) => <div {...props} />,
+    Root: (props: React.ComponentProps<'div'>) => <div {...props} />,
     Item: (props) => <ChecklistItem {...props} />,
   },
   Code,
@@ -209,11 +209,11 @@ const mdxComponents: MdxComponents = {
   Image: (props: React.ComponentPropsWithoutRef<typeof Image>) => (
     <Image mb="5" mt="4" {...props} />
   ),
-  Marker: (props) => <Marker style={{ marginRight: "0.5em" }} {...props} />,
+  Marker: (props) => <Marker style={{ marginRight: '0.5em' }} {...props} />,
   PermanentLink: ({
     children,
-    href = "",
-    label = "",
+    href = '',
+    label = '',
   }: {
     children?: React.ReactNode;
     href?: string;
@@ -270,7 +270,7 @@ const ChecklistItem = ({ children, id }: ChecklistItemProps) => {
   const [value, setValue] = React.useState(false);
 
   React.useEffect(() => {
-    const states = window.localStorage.getItem("@workos/checklist");
+    const states = window.localStorage.getItem('@workos/checklist');
     if (states) {
       const [currentState] = JSON.parse(states).filter(
         (state: ChecklistItemState) => state.id === id,
@@ -284,9 +284,11 @@ const ChecklistItem = ({ children, id }: ChecklistItemProps) => {
 
   const handleChange = (state: boolean) => {
     let checklist: ChecklistItemState[] = [];
-    const states = window.localStorage.getItem("@workos/checklist");
+    const states = window.localStorage.getItem('@workos/checklist');
     const checklistStates = states ? JSON.parse(states) : [];
-    const [currentState] = checklistStates.filter((state: ChecklistItemState) => state.id === id);
+    const [currentState] = checklistStates.filter(
+      (state: ChecklistItemState) => state.id === id,
+    );
 
     if (currentState) {
       checklist = checklistStates.map((checklistItem: ChecklistItemState) => {
@@ -300,7 +302,7 @@ const ChecklistItem = ({ children, id }: ChecklistItemProps) => {
       checklist = [...checklistStates, { id, state }];
     }
 
-    window.localStorage.setItem("@workos/checklist", JSON.stringify(checklist));
+    window.localStorage.setItem('@workos/checklist', JSON.stringify(checklist));
     setValue(state);
   };
 
@@ -315,19 +317,19 @@ const ChecklistItem = ({ children, id }: ChecklistItemProps) => {
 };
 
 export function getTextFromReactElement(node: React.ReactNode): string {
-  if (typeof node === "string" || typeof node === "number") {
+  if (typeof node === 'string' || typeof node === 'number') {
     return node.toString();
   }
 
   if (Array.isArray(node)) {
-    return node.map(getTextFromReactElement).join("");
+    return node.map(getTextFromReactElement).join('');
   }
 
-  if (isReactElement(node, ["children"])) {
+  if (isReactElement(node, ['children'])) {
     return getTextFromReactElement(node.props.children);
   }
 
-  return "";
+  return '';
 }
 
 export { mdxComponents };
