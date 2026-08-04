@@ -1,4 +1,5 @@
-import type { LoaderFunctionArgs } from "react-router";
+import type { Route } from "./+types/directory-activity";
+
 import { useLoaderData, useRevalidator } from "react-router";
 import type { ProxyLogEntry } from "../../../workers/shared/types";
 import { withD1Retry } from "../../../workers/shared/db";
@@ -14,7 +15,7 @@ import * as Table from "../../vendor/design-system/components/table";
 import { Text } from "../../vendor/design-system/components/text";
 import { CardHeader, formatBody, StatusCodeBadge } from "./ui";
 
-export async function loader({ context, params }: LoaderFunctionArgs) {
+export async function loader({ context, params }: Route.LoaderArgs) {
   const { results } = await withD1Retry(() =>
     context.cloudflare.env.DB.prepare(
       "SELECT * FROM proxy_log WHERE directory_id = ? ORDER BY id DESC LIMIT 100",

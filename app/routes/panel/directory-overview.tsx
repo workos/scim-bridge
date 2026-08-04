@@ -1,5 +1,6 @@
+import type { Route } from "./+types/directory-overview";
 import { useEffect, useRef, useState } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+
 import {
   Form,
   redirect,
@@ -79,7 +80,7 @@ const MODE_DETAILS: { value: Mode; description: string }[] = [
   },
 ];
 
-export async function loader({ context, params }: LoaderFunctionArgs) {
+export async function loader({ context, params }: Route.LoaderArgs) {
   const { env } = context.cloudflare;
   const directory = await getDirectoryById(env.DB, params.id ?? "");
   if (!directory) {
@@ -150,7 +151,7 @@ export async function action({
   context,
   params,
   request,
-}: ActionFunctionArgs): Promise<Response | OverviewActionData> {
+}: Route.ActionArgs): Promise<Response | OverviewActionData> {
   const { env } = context.cloudflare;
   const directory = await getDirectoryById(env.DB, params.id ?? "");
   if (!directory) {

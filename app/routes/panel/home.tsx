@@ -1,4 +1,5 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import type { Route } from "./+types/home";
+
 import { Form, redirect, useActionData, useLoaderData, useNavigation } from "react-router";
 import {
   getConfig,
@@ -105,7 +106,7 @@ function directoryError(error: unknown): string {
   return message;
 }
 
-export async function loader({ context }: LoaderFunctionArgs) {
+export async function loader({ context }: Route.LoaderArgs) {
   const { env } = context.cloudflare;
   const [directories, proxyPublicUrl, nativePublicUrl, nativeScimToken, mockWorkosToken] =
     await Promise.all([
@@ -125,7 +126,7 @@ export async function loader({ context }: LoaderFunctionArgs) {
   };
 }
 
-export async function action({ context, request }: ActionFunctionArgs) {
+export async function action({ context, request }: Route.ActionArgs) {
   const { env } = context.cloudflare;
   const form = await request.formData();
   const intent = form.get("intent");

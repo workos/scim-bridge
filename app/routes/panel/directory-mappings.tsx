@@ -1,4 +1,5 @@
-import type { LoaderFunctionArgs } from "react-router";
+import type { Route } from "./+types/directory-mappings";
+
 import { useLoaderData, useRevalidator } from "react-router";
 import type { IdMapping } from "../../../workers/shared/types";
 import { getDirectoryById, withD1Retry } from "../../../workers/shared/db";
@@ -48,7 +49,7 @@ async function fetchWorkosIndex(
   }
 }
 
-export async function loader({ context, params }: LoaderFunctionArgs) {
+export async function loader({ context, params }: Route.LoaderArgs) {
   const { env } = context.cloudflare;
   const directoryId = params.id ?? "";
   const [{ results }, directory] = await Promise.all([

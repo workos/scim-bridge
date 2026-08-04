@@ -1,4 +1,5 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import type { Route } from "./+types/live";
+
 import { useEffect, useState } from "react";
 import { Form, useActionData, useLoaderData, useNavigation, useRevalidator } from "react-router";
 import type { Directory, ListenerEvent, Mode } from "../../../workers/shared/types";
@@ -133,7 +134,7 @@ async function cleanWorkosDirectory(
   }
 }
 
-export async function loader({ context }: LoaderFunctionArgs) {
+export async function loader({ context }: Route.LoaderArgs) {
   const { env } = context.cloudflare;
   const directories = await listDirectories(env.DB);
   const directory = directories[0] ?? null;
@@ -199,7 +200,7 @@ interface AutoStateRow {
   tick_count: number;
 }
 
-export async function action({ context, request }: ActionFunctionArgs) {
+export async function action({ context, request }: Route.ActionArgs) {
   const { env } = context.cloudflare;
   const form = await request.formData();
   const intent = String(form.get("intent") ?? "");
