@@ -3,8 +3,13 @@ import { afterAll, describe, expect, it } from "vitest";
 import { runMigrations, runMigrationsSync } from "../server/db/migrate";
 import { openPostgres, PostgresDatastore, PostgresMigrator } from "../server/db/postgres";
 import { SqliteDatastore, SqliteMigrator } from "../server/db/sqlite";
-import { getConfig, listDirectories, setConfigIfAbsent } from "../workers/shared/db";
-import type { Datastore } from "../workers/shared/datastore";
+import {
+  getConfig,
+  listDirectories,
+  setConfigIfAbsent,
+  withDatastoreRetry,
+} from "../workers/shared/db";
+import { TransientDatastoreError, type Datastore } from "../workers/shared/datastore";
 import { seedGeneratedTokens } from "../server/config";
 import { insertDirectory } from "../workers/shared/db";
 
@@ -206,6 +211,59 @@ describe.each(drivers)("$name driver", ({ open }) => {
     await expect(
       db.prepare("SELECT value FROM poc_config WHERE key = ? AND value = ?").bind("k").first(),
     ).rejects.toThrow();
+  });
+
+  it("rethrows an error the driver did not classify, on the first attempt", async () => {
+    const db = await open();
+    let attempts = 0;
+
+    // Broken SQL is not transient, and the retry must not sit on it: six attempts
+    // of latency in front of the real error is worse for whoever reads the log
+    // than no retry at all. Asserting the COUNT is the point — "rejects" alone
+    // would still pass with a substring fallback quietly retrying six times.
+    await expect(
+      withDatastoreRetry(async () => {
+        attempts += 1;
+        return db.prepare("SLECT nonsense FROM poc_config").first();
+      }),
+    ).rejects.toThrow();
+
+    expect(attempts).toBe(1);
+  });
+
+  it("does not retry an unclassified error whose message merely looks transient", async () => {
+    let attempts = 0;
+
+    // This is the case the removed substring fallback got wrong: it matched
+    // `internal error`, so a fatal error phrased this way was retried six times
+    // and surfaced ~420ms late. The driver never classified it, so it must not be
+    // retried — and asserting the attempt count is what distinguishes this from
+    // the fallback still being there.
+    await expect(
+      withDatastoreRetry(async () => {
+        attempts += 1;
+        throw new Error("internal error: constraint violated, database is locked out");
+      }),
+    ).rejects.toThrow("internal error");
+
+    expect(attempts).toBe(1);
+  });
+
+  it("retries what the driver did classify, and can succeed", async () => {
+    let attempts = 0;
+
+    const result = await withDatastoreRetry(async () => {
+      attempts += 1;
+      if (attempts < 3) {
+        throw new TransientDatastoreError(
+          Object.assign(new Error("connection terminated unexpectedly"), { code: "ECONNRESET" }),
+        );
+      }
+      return "recovered";
+    });
+
+    expect(result).toBe("recovered");
+    expect(attempts).toBe(3);
   });
 
   it("binds a parameter containing a question mark verbatim", async () => {
