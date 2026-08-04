@@ -4,9 +4,11 @@ import {
   listDirectories,
   reconcileDirectories,
   setConfig,
+  setConfigIfAbsent,
   setDirectoryLogPersistence,
   type EnvDirectory,
 } from "../workers/shared/db";
+import { rememberClientToken, storeClientToken } from "../workers/shared/client-tokens";
 import { newScimToken } from "../workers/shared/ids";
 import type { PocEnv } from "../workers/shared/types";
 
@@ -20,6 +22,15 @@ export const APP_ROLES = ["bridge", "native-app"] as const;
 export type AppRole = (typeof APP_ROLES)[number];
 
 /**
+ * Which datastore backs the container. `sqlite` (the default) is the documented
+ * docker-compose deployment: one file on a mounted volume. `postgres` is for the
+ * deployments that already run RDS/Aurora and want the database backed up by the
+ * machinery they already own (ENT-6753).
+ */
+export const DATABASE_DRIVERS = ["sqlite", "postgres"] as const;
+export type DatabaseDriver = (typeof DATABASE_DRIVERS)[number];
+
+/**
  * Global configuration for the container, read from environment variables.
  * Per-directory settings (native/WorkOS endpoints + tokens, mode) are imported
  * through the control panel and stored per directory; only process-wide
@@ -28,6 +39,10 @@ export type AppRole = (typeof APP_ROLES)[number];
 export interface AppConfig {
   /** Which half of the deployment this container runs. */
   role: AppRole;
+  /** Which datastore driver backs `env.DB`. */
+  databaseDriver: DatabaseDriver;
+  /** `postgres` driver: the connection string (DATABASE_URL). */
+  databaseUrl: string | null;
   /** HTTP port the server listens on. */
   port: number;
   /** Path to the SQLite database file (mount a volume here to persist). */
@@ -59,6 +74,16 @@ function bool(value: string | undefined, fallback = false): boolean {
 
 function trimTrailingSlash(url: string): string {
   return url.replace(/\/+$/, "");
+}
+
+function databaseDriver(value: string | undefined): DatabaseDriver {
+  const driver = value?.trim() || "sqlite";
+  if (!(DATABASE_DRIVERS as readonly string[]).includes(driver)) {
+    throw new Error(
+      `DATABASE_DRIVER must be one of ${DATABASE_DRIVERS.join(", ")}; received "${value}".`,
+    );
+  }
+  return driver as DatabaseDriver;
 }
 
 function appRole(value: string | undefined): AppRole {
@@ -111,6 +136,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const databasePath = env.DATABASE_PATH?.trim() || "/data/scim-bridge.db";
   const publicUrl = trimTrailingSlash(env.PUBLIC_URL?.trim() || `http://127.0.0.1:${port}`);
   const bridgeStatusUrl = env.BRIDGE_STATUS_URL?.trim();
+  const driver = databaseDriver(env.DATABASE_DRIVER);
+  const databaseUrl = env.DATABASE_URL?.trim() || null;
+  // Failing at boot beats a driver that cannot connect: the panel would serve
+  // 500s with the real cause buried in a stack trace.
+  if (driver === "postgres" && !databaseUrl) {
+    throw new Error("DATABASE_URL is required when DATABASE_DRIVER=postgres.");
+  }
   const webhookSecret = env.WEBHOOK_SECRET?.trim() || null;
   // Refuse to boot rather than serve /webhooks/dsync unauthenticated: the
   // listener skips signature verification when it has no secret, so an
@@ -126,6 +158,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   return {
     role,
+    databaseDriver: driver,
+    databaseUrl,
     port,
     databasePath,
     publicUrl,
@@ -208,10 +242,15 @@ export async function seedConfig(env: PocEnv, config: AppConfig): Promise<void> 
  * secret; the app owns them now. Only ever written when absent, so a restart
  * never rotates a token an IdP or the panel is already using.
  */
-export async function seedGeneratedTokens(env: PocEnv): Promise<void> {
+export async function seedGeneratedTokens(env: PocEnv): Promise<Record<string, string>> {
+  const landed: Record<string, string> = {};
   for (const key of ["native.scim_token", "mock_workos.scim_token"]) {
-    if (!(await getConfig(env.DB, key))) await setConfig(env.DB, key, newScimToken());
+    // Insert-if-absent and read back: with two instances booting at once (the
+    // point of the Postgres driver) a check-then-write would let the loser's
+    // token reach a directory row while the winner's sits in config.
+    landed[key] = await setConfigIfAbsent(env.DB, key, newScimToken());
   }
+  return landed;
 }
 
 /**
@@ -251,6 +290,11 @@ export async function seedNativeAppConfig(env: PocEnv, config: AppConfig): Promi
  */
 export async function seedNativeAppDirectories(env: PocEnv, config: AppConfig): Promise<void> {
   await reconcileDirectories(env.DB, config.directories);
+  // The rows keep only a digest (ENT-6742), so the status client gets its copy from
+  // the environment we just read. In-process: this runs on every boot.
+  for (const directory of config.directories) {
+    rememberClientToken(directory.workos_directory_id, directory.proxy_token);
+  }
 }
 
 /**
@@ -263,13 +307,18 @@ export async function seedDemoDirectory(env: PocEnv, config: AppConfig): Promise
   const existing = await listDirectories(env.DB);
   if (existing.length > 0) return;
   const base = loopbackBase(config);
-  const id = await insertDirectory(env.DB, {
+  const { id, proxy_token } = await insertDirectory(env.DB, {
     name: "Demo directory",
     native_url: `${base}/__demo/native/scim/v2`,
     native_token: (await getConfig(env.DB, "native.scim_token")) ?? "",
     workos_url: `${base}/__demo/native/mock-workos/scim/v2`,
     workos_token: (await getConfig(env.DB, "mock_workos.scim_token")) ?? "",
   });
+  // The bundled IdP simulator drives this directory, so it needs the token the way
+  // Okta would have it: its own stored copy. Persisted rather than in-process,
+  // because this seed is a no-op on the next boot (a directory already exists) and
+  // the simulator still has to work.
+  await storeClientToken(env.DB, id, proxy_token);
   // The demo runs one directory you actively watch, so persist its logs.
   await setDirectoryLogPersistence(env.DB, id, true);
 }

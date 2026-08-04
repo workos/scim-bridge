@@ -1,7 +1,8 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import type { Route } from "./+types/native";
+
 import { Form, useLoaderData, useNavigation, useRevalidator } from "react-router";
 import type { ListenerEvent } from "../../../workers/shared/types";
-import { clearNativeDirectory, withD1Retry } from "../../../workers/shared/db";
+import { clearNativeDirectory, withDatastoreRetry } from "../../../workers/shared/db";
 import * as AlertDialog from "../../vendor/design-system/components/alert-dialog";
 import { Badge } from "../../vendor/design-system/components/badge";
 import { Button } from "../../vendor/design-system/components/button";
@@ -15,7 +16,7 @@ import * as Table from "../../vendor/design-system/components/table";
 import { Text } from "../../vendor/design-system/components/text";
 import { CardHeader } from "./ui";
 
-export async function action({ context, request }: ActionFunctionArgs) {
+export async function action({ context, request }: Route.ActionArgs) {
   const { env } = context.cloudflare;
   const form = await request.formData();
   if (form.get("intent") === "reset-native") {
@@ -48,27 +49,27 @@ const ACTION_BADGE_COLORS = {
   ignored: "yellow",
 } as const;
 
-export async function loader({ context }: LoaderFunctionArgs) {
+export async function loader({ context }: Route.LoaderArgs) {
   const { env } = context.cloudflare;
   const [users, groups, members, events] = await Promise.all([
-    withD1Retry(() =>
+    withDatastoreRetry(() =>
       env.DB.prepare(
         "SELECT id, user_name, external_id, active FROM native_users ORDER BY user_name",
       ).all<NativeUserRow>(),
     ),
-    withD1Retry(() =>
+    withDatastoreRetry(() =>
       env.DB.prepare(
         "SELECT id, display_name, external_id FROM native_groups ORDER BY display_name, id",
       ).all<NativeGroupRow>(),
     ),
-    withD1Retry(() =>
+    withDatastoreRetry(() =>
       env.DB.prepare(
         "SELECT gm.group_id AS group_id, u.user_name AS user_name " +
           "FROM native_group_members gm JOIN native_users u ON u.id = gm.user_id " +
           "ORDER BY u.user_name",
       ).all<MemberRow>(),
     ),
-    withD1Retry(() =>
+    withDatastoreRetry(() =>
       env.DB.prepare(
         "SELECT * FROM listener_events ORDER BY id DESC LIMIT 50",
       ).all<ListenerEvent>(),

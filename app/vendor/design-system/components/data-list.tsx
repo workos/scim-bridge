@@ -1,3 +1,5 @@
+// @ts-nocheck — vendored from workos/packages/design-system by
+// `npm run sync-design-system`, which overwrites this file. Edit it upstream.
 import * as ThemesDataList from "@radix-ui/themes/dist/esm/components/data-list.js";
 import * as React from "react";
 

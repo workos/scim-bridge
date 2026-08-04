@@ -1,10 +1,10 @@
 import type { Datastore } from "../shared/datastore";
 import type { IdpActivity, IdpAutoState, IdpGroup, IdpUser, Origin } from "./types";
-import { withD1Retry } from "../shared/db";
+import { withDatastoreRetry } from "../shared/db";
 import { newIdpGroupId, newIdpUserId } from "../shared/ids";
 
 export async function listUsers(db: Datastore, directoryId: string): Promise<IdpUser[]> {
-  const { results } = await withD1Retry(() =>
+  const { results } = await withDatastoreRetry(() =>
     db
       .prepare("SELECT * FROM idp_users WHERE directory_id = ? ORDER BY created_at, user_name")
       .bind(directoryId)
@@ -14,7 +14,7 @@ export async function listUsers(db: Datastore, directoryId: string): Promise<Idp
 }
 
 export async function listGroups(db: Datastore, directoryId: string): Promise<IdpGroup[]> {
-  const { results } = await withD1Retry(() =>
+  const { results } = await withDatastoreRetry(() =>
     db
       .prepare("SELECT * FROM idp_groups WHERE directory_id = ? ORDER BY created_at, display_name")
       .bind(directoryId)
@@ -27,7 +27,7 @@ export async function listMembers(
   db: Datastore,
   directoryId: string,
 ): Promise<{ group_id: string; user_id: string }[]> {
-  const { results } = await withD1Retry(() =>
+  const { results } = await withDatastoreRetry(() =>
     db
       .prepare(
         "SELECT m.group_id, m.user_id FROM idp_group_members m " +
@@ -40,13 +40,13 @@ export async function listMembers(
 }
 
 export async function getUser(db: Datastore, id: string): Promise<IdpUser | null> {
-  return withD1Retry(() =>
+  return withDatastoreRetry(() =>
     db.prepare("SELECT * FROM idp_users WHERE id = ?").bind(id).first<IdpUser>(),
   );
 }
 
 export async function getGroup(db: Datastore, id: string): Promise<IdpGroup | null> {
-  return withD1Retry(() =>
+  return withDatastoreRetry(() =>
     db.prepare("SELECT * FROM idp_groups WHERE id = ?").bind(id).first<IdpGroup>(),
   );
 }
@@ -56,7 +56,7 @@ export async function userByUserName(
   directoryId: string,
   userName: string,
 ): Promise<IdpUser | null> {
-  return withD1Retry(() =>
+  return withDatastoreRetry(() =>
     db
       .prepare("SELECT * FROM idp_users WHERE directory_id = ? AND user_name = ?")
       .bind(directoryId, userName)
@@ -69,7 +69,7 @@ export async function groupByDisplayName(
   directoryId: string,
   displayName: string,
 ): Promise<IdpGroup | null> {
-  return withD1Retry(() =>
+  return withDatastoreRetry(() =>
     db
       .prepare("SELECT * FROM idp_groups WHERE directory_id = ? AND display_name = ?")
       .bind(directoryId, displayName)
@@ -84,7 +84,7 @@ export async function insertUser(
     "directory_id" | "user_name" | "external_id" | "given_name" | "family_name" | "active"
   >,
 ): Promise<IdpUser> {
-  return withD1Retry(
+  return withDatastoreRetry(
     () =>
       db
         .prepare(
@@ -108,7 +108,7 @@ export async function insertGroup(
   db: Datastore,
   group: Pick<IdpGroup, "directory_id" | "display_name" | "external_id">,
 ): Promise<IdpGroup> {
-  return withD1Retry(
+  return withDatastoreRetry(
     () =>
       db
         .prepare(
@@ -125,7 +125,7 @@ export async function setUserScimId(
   scimId: string | null,
   status: number,
 ): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "UPDATE idp_users SET scim_id = COALESCE(?, scim_id), last_status = ?, updated_at = datetime('now') WHERE id = ?",
@@ -141,7 +141,7 @@ export async function setGroupScimId(
   scimId: string | null,
   status: number,
 ): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "UPDATE idp_groups SET scim_id = COALESCE(?, scim_id), last_status = ?, updated_at = datetime('now') WHERE id = ?",
@@ -157,7 +157,7 @@ export async function setUserActive(
   active: number,
   status: number,
 ): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "UPDATE idp_users SET active = ?, last_status = ?, updated_at = datetime('now') WHERE id = ?",
@@ -174,7 +174,7 @@ export async function setUserName(
   familyName: string,
   status: number,
 ): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "UPDATE idp_users SET given_name = ?, family_name = ?, last_status = ?, updated_at = datetime('now') WHERE id = ?",
@@ -190,7 +190,7 @@ export async function renameGroup(
   displayName: string,
   status: number,
 ): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "UPDATE idp_groups SET display_name = ?, last_status = ?, updated_at = datetime('now') WHERE id = ?",
@@ -201,7 +201,7 @@ export async function renameGroup(
 }
 
 export async function deleteUser(db: Datastore, id: string): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db.batch([
       db.prepare("DELETE FROM idp_group_members WHERE user_id = ?").bind(id),
       db.prepare("DELETE FROM idp_users WHERE id = ?").bind(id),
@@ -210,7 +210,7 @@ export async function deleteUser(db: Datastore, id: string): Promise<void> {
 }
 
 export async function deleteGroup(db: Datastore, id: string): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db.batch([
       db.prepare("DELETE FROM idp_group_members WHERE group_id = ?").bind(id),
       db.prepare("DELETE FROM idp_groups WHERE id = ?").bind(id),
@@ -219,16 +219,19 @@ export async function deleteGroup(db: Datastore, id: string): Promise<void> {
 }
 
 export async function addMember(db: Datastore, groupId: string, userId: string): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
-      .prepare("INSERT OR IGNORE INTO idp_group_members (group_id, user_id) VALUES (?, ?)")
+      .prepare(
+        "INSERT INTO idp_group_members (group_id, user_id) VALUES (?, ?) " +
+          "ON CONFLICT (group_id, user_id) DO NOTHING",
+      )
       .bind(groupId, userId)
       .run(),
   );
 }
 
 export async function removeMember(db: Datastore, groupId: string, userId: string): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare("DELETE FROM idp_group_members WHERE group_id = ? AND user_id = ?")
       .bind(groupId, userId)
@@ -237,7 +240,7 @@ export async function removeMember(db: Datastore, groupId: string, userId: strin
 }
 
 export async function memberIds(db: Datastore, groupId: string): Promise<string[]> {
-  const { results } = await withD1Retry(() =>
+  const { results } = await withDatastoreRetry(() =>
     db
       .prepare("SELECT user_id FROM idp_group_members WHERE group_id = ?")
       .bind(groupId)
@@ -260,7 +263,7 @@ export async function logActivity(
     detail?: string | null;
   },
 ): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "INSERT INTO idp_activity (directory_id, origin, action, subject, method, path, status, ok, detail) " +
@@ -285,7 +288,7 @@ export async function getAutoState(
   db: Datastore,
   directoryId: string,
 ): Promise<IdpAutoState | null> {
-  return withD1Retry(() =>
+  return withDatastoreRetry(() =>
     db
       .prepare("SELECT * FROM idp_auto_state WHERE directory_id = ?")
       .bind(directoryId)
@@ -302,7 +305,7 @@ export async function setAutoState(
   const running = patch.running ?? (current ? current.running === 1 : false);
   const interval = patch.interval_ms ?? current?.interval_ms ?? 4000;
   const ticks = (current?.tick_count ?? 0) + (patch.tickDelta ?? 0);
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "INSERT INTO idp_auto_state (directory_id, running, interval_ms, tick_count, updated_at) " +
@@ -320,7 +323,7 @@ export async function activity(
   directoryId: string,
   limit = 50,
 ): Promise<IdpActivity[]> {
-  const { results } = await withD1Retry(() =>
+  const { results } = await withDatastoreRetry(() =>
     db
       .prepare("SELECT * FROM idp_activity WHERE directory_id = ? ORDER BY id DESC LIMIT ?")
       .bind(directoryId, limit)

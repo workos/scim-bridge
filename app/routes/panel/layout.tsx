@@ -1,4 +1,5 @@
-import type { LoaderFunctionArgs, MetaFunction } from "react-router";
+import type { Route } from "./+types/layout";
+import type { MetaFunction } from "react-router";
 import { Link, Outlet, redirect, useLoaderData, useLocation } from "react-router";
 import { Badge } from "../../vendor/design-system/components/badge";
 import { Box } from "../../vendor/design-system/components/box";
@@ -17,7 +18,7 @@ export const meta: MetaFunction = () => [
 
 const DEMO_PATHS = ["/panel/live", "/panel/native", "/panel/listener", "/panel/idp"];
 
-export function loader({ context, request }: LoaderFunctionArgs) {
+export function loader({ context, request }: Route.LoaderArgs) {
   const { demoMode } = context.cloudflare;
   if (!demoMode) {
     const { pathname } = new URL(request.url);

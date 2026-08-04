@@ -1,4 +1,4 @@
-import { withD1Retry } from "../shared/db";
+import { withDatastoreRetry } from "../shared/db";
 import type { Datastore } from "../shared/datastore";
 
 export interface ScimTables {
@@ -58,13 +58,13 @@ export class ScimStore {
   ) {}
 
   async userById(id: string): Promise<UserRow | null> {
-    return withD1Retry(() =>
+    return withDatastoreRetry(() =>
       this.db.prepare(`SELECT * FROM ${this.tables.users} WHERE id = ?`).bind(id).first<UserRow>(),
     );
   }
 
   async userByUserName(userName: string): Promise<UserRow | null> {
-    return withD1Retry(() =>
+    return withDatastoreRetry(() =>
       this.db
         .prepare(`SELECT * FROM ${this.tables.users} WHERE lower(user_name) = lower(?)`)
         .bind(userName)
@@ -73,7 +73,7 @@ export class ScimStore {
   }
 
   async userByExternalId(externalId: string): Promise<UserRow | null> {
-    return withD1Retry(() =>
+    return withDatastoreRetry(() =>
       this.db
         .prepare(`SELECT * FROM ${this.tables.users} WHERE external_id = ?`)
         .bind(externalId)
@@ -96,7 +96,7 @@ export class ScimStore {
     active: boolean;
     resource: ScimResource;
   }): Promise<void> {
-    await withD1Retry(() =>
+    await withDatastoreRetry(() =>
       this.db
         .prepare(
           `INSERT INTO ${this.tables.users} (id, user_name, external_id, active, resource) ` +
@@ -117,17 +117,17 @@ export class ScimStore {
   }
 
   async deleteUser(id: string): Promise<boolean> {
-    await withD1Retry(() =>
+    await withDatastoreRetry(() =>
       this.db.prepare(`DELETE FROM ${this.tables.members} WHERE user_id = ?`).bind(id).run(),
     );
-    const result = await withD1Retry(() =>
+    const result = await withDatastoreRetry(() =>
       this.db.prepare(`DELETE FROM ${this.tables.users} WHERE id = ?`).bind(id).run(),
     );
     return result.meta.changes > 0;
   }
 
   async groupById(id: string): Promise<GroupRow | null> {
-    return withD1Retry(() =>
+    return withDatastoreRetry(() =>
       this.db
         .prepare(`SELECT * FROM ${this.tables.groups} WHERE id = ?`)
         .bind(id)
@@ -136,7 +136,7 @@ export class ScimStore {
   }
 
   async groupByDisplayName(displayName: string): Promise<GroupRow | null> {
-    return withD1Retry(() =>
+    return withDatastoreRetry(() =>
       this.db
         .prepare(`SELECT * FROM ${this.tables.groups} WHERE lower(display_name) = lower(?)`)
         .bind(displayName)
@@ -145,7 +145,7 @@ export class ScimStore {
   }
 
   async groupByExternalId(externalId: string): Promise<GroupRow | null> {
-    return withD1Retry(() =>
+    return withDatastoreRetry(() =>
       this.db
         .prepare(`SELECT * FROM ${this.tables.groups} WHERE external_id = ?`)
         .bind(externalId)
@@ -167,7 +167,7 @@ export class ScimStore {
     externalId: string | null;
     resource: ScimResource;
   }): Promise<void> {
-    await withD1Retry(() =>
+    await withDatastoreRetry(() =>
       this.db
         .prepare(
           `INSERT INTO ${this.tables.groups} (id, display_name, external_id, resource) ` +
@@ -182,17 +182,17 @@ export class ScimStore {
   }
 
   async deleteGroup(id: string): Promise<boolean> {
-    await withD1Retry(() =>
+    await withDatastoreRetry(() =>
       this.db.prepare(`DELETE FROM ${this.tables.members} WHERE group_id = ?`).bind(id).run(),
     );
-    const result = await withD1Retry(() =>
+    const result = await withDatastoreRetry(() =>
       this.db.prepare(`DELETE FROM ${this.tables.groups} WHERE id = ?`).bind(id).run(),
     );
     return result.meta.changes > 0;
   }
 
   async membersOf(groupId: string): Promise<MemberRef[]> {
-    const { results } = await withD1Retry(() =>
+    const { results } = await withDatastoreRetry(() =>
       this.db
         .prepare(
           `SELECT m.user_id AS value, u.user_name AS display FROM ${this.tables.members} m ` +
@@ -208,9 +208,12 @@ export class ScimStore {
   }
 
   async addMember(groupId: string, userId: string): Promise<boolean> {
-    const result = await withD1Retry(() =>
+    const result = await withDatastoreRetry(() =>
       this.db
-        .prepare(`INSERT OR IGNORE INTO ${this.tables.members} (group_id, user_id) VALUES (?, ?)`)
+        .prepare(
+          `INSERT INTO ${this.tables.members} (group_id, user_id) VALUES (?, ?) ` +
+            "ON CONFLICT (group_id, user_id) DO NOTHING",
+        )
         .bind(groupId, userId)
         .run(),
     );
@@ -218,7 +221,7 @@ export class ScimStore {
   }
 
   async removeMember(groupId: string, userId: string): Promise<boolean> {
-    const result = await withD1Retry(() =>
+    const result = await withDatastoreRetry(() =>
       this.db
         .prepare(`DELETE FROM ${this.tables.members} WHERE group_id = ? AND user_id = ?`)
         .bind(groupId, userId)
@@ -228,7 +231,7 @@ export class ScimStore {
   }
 
   async setMembers(groupId: string, userIds: string[]): Promise<void> {
-    await withD1Retry(() =>
+    await withDatastoreRetry(() =>
       this.db.prepare(`DELETE FROM ${this.tables.members} WHERE group_id = ?`).bind(groupId).run(),
     );
     for (const userId of new Set(userIds)) {
@@ -248,13 +251,13 @@ export class ScimStore {
         : `WHERE ${filter.column} = ?`
       : "";
     const binds = filter ? [filter.value] : [];
-    const totalRow = await withD1Retry(() =>
+    const totalRow = await withDatastoreRetry(() =>
       this.db
         .prepare(`SELECT COUNT(*) AS n FROM ${table} ${where}`)
         .bind(...binds)
         .first<{ n: number }>(),
     );
-    const { results } = await withD1Retry(() =>
+    const { results } = await withDatastoreRetry(() =>
       this.db
         .prepare(`SELECT * FROM ${table} ${where} ORDER BY created_at, id LIMIT ? OFFSET ?`)
         .bind(...binds, limit, offset)

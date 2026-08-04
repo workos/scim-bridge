@@ -1,5 +1,6 @@
+import type { Route } from "./+types/directory-overview";
 import { useEffect, useRef, useState } from "react";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+
 import {
   Form,
   redirect,
@@ -14,12 +15,14 @@ import {
   getConfig,
   getDirectoryById,
   setDirectoryLogPersistence,
+  rotateProxyToken,
   setDirectoryMode,
   setDirectoryNative,
   setDirectoryWorkos,
   setDirectoryWorkosDirectoryId,
-  withD1Retry,
+  withDatastoreRetry,
 } from "../../../workers/shared/db";
+import { publishMintedToken } from "../../../workers/shared/client-tokens";
 import type { BackfillSummary, Mode } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
 import * as AlertDialog from "../../vendor/design-system/components/alert-dialog";
@@ -59,6 +62,10 @@ interface OverviewActionData {
   reconcile?: BackfillSummary;
   health?: HealthResult;
   topology?: TopologyResult;
+  /** A freshly minted proxy token, in the clear. Present only in the response to a
+   *  rotate, and never persisted anywhere readable — the row keeps a digest
+   *  (ENT-6742), so this render is the operator's only chance to copy it. */
+  rotatedToken?: string;
 }
 
 const MODE_DETAILS: { value: Mode; description: string }[] = [
@@ -79,7 +86,7 @@ const MODE_DETAILS: { value: Mode; description: string }[] = [
   },
 ];
 
-export async function loader({ context, params }: LoaderFunctionArgs) {
+export async function loader({ context, params }: Route.LoaderArgs) {
   const { env } = context.cloudflare;
   const directory = await getDirectoryById(env.DB, params.id ?? "");
   if (!directory) {
@@ -150,7 +157,7 @@ export async function action({
   context,
   params,
   request,
-}: ActionFunctionArgs): Promise<Response | OverviewActionData> {
+}: Route.ActionArgs): Promise<Response | OverviewActionData> {
   const { env } = context.cloudflare;
   const directory = await getDirectoryById(env.DB, params.id ?? "");
   if (!directory) {
@@ -169,6 +176,18 @@ export async function action({
     }
     await setDirectoryMode(env.DB, directory.id, mode as Mode);
     return {};
+  }
+
+  if (intent === "rotate-proxy-token") {
+    const token = await rotateProxyToken(env.DB, directory.id);
+    // The old token stopped working the moment that returned, so a bundled
+    // simulator still holding it would start failing every request.
+    await publishMintedToken(env.DB, directory.id, token, {
+      demoMode: context.cloudflare.demoMode,
+    });
+    // Returned rather than redirected: a redirect would drop the plaintext, and
+    // this response is the only place it exists (ENT-6742).
+    return { rotatedToken: token };
   }
 
   if (intent === "set-log-persistence") {
@@ -257,7 +276,7 @@ export async function action({
   }
 
   if (intent === "delete-directory") {
-    await withD1Retry(() =>
+    await withDatastoreRetry(() =>
       env.DB.batch([
         env.DB.prepare("DELETE FROM id_mappings WHERE directory_id = ?").bind(directory.id),
         env.DB.prepare("DELETE FROM proxy_log WHERE directory_id = ?").bind(directory.id),
@@ -551,12 +570,37 @@ export default function DirectoryOverview() {
               <Text color="gray" size="2" weight="medium">
                 Bearer token
               </Text>
-              <Flex align="center" gap="2">
-                <Code size="2" className="break-all">
-                  {directory.proxy_token}
-                </Code>
-                <CopyButton value={directory.proxy_token} />
-              </Flex>
+              {actionData?.rotatedToken ? (
+                <Flex align="center" gap="2">
+                  <Code size="2" className="break-all">
+                    {actionData.rotatedToken}
+                  </Code>
+                  <CopyButton value={actionData.rotatedToken} />
+                </Flex>
+              ) : (
+                <Flex align="center" gap="2">
+                  <Code size="2">
+                    {directory.proxy_token_hint
+                      ? `…${directory.proxy_token_hint}`
+                      : "not recoverable"}
+                  </Code>
+                  <Form method="post">
+                    <input type="hidden" name="intent" value="rotate-proxy-token" />
+                    <Button
+                      loading={pendingIntent === "rotate-proxy-token"}
+                      type="submit"
+                      variant="soft"
+                    >
+                      Rotate
+                    </Button>
+                  </Form>
+                </Flex>
+              )}
+              <Text color="gray" size="1">
+                {actionData?.rotatedToken
+                  ? "Copy it now — this is the only time it is shown. The previous token has already stopped working."
+                  : "Stored as a hash, so it can't be shown again. Rotating mints a new one and immediately invalidates this one."}
+              </Text>
             </Flex>
           </Grid>
         </Flex>

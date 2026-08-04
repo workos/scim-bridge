@@ -1,3 +1,5 @@
+// @ts-nocheck — vendored from workos/packages/design-system by
+// `npm run sync-design-system`, which overwrites this file. Edit it upstream.
 import { autocompletion, Completion, CompletionContext } from "@codemirror/autocomplete";
 import { Extension } from "@codemirror/state";
 import cssProperties from "../../generated/css-properties.json";

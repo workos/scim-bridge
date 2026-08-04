@@ -136,12 +136,47 @@ npm run typecheck:gate  # asserts the gate rejects a deliberate type error
 npm run typecheck:app   # the control panel, which is not gated yet
 ```
 
+The test suite runs against the SQLite driver by default. Point
+`TEST_DATABASE_URL` at a Postgres server and it also runs the datastore
+conformance and schema-parity cases; add `TEST_ENGINE=postgres` and the **whole**
+suite runs on Postgres instead:
+
+```bash
+docker run -d --rm --name sb-pg -e POSTGRES_PASSWORD=test -e POSTGRES_DB=scimtest \
+  -p 55432:5432 postgres:16
+export TEST_DATABASE_URL=postgres://postgres:test@127.0.0.1:55432/scimtest
+
+npm test                 # every test on SQLite (+ the Postgres-only cases)
+npm run test:postgres    # every test on Postgres
+npm run test:engines     # asserts both runs covered the same tests
+```
+
+Each worker migrates one Postgres schema and resets it between tests, so a run
+creates a handful rather than one per test. A worker killed mid-run (a timeout, a
+Ctrl-C) leaves its schema behind; to clear leftovers:
+
+```bash
+psql "$TEST_DATABASE_URL" -tAc \
+  "SELECT format('DROP SCHEMA %I CASCADE;', schema_name) FROM information_schema.schemata \
+   WHERE schema_name ~ '^t[0-9]+_[0-9]+$'" | psql "$TEST_DATABASE_URL"
+```
+
+CI runs all three test commands. `test:engines` compares the JSON reports the
+first two leave in `.vitest/`, so it costs no extra runs — and it fails if a test is skipped on one
+engine but not the other, which is how "make it pass on Postgres" becomes "don't
+run it on Postgres".
+
 `npm run dev` serves the panel with HMR; the `/scim` proxy data-plane runs under
 `npm run build && npm start` (or in Docker).
 
 ## How it runs
 
 scim-bridge is a single Node process:
+
+> **Storage:** the database holds every directory, its migration mode and its id
+> mappings, so `DATABASE_PATH` must be on a volume that survives a restart (or use
+> `DATABASE_DRIVER=postgres`). Boot warns when it is not. See
+> [docs/runbook.md#durable-storage](docs/runbook.md#durable-storage).
 
 - **`server/`** — a [Hono](https://hono.dev) server that routes `/scim/v2/*` to
   the proxy, serves the React Router control panel for everything else, applies
@@ -152,8 +187,9 @@ scim-bridge is a single Node process:
 - **`app/`** — the React Router control panel (vendored WorkOS design system).
 - **`workers/native`, `workers/idp`** — the demo simulators (DEMO_MODE only).
 
-It also deploys to Cloudflare Workers + D1; the D1 migration files under
-`migrations/` are shared by both runtimes.
+The datastore is a configured choice: a SQLite file (default) or Postgres, behind
+one narrow interface — see [docs/runbook.md#durable-storage](docs/runbook.md#durable-storage)
+for which to pick and why.
 
 ## License
 

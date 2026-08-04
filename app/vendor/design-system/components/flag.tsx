@@ -1,3 +1,5 @@
+// @ts-nocheck — vendored from workos/packages/design-system by
+// `npm run sync-design-system`, which overwrites this file. Edit it upstream.
 import { CheckIcon, CircleBackslashIcon, Cross2Icon } from "@radix-ui/react-icons";
 import * as React from "react";
 import { Grid } from "./grid.js";

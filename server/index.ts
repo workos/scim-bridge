@@ -18,27 +18,42 @@ import {
   seedNativeAppDirectories,
 } from "./config";
 import { openDatabase, SqliteDatastore, SqliteMigrator } from "./db/sqlite";
+import { inspectStorage } from "./db/storage-durability";
+import { openPostgres, PostgresDatastore, PostgresMigrator } from "./db/postgres";
 import { runMigrations } from "./db/migrate";
+import { backfillProxyTokenHashes } from "../workers/shared/db";
+import type { Datastore, DatastoreMigrator } from "../workers/shared/datastore";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATIONS_DIR = join(ROOT, "migrations");
+// D1 is SQLite, so migrations/ is the source of truth for the file driver;
+// Postgres has its own squashed set (see migrations/postgres/0001_baseline.sql).
+const POSTGRES_MIGRATIONS_DIR = join(MIGRATIONS_DIR, "postgres");
 const CLIENT_DIR = join(ROOT, "build/client");
 const SERVER_BUILD = join(ROOT, "build/server/index.js");
 
 const config = loadConfig();
 
-// Datastore: open the SQLite file, apply migrations, and hand every `env.DB`
-// consumer the driver.
-const sqlite = openDatabase(config.databasePath);
-const applied = await runMigrations(new SqliteMigrator(sqlite), MIGRATIONS_DIR);
+// Datastore: build the configured driver, apply its migrations, and hand every
+// `env.DB` consumer the same narrow interface.
+const { store, migrator, migrationsDir } = openDatastore();
+const applied = await runMigrations(migrator, migrationsDir);
 if (applied.length) console.log(`Applied ${applied.length} migration(s): ${applied.join(", ")}`);
-const store = new SqliteDatastore(sqlite);
 // Encrypt per-directory tokens at rest when a key is provided (else plaintext).
 // The key rides on the shared DB handle so both the workers and the bundled
 // panel (separate module graphs) encrypt/decrypt consistently.
 store.encryptionKey = config.encryptionKey;
 if (config.encryptionKey) console.log("Per-directory token encryption: enabled");
 const env: PocEnv = { DB: store };
+// Rows written before ENT-6742 hold the proxy token in the clear. Convert them
+// before anything authenticates, and before the seeding below writes more rows.
+const hashed = await backfillProxyTokenHashes(store);
+if (hashed) {
+  console.log(
+    `Hashed ${hashed} plaintext proxy token(s) at rest (ENT-6742). ` +
+      "The tokens themselves still work; they are no longer readable from the database.",
+  );
+}
 if (config.role === "native-app") {
   await seedNativeAppConfig(env, config);
   await seedNativeAppDirectories(env, config);
@@ -52,6 +67,41 @@ if (config.role === "native-app") {
 } else {
   await seedConfig(env, config);
   await seedDemoDirectory(env, config);
+}
+
+/** The configured driver, its migrator, and the migration set for its dialect. */
+function openDatastore(): {
+  store: Datastore;
+  migrator: DatastoreMigrator;
+  migrationsDir: string;
+} {
+  if (config.databaseDriver === "postgres") {
+    // Single-writer: the proxy serialises writes per directory and the listener's
+    // dedup is check-then-act, so Postgres removing the storage-level constraint
+    // does not make this safe to run twice yet (ENT-6753 §6).
+    console.log("DATABASE_DRIVER=postgres: run a single instance against this database");
+    const pool = openPostgres(config.databaseUrl as string);
+    return {
+      store: new PostgresDatastore(pool),
+      migrator: new PostgresMigrator(pool),
+      migrationsDir: POSTGRES_MIGRATIONS_DIR,
+    };
+  }
+  // Where the database actually is, and whether it will still be there after a
+  // restart. Both printed at boot: "which file am I using" should not require a
+  // shell, and a disk that vanishes should not be discovered by losing data.
+  const storage = inspectStorage(config.databasePath);
+  console.log(
+    `SQLite database: ${storage.path}` +
+      (storage.filesystem ? ` (${storage.filesystem} on ${storage.mountPoint})` : ""),
+  );
+  if (storage.warning) console.warn(`WARNING: ${storage.warning}`);
+  const sqlite = openDatabase(config.databasePath);
+  return {
+    store: new SqliteDatastore(sqlite),
+    migrator: new SqliteMigrator(sqlite),
+    migrationsDir: MIGRATIONS_DIR,
+  };
 }
 
 // `ctx.waitUntil` on Workers keeps async work alive after the response; on Node

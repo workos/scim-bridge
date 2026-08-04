@@ -1,6 +1,7 @@
 import type { Datastore } from "../shared/datastore";
 import type { Directory } from "../shared/types";
 import { getConfig } from "../shared/db";
+import { clientTokenFor } from "../shared/client-tokens";
 import * as store from "./store";
 import type { IdpEnv, IdpGroup, IdpUser, Origin } from "./types";
 
@@ -65,6 +66,26 @@ function groupResource(group: IdpGroup, members: { value: string }[]): Record<st
   };
 }
 
+/**
+ * The bearer token this simulated IdP presents to the proxy.
+ *
+ * Read from the simulator's own credential store, not from the directory row: the
+ * row holds a digest since ENT-6742. A missing token means nobody ever told the
+ * simulator about this directory (a row created before this store existed, or by
+ * hand), and failing loudly beats sending an empty Authorization header and
+ * reporting a 401 as if the proxy had rejected a real credential.
+ */
+async function bearer(ctx: ActionContext): Promise<string> {
+  const token = await clientTokenFor(ctx.env.DB, ctx.directory.id);
+  if (!token) {
+    throw new Error(
+      `The IdP simulator has no proxy token for directory ${ctx.directory.id}. ` +
+        "Rotate the token on the directory page to give it one.",
+    );
+  }
+  return token;
+}
+
 export interface ActionContext {
   env: IdpEnv;
   directory: Directory;
@@ -108,7 +129,7 @@ export async function createUser(
     active: 1,
   });
   const base = await scimBase(db);
-  const result = await send(base, ctx.directory.proxy_token, "POST", "/Users", userResource(user));
+  const result = await send(base, await bearer(ctx), "POST", "/Users", userResource(user));
   const scimId = typeof result.body?.id === "string" ? result.body.id : null;
   await store.setUserScimId(db, user.id, scimId, result.status);
   await record(ctx, "create user", user.user_name, "POST", "/Users", result);
@@ -128,7 +149,7 @@ export async function setActive(
     Operations: [{ op: "replace", value: { active } }],
   };
   const path = `/Users/${encodeURIComponent(user.scim_id)}`;
-  const result = await send(await scimBase(db), ctx.directory.proxy_token, "PATCH", path, patch);
+  const result = await send(await scimBase(db), await bearer(ctx), "PATCH", path, patch);
   await store.setUserActive(db, userId, active ? 1 : 0, result.status);
   await record(
     ctx,
@@ -157,7 +178,7 @@ export async function renameUser(
     ],
   };
   const path = `/Users/${encodeURIComponent(user.scim_id)}`;
-  const result = await send(await scimBase(db), ctx.directory.proxy_token, "PATCH", path, patch);
+  const result = await send(await scimBase(db), await bearer(ctx), "PATCH", path, patch);
   await store.setUserName(db, userId, givenName, familyName, result.status);
   await record(ctx, "rename user", user.user_name, "PATCH", path, result);
 }
@@ -168,7 +189,7 @@ export async function removeUser(ctx: ActionContext, userId: string): Promise<vo
   if (!user) return;
   if (user.scim_id) {
     const path = `/Users/${encodeURIComponent(user.scim_id)}`;
-    const result = await send(await scimBase(db), ctx.directory.proxy_token, "DELETE", path);
+    const result = await send(await scimBase(db), await bearer(ctx), "DELETE", path);
     await record(ctx, "delete user", user.user_name, "DELETE", path, result);
   }
   await store.deleteUser(db, userId);
@@ -185,13 +206,7 @@ export async function createGroup(
     external_id: input.externalId,
   });
   const base = await scimBase(db);
-  const result = await send(
-    base,
-    ctx.directory.proxy_token,
-    "POST",
-    "/Groups",
-    groupResource(group, []),
-  );
+  const result = await send(base, await bearer(ctx), "POST", "/Groups", groupResource(group, []));
   const scimId = typeof result.body?.id === "string" ? result.body.id : null;
   await store.setGroupScimId(db, group.id, scimId, result.status);
   await record(ctx, "create group", group.display_name, "POST", "/Groups", result);
@@ -211,7 +226,7 @@ export async function renameGroup(
     Operations: [{ op: "replace", path: "displayName", value: displayName }],
   };
   const path = `/Groups/${encodeURIComponent(group.scim_id)}`;
-  const result = await send(await scimBase(db), ctx.directory.proxy_token, "PATCH", path, patch);
+  const result = await send(await scimBase(db), await bearer(ctx), "PATCH", path, patch);
   await store.renameGroup(db, groupId, displayName, result.status);
   await record(ctx, "rename group", displayName, "PATCH", path, result);
 }
@@ -222,7 +237,7 @@ export async function removeGroup(ctx: ActionContext, groupId: string): Promise<
   if (!group) return;
   if (group.scim_id) {
     const path = `/Groups/${encodeURIComponent(group.scim_id)}`;
-    const result = await send(await scimBase(db), ctx.directory.proxy_token, "DELETE", path);
+    const result = await send(await scimBase(db), await bearer(ctx), "DELETE", path);
     await record(ctx, "delete group", group.display_name, "DELETE", path, result);
   }
   await store.deleteGroup(db, groupId);
@@ -249,7 +264,7 @@ async function changeMembership(
           schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
           Operations: [{ op: "remove", path: `members[value eq "${user.scim_id}"]` }],
         };
-  const result = await send(await scimBase(db), ctx.directory.proxy_token, "PATCH", path, patch);
+  const result = await send(await scimBase(db), await bearer(ctx), "PATCH", path, patch);
   if (op === "add") await store.addMember(db, groupId, userId);
   else await store.removeMember(db, groupId, userId);
   await record(

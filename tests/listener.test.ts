@@ -11,6 +11,7 @@ import {
   seedDirectory,
   type FakeUpstreams,
   type SeedDirectoryOptions,
+  type SeededDirectory,
 } from "./helpers";
 
 const T1 = "2026-07-31T10:00:00.000Z";
@@ -67,8 +68,8 @@ async function deliver(
  *  0002 seeds proxy.public_url=localhost, which tests must not dial). */
 async function seedListenerEnv(
   opts: SeedDirectoryOptions = {},
-): Promise<{ env: PocEnv; directory: Directory }> {
-  const env = createEnv();
+): Promise<{ env: PocEnv; directory: SeededDirectory }> {
+  const env = await createEnv();
   await env.DB.prepare(
     "DELETE FROM poc_config WHERE key IN ('proxy.public_url', 'proxy.loopback_url')",
   ).run();
@@ -505,6 +506,42 @@ describe("dsync listener", () => {
       expect(event.idp_id).toBe("idp-user-1");
     });
 
+    it("adopts the event's WorkOS resource id so a re-created pre-cutover user keeps its shared id", async () => {
+      const { env } = await seedListenerEnv();
+      // A directory migrated before cutover: WorkOS holds a shared id distinct
+      // from the IdP id the event also carries.
+      const migrated = { ...ada, id: "shared-uuid-1" };
+
+      await deliver(env, envelope("dsync.user.created", migrated, { at: T1 }));
+      expect((await nativeUsers(env.DB))[0]).toMatchObject({
+        id: "shared-uuid-1",
+        external_id: "idp-user-1",
+      });
+
+      // Offboard then rehire (delete then re-create) — the sequence that used to
+      // diverge the id by adopting idp_id on the second create.
+      await deliver(env, envelope("dsync.user.deleted", migrated, { at: T2 }));
+      expect(await nativeUsers(env.DB)).toHaveLength(0);
+
+      await deliver(env, envelope("dsync.user.created", migrated, { at: T3 }));
+      const users = await nativeUsers(env.DB);
+      expect(users).toHaveLength(1);
+      expect(users[0]).toMatchObject({ id: "shared-uuid-1", external_id: "idp-user-1" });
+      expect(JSON.parse(users[0].resource)).toMatchObject({ id: "shared-uuid-1" });
+    });
+
+    it("falls back to the IdP id on a create that carries no resource id", async () => {
+      const { env } = await seedListenerEnv();
+      // A user born post-cutover: WorkOS minted its id from externalId, so the
+      // shared id equals the IdP id and the event carries no distinct data.id.
+      await deliver(env, envelope("dsync.user.created", ada));
+
+      expect((await nativeUsers(env.DB))[0]).toMatchObject({
+        id: "idp-user-1",
+        external_id: "idp-user-1",
+      });
+    });
+
     it("provisions an inactive user without onboarding it", async () => {
       const { env } = await seedListenerEnv();
 
@@ -618,6 +655,35 @@ describe("dsync listener", () => {
       expect(event.detail).toBe('group "Platform" removed; its users retained');
     });
 
+    it("adopts the event's WorkOS resource id on create, keying externalId on raw_attributes", async () => {
+      const { env } = await seedListenerEnv();
+      // Migrated group: distinct shared id (data.id), the externalId in
+      // raw_attributes, and idp_id carrying the displayName WorkOS surfaces.
+      const migrated = {
+        id: "shared-grp-1",
+        idp_id: "Engineering",
+        name: "Engineering",
+        raw_attributes: { externalId: "grp-eng" },
+      };
+
+      await deliver(env, envelope("dsync.group.created", migrated, { at: T1 }));
+      expect(await nativeGroups(env.DB)).toEqual([
+        expect.objectContaining({
+          id: "shared-grp-1",
+          display_name: "Engineering",
+          external_id: "grp-eng",
+        }),
+      ]);
+
+      await deliver(env, envelope("dsync.group.deleted", migrated, { at: T2 }));
+      expect(await nativeGroups(env.DB)).toHaveLength(0);
+
+      await deliver(env, envelope("dsync.group.created", migrated, { at: T3 }));
+      expect(await nativeGroups(env.DB)).toEqual([
+        expect.objectContaining({ id: "shared-grp-1", external_id: "grp-eng" }),
+      ]);
+    });
+
     it("skips a group update with no transition", async () => {
       const { env } = await seedListenerEnv();
       await deliver(env, envelope("dsync.group.created", engineering, { at: T1 }));
@@ -668,6 +734,30 @@ describe("dsync listener", () => {
       expect(users).toHaveLength(1);
       expect(users[0].id).toBe("idp-user-9");
       expect(JSON.parse(users[0].resource).name).toMatchObject({ givenName: "Grace" });
+    });
+
+    it("stubs a user and group under the event's shared ids, not the IdP key", async () => {
+      const { env } = await seedListenerEnv();
+      // Full DirectoryUser/DirectoryGroup objects, as WorkOS sends on membership
+      // events, each carrying a shared id distinct from its IdP key.
+      const user = { ...grace, id: "shared-user-9" };
+      const group = {
+        id: "shared-grp-9",
+        name: "Engineering",
+        raw_attributes: { externalId: "grp-eng" },
+      };
+
+      await deliver(env, envelope("dsync.group.user_added", { user, group }, { at: T1 }));
+
+      expect(await nativeUsers(env.DB)).toEqual([
+        expect.objectContaining({ id: "shared-user-9", external_id: "idp-user-9" }),
+      ]);
+      expect(await nativeGroups(env.DB)).toEqual([
+        expect.objectContaining({ id: "shared-grp-9", external_id: "grp-eng" }),
+      ]);
+      expect(await memberEdges(env.DB)).toEqual([
+        { group_id: "shared-grp-9", user_id: "shared-user-9" },
+      ]);
     });
 
     it("skips an already-present membership edge", async () => {
@@ -916,7 +1006,7 @@ describe("dsync listener", () => {
     });
 
     it("stays inert when no directory is configured", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       await env.DB.prepare(
         "DELETE FROM poc_config WHERE key IN ('proxy.public_url', 'proxy.loopback_url')",
       ).run();

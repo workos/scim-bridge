@@ -1,4 +1,4 @@
-import { getConfig, listDirectories, truncateBody, withD1Retry } from "../shared/db";
+import { getConfig, listDirectories, truncateBody, withDatastoreRetry } from "../shared/db";
 import { fetchDirectoryStatus } from "./status-client";
 import { NATIVE_TABLES, ScimStore } from "./store";
 import type { GroupRow, ScimResource, UserRow } from "./store";
@@ -229,10 +229,13 @@ async function upsertUserFromEvent(store: ScimStore, data: Json): Promise<Outcom
 
   const existing = await findUser(store, idpId, userName);
   if (!existing) {
-    // Adopt the IdP's id (== externalId) as our own, so the proxy, WorkOS, and
-    // this app all address the user by one shared id — a create born in
-    // workos-only stays reachable if the migration later rolls back.
-    const id = idpId;
+    // Address the user by the id WorkOS already holds (the event's resource id).
+    // For a directory migrated before cutover that is the pre-migration shared
+    // id; for a user born in workos-only WorkOS minted it from externalId, so it
+    // equals idp_id. Adopting idp_id instead would keep the shared id only for
+    // the born-here case and permanently diverge a re-created pre-cutover user,
+    // breaking the id-preserving rollback. Fall back to idp_id if absent.
+    const id = asString(data.id) ?? idpId;
     const resource = userResourceFromEvent(id, idpId, userName, active, data, {});
     await store.upsertUser({ id, userName, externalId: idpId, active, resource });
     return { action: "applied", detail: active ? "onboard()" : "provisioned inactive", idpId };
@@ -281,7 +284,11 @@ async function upsertGroupFromEvent(store: ScimStore, data: Json): Promise<Outco
   const existing = await findGroup(store, idpId, name);
   if (!existing) {
     if (!name) return { action: "ignored", detail: "group event carries no name", idpId };
-    const id = idpId;
+    // As with users, adopt the id WorkOS holds (the event's resource id) so a
+    // re-created pre-cutover group keeps its shared id; fall back to the
+    // externalId key. externalId stays keyed on raw_attributes (idpId here), not
+    // data.idp_id — which for a group is the displayName WorkOS surfaces.
+    const id = asString(data.id) ?? idpId;
     const resource = groupResourceFromEvent(id, idpId, name, {});
     await store.upsertGroup({ id, displayName: name, externalId: idpId, resource });
     return { action: "applied", detail: `group "${name}" created`, idpId };
@@ -363,7 +370,10 @@ async function changeMembership(
         idpId,
       };
     }
-    userId = userIdpId ?? crypto.randomUUID();
+    // Prefer the id WorkOS holds so a stub matches what a later full event (or a
+    // reconcile) addresses; the externalId key next, and a random id only when
+    // neither is present. A random id is guaranteed to diverge from WorkOS.
+    userId = asString(userData.id) ?? userIdpId ?? crypto.randomUUID();
     const active = userData.state === undefined ? true : userData.state === "active";
     await store.upsertUser({
       id: userId,
@@ -390,7 +400,7 @@ async function changeMembership(
         idpId,
       };
     }
-    groupId = groupIdpId ?? crypto.randomUUID();
+    groupId = asString(groupData.id) ?? groupIdpId ?? crypto.randomUUID();
     const displayName = groupName ?? groupIdpId ?? "unknown group";
     groupLabel = displayName;
     await store.upsertGroup({
@@ -540,7 +550,7 @@ async function isNewestEvent(
   eventAt: string | null,
 ): Promise<boolean> {
   if (!eventAt) return true; // no timestamp to order by — apply in arrival order
-  const row = await withD1Retry(() =>
+  const row = await withDatastoreRetry(() =>
     db
       .prepare("SELECT event_at FROM listener_versions WHERE scope = ?")
       .bind(scope)
@@ -557,7 +567,7 @@ async function recordEventVersion(
   eventAt: string | null,
 ): Promise<void> {
   if (!eventAt) return;
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "INSERT INTO listener_versions (scope, event_at) VALUES (?, ?) " +
@@ -606,13 +616,18 @@ async function directoryModeForEvent(db: Datastore, data: Json): Promise<string 
 }
 
 async function isDuplicate(db: Datastore, eventId: string): Promise<boolean> {
+  // Check-then-act: this read and the INSERT that follows it are only exclusive
+  // because one process handles webhooks. A second instance would need a partial
+  // unique index on event_id plus insert-first-then-decide (ENT-6753 §6) — the
+  // Postgres driver removes the storage-level single-writer constraint, not this
+  // one, which is why boot logs that a single instance is expected.
   // Only a delivery we actually processed (applied or skipped) counts as a
   // duplicate. An event merely logged as `ignored` — e.g. one that arrived while
   // the listener was inert pre-cutover — must be free to re-evaluate under the
   // current mode when WorkOS redelivers it, or an event straddling the cutover
   // could never be applied via webhook. A stale redelivery is still guarded by
   // the version ledger, which the inert path advances.
-  const row = await withD1Retry(() =>
+  const row = await withDatastoreRetry(() =>
     db
       .prepare(
         "SELECT 1 AS one FROM listener_events " +
@@ -635,7 +650,7 @@ async function recordEvent(
     payload: string | null;
   },
 ): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "INSERT INTO listener_events (event_id, event_type, idp_id, action, detail, payload) " +

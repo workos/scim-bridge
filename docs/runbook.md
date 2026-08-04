@@ -15,6 +15,140 @@ Health: `GET /healthz` → `{"ok":true}`. Migrations apply on boot. Put the pane
 behind auth (`PANEL_AUTH_USER`/`PANEL_AUTH_PASSWORD`, or your own reverse proxy)
 and set `APP_ENCRYPTION_KEY` so per-directory tokens are encrypted at rest.
 
+## Durable storage
+
+The database holds every directory's configuration, its migration mode, **and its
+`id_mappings`** — the table that lets the proxy translate ids between the side the
+IdP talks to and the side WorkOS talks to. Lose it mid-migration and the proxy
+cannot do that translation; the IdP also starts 401ing, because no directory
+matches the token it presents.
+
+This is not hypothetical. The ENT-6600 end-to-end run lost its database **three
+times**: the deployment ran on Cloudflare Containers, whose disk is recreated with
+the container, and nothing about writing to it looks wrong until a redeploy. Each
+loss meant re-importing every directory while the IdP kept sending traffic.
+
+### Recommended: SQLite on a persistent volume
+
+The bridge exists for the length of one migration. Mounting a filesystem is a
+smaller ask than standing up a database for a temporary tool, so this is the
+default and the recommendation:
+
+```bash
+DATABASE_DRIVER=sqlite            # the default
+DATABASE_PATH=/data/scim-bridge.db  # ...pointed at the mount
+```
+
+Run **one instance**. SQLite is single-writer, and the proxy and DSync listener
+assume a single writer regardless of engine — this does not scale horizontally,
+by design.
+
+| Platform | Durable storage |
+| --- | --- |
+| docker compose | the named volume in `docker-compose.yml` (already wired) |
+| AWS | ECS/Fargate with an **EFS** volume, or EC2 with an **EBS** volume |
+| Fly.io | `fly volumes create` and mount it |
+| **Cloudflare Containers** | **the container's local disk is ephemeral** — it is recreated with the container. See [Cloudflare](#cloudflare) below for what is durable there. |
+
+That last row is the one to read twice: it is where our own e2e ran, so anyone
+copying that setup inherits the problem the hard way.
+
+#### Cloudflare
+
+The precise statement is that **the container's local disk does not persist** —
+not that Cloudflare can't be durable. There is no volume to mount, so durability
+has to come from somewhere the container can reach over the network:
+
+- **External Postgres, via [Hyperdrive](https://developers.cloudflare.com/hyperdrive/)** —
+  works today: `DATABASE_DRIVER=postgres` with `DATABASE_URL` pointed through it.
+  Hyperdrive is what makes the connection pooling sane from Cloudflare's edge.
+- **Checkpoint the SQLite file to [R2](https://developers.cloudflare.com/r2/) and
+  restore it on boot** — the Cloudflare analogue of the Litestream→S3 option above.
+  Lossy by the checkpoint interval (anything written since the last upload is
+  gone), and it is configuration plus a boot script rather than a code change.
+- **A Durable Object / D1 driver** — possible future work, *not* a current option.
+
+That last one needs one sentence of explanation, because it is the same fact that
+kept a `d1` driver out of the datastore work and it will be asked again:
+**bindings belong to the Worker, not to the container's Node process.** A
+container fronted by a Worker cannot reach D1 or Durable Object storage directly;
+it can only reach them over the wire, through something the Worker exposes. That
+is a driver with an HTTP transport — a new component to write and operate, with a
+network hop per statement — not a configuration flag.
+
+At boot the server prints the absolute path it opened and, on Linux, the
+filesystem underneath it:
+
+```
+SQLite database: /data/scim-bridge.db (ext4 on /data)
+```
+
+and if that filesystem is one that disappears with the container (`overlay`,
+`tmpfs`), it says so loudly:
+
+```
+WARNING: DATABASE_PATH (/data/scim-bridge.db) is on a overlay filesystem mounted at /,
+which does not survive this container being replaced. …
+```
+
+Back it up with volume snapshots, or with [Litestream](https://litestream.io)
+replicating the file to S3 continuously.
+
+### Postgres when
+
+- you want **more than one instance** (note the single-writer caveat above still
+  applies to the application, so this is for failover, not scale-out), or
+- you want **managed backups / point-in-time recovery**, or
+- you would rather point at RDS/Aurora than mount a filesystem.
+
+```bash
+DATABASE_DRIVER=postgres
+DATABASE_URL=postgres://bridge:secret@scim-bridge-db.abc.eu-west-1.rds.amazonaws.com:5432/bridge
+```
+
+Both drivers apply their own migrations on boot (`migrations/*.sql` for SQLite,
+`migrations/postgres/*.sql` for Postgres) and are safe to restart. Switching
+driver does **not** move data.
+
+### If you lose the database anyway
+
+Two things are gone, and they recover differently. **Re-importing the CSV restores
+directory configuration, not mappings** — that part matters.
+
+1. **Directories.** Re-import them, including each `proxy_token` (see
+   [zero IdP-touch](#zero-idp-touch-deployment)); the IdP then authenticates
+   again without being reconfigured. Keep an export somewhere you will still have
+   it — the CSV *is* the recovery procedure, and since the tokens are hashed at
+   rest it is now the *only* copy: you cannot read them back out of a surviving
+   database, only rotate them and reconfigure the IdP.
+2. **`id_mappings`.** These re-derive themselves, but by two different routes,
+   and the second one is worth understanding before you decide how urgently to
+   act:
+
+   | strategy | what it is | how it comes back |
+   | --- | --- | --- |
+   | `migrated-id` | `native_id == workos_id` — the shared id the migrated-id contract preserves | the next mirrored write PUTs the shared id, WorkOS already has it, and the mapping is recorded again. Effectively self-healing. |
+   | `fallback-post` | `native_id != workos_id` — WorkOS minted its own id, and this table was the only record of the pairing | the next write PUTs the native id (404), POSTs (409, because the resource already exists there), then the proxy looks it up by `userName`/`displayName`, repairs the content, and re-records the mapping. It works, but it costs a filter round-trip per resource. |
+
+   So the exposure is **how many `fallback-post` rows a directory had**. A
+   directory whose mappings are all `migrated-id` barely notices a wipe; one with
+   `fallback-post` rows needs a write per resource to repair, and until that write
+   happens, requests for those resources translate to an id WorkOS does not have,
+   so the IdP sees 404s. If the WorkOS side ever stopped rejecting duplicate
+   `userName`s, the repair would instead create a second resource — the case the
+   "only POST creates" invariant exists to prevent.
+
+   The directory's **Mappings** tab shows the strategy per row and warns when any
+   are `fallback-post`, so that count is the number to check before trusting
+   ephemeral storage.
+
+### One more reason not to leave the file lying around
+
+Proxy tokens are hashed at rest (ENT-6742), so a copy of the database is no longer
+a set of live credentials. It is still a set of *upstream* ones: the native and
+WorkOS bearer tokens are only encrypted if `APP_ENCRYPTION_KEY` is set, and the id
+mappings are irreplaceable. Both are arguments for a volume you control.
+
 ## Import directories
 
 Open `/panel`.
@@ -33,6 +167,25 @@ Open `/panel`.
 Then copy the directory's **SCIM base URL + proxy token** into your IdP's SCIM
 config. It starts in `passthrough`, so repointing the IdP changes no behavior —
 every request still reaches your native app.
+
+### Proxy tokens are hashed, so they can't be read back
+
+The database stores `sha256(proxy_token)`, never the token (ENT-6742). Consequences
+worth knowing before you need them:
+
+- **The directory page shows the last 4 characters**, not the token. Match it
+  against what you pasted into the IdP.
+- **Rotate is the only recovery.** If the token was never copied, or was lost, use
+  **Rotate** on the directory page: it mints a new one, shows it once, and the
+  previous token stops working immediately — so paste it into the IdP before the
+  next sync. A directory whose IdP still presents the old token 401s until you do.
+- **Right after an import, the minted token is not displayed yet** (the display
+  policy for mint and bulk import is still being decided). Until it is, rotate once
+  on the new directory's page to get a token you can copy.
+- **Upgrading an existing deployment needs nothing.** The first boot on this version
+  hashes whatever plaintext tokens the database holds and logs how many it
+  converted. Every IdP keeps working with the token it already has; the conversion
+  is one-way, so from then on the CSV export is the only readable copy.
 
 ### Zero IdP-touch deployment
 
@@ -88,8 +241,55 @@ Advance the directory's mode from its page, verifying convergence in the
 system stayed current, so no data is lost. After cutover (`workos-only`), native
 is kept current by the DSync listener; if you're unsure it stayed caught up, run
 **Reconcile from WorkOS** on the directory page first — it snapshots the live
-WorkOS directory and replays every resource back into native (id-preserving),
-guaranteeing parity before you flip the mode back.
+WorkOS directory and replays every resource back into native, guaranteeing parity
+before you flip the mode back.
+
+Two properties make this safe:
+
+- **Id-preserving.** When the listener creates a resource from an event it adopts
+  the event's WorkOS resource id (`data.id`), which for a migrated directory is
+  the pre-migration shared id and for a resource born after cutover is the id
+  WorkOS minted from the IdP `externalId`. Either way native, WorkOS, and the
+  proxy address the resource by one id, so reconcile's `PUT /Users/{id}` lands on
+  the same row.
+- **Functional even when ids drift.** Ids don't actually have to match for
+  rollback to work: the proxy translates through the `id_mappings` table, so a
+  native row under a *different* id but with a mapping row is addressable end to
+  end. What breaks rollback is a resource with **no** mapping — the case the
+  reconcile below repairs.
+
+**Repairing a directory whose ids already drifted.** A directory cut over before
+this listener fix may hold native rows under the IdP id while WorkOS holds the
+shared id (e.g. an offboard-then-rehire re-created the row under `idp_id`). Run
+**Reconcile from WorkOS** and read its summary:
+
+- Lines like `Users/{sharedId}: id drift — userName "…" is native id {driftedId},
+  WorkOS holds {sharedId}; reconciled via mapping` mean reconcile found the
+  drifted native row by its `userName`/`displayName`, updated it in place, and
+  wrote the mapping — the directory is now rollback-safe with no further action.
+- A line ending `native returned 409 (… drift unresolved)` means the collision
+  couldn't be attributed to a row (the userName/displayName didn't resolve);
+  investigate that resource by hand.
+- A line ending `drift left unrepaired` means the collision _did_ resolve to a
+  row, but that row isn't attributable to this directory: another directory in the
+  same native namespace maps it, or it is unmapped and its id isn't the
+  `externalId` WorkOS holds (the shape listener-adopted drift always takes).
+  `userName`/`displayName` are unique per native namespace, not per directory, so
+  in a deployment that bridges several directories into one namespace a match can
+  be another tenant's resource; reconcile refuses to write it. Line the ids up by
+  hand only once you've confirmed which directory the row belongs to.
+- A line ending `drift left unrepaired` means the collision *did* resolve to a
+  row, but that row isn't attributable to this directory — another directory maps
+  it, or its `externalId` isn't the one WorkOS holds. `userName`/`displayName` are
+  unique per native namespace, not per directory, so in a deployment that bridges
+  several directories into one namespace a match can be another tenant's
+  resource; reconcile refuses to write it. Line the ids up by hand only once
+  you've confirmed which directory the row belongs to.
+
+Reconcile never deletes a native row to fix an id: native is the customer's own
+app, where a `DELETE` deprovisions a real person (session revocation, data
+archival, downstream cascades). Hand-deleting a native row to force ids to line
+up is a last resort — do it only with those side effects understood.
 
 ## Run the image as the customer-app stand-in
 
@@ -146,7 +346,7 @@ directory and watch it converge.
 
 | Symptom | Check |
 | --- | --- |
-| Proxy returns 401 | The IdP's bearer token must equal the directory's `proxy_token`. |
+| Proxy returns 401 | The IdP's bearer token must equal the directory's `proxy_token`. If every directory 401s at once, the database was probably lost — see [durable storage](#durable-storage). |
 | Proxy returns 401 and the token looks right | Check the header shape. `Authorization: Bearer <token>` (any casing of the scheme) and a bare `Authorization: <token>` both authenticate, so it doesn't matter whether the IdP adds the prefix or sends the field verbatim; any other scheme (`Basic …`) does not. The one shape that still fails is a doubled prefix — typing `Bearer <token>` into an IdP that then adds its own. |
 | Proxy returns 502 | The native (passthrough/dual-write) or WorkOS (workos-only) endpoint is unreachable — verify the URL/token with the directory page's test buttons. |
 | WorkOS answers 400 `invalidSyntax` on a mirror or backfill | An attribute the native app sent as `null` where WorkOS expects a string. The bridge drops null-valued keys from every WorkOS-bound resource body, so this should only appear on a `PATCH` (whose `Operations` are deliberately left alone — a null there can be a meaningful remove) or for a genuinely malformed value. |

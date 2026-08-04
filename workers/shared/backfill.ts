@@ -1,6 +1,12 @@
 import type { Datastore } from "./datastore";
 import type { BackfillSummary, Directory, ResourceType } from "./types";
-import { insertProxyLog, shouldPersistLogs } from "./db";
+import {
+  getMapping,
+  insertProxyLog,
+  listOtherMappingsByNativeId,
+  shouldPersistLogs,
+  upsertMapping,
+} from "./db";
 import {
   errorMessage,
   isRecord,
@@ -9,8 +15,11 @@ import {
   loadIdMaps,
   makeTranslator,
   mirrorUpsert,
+  nativeNamespaceKey,
   parseJson,
   scimFetch,
+  type IdTranslationMaps,
+  type UpstreamResult,
 } from "./scim";
 
 const PAGE_SIZE = 100;
@@ -204,7 +213,16 @@ export async function runReconcileFromWorkos(
     summary.errors,
   );
   for (const resource of users) {
-    await pushToNative(db, directory, "Users", resource, toNative, summary.users, summary.errors);
+    await pushToNative(
+      db,
+      directory,
+      "Users",
+      resource,
+      toNative,
+      maps,
+      summary.users,
+      summary.errors,
+    );
   }
 
   const groups = await snapshot(
@@ -223,7 +241,16 @@ export async function runReconcileFromWorkos(
           : member,
       );
     }
-    await pushToNative(db, directory, "Groups", body, toNative, summary.groups, summary.errors);
+    await pushToNative(
+      db,
+      directory,
+      "Groups",
+      body,
+      toNative,
+      maps,
+      summary.groups,
+      summary.errors,
+    );
   }
 
   return summary;
@@ -235,6 +262,7 @@ async function pushToNative(
   kind: ResourceType,
   resource: Record<string, unknown>,
   toNative: (kind: ResourceType, id: string) => string,
+  maps: IdTranslationMaps,
   counts: ResourceCounts,
   errors: string[],
 ): Promise<void> {
@@ -246,22 +274,31 @@ async function pushToNative(
     return;
   }
   const nativeId = toNative(kind, workosId);
-  let result;
+  let result: UpstreamResult;
   try {
-    result = await scimFetch(
-      joinScimUrl(directory.native_url, `/${kind}/${encodeURIComponent(nativeId)}`),
-      {
-        method: "PUT",
-        token: directory.native_token,
-        body: JSON.stringify({ ...resource, id: nativeId }),
-        migratedId: nativeId,
-      },
-    );
+    result = await putNative(directory, kind, nativeId, resource);
   } catch (error) {
     counts.failed += 1;
     pushError(errors, `${kind}/${nativeId}: ${errorMessage(error)}`);
     return;
   }
+
+  // A 409 means the native row exists under a DIFFERENT id — its userName (or
+  // group displayName) collides with a resource the listener re-created under
+  // the IdP id instead of the shared id. Repair it in place: find that row by
+  // its unique attribute, PUT the update onto its own id, and record the
+  // shared-id -> drifted-id mapping so the two sides stay translatable in both
+  // directions. This is deliberately non-destructive — native is the customer's
+  // own app, where DELETE deprovisions a real person (session revocation, data
+  // archival, downstream cascades). Ids need not converge for rollback: the
+  // mapping table already translates, so a drifted id WITH a mapping is
+  // functionally equivalent to a shared id. Missing mapping was the real bug.
+  let drift: DriftRepair | null = null;
+  if (result.status === 409) {
+    drift = await repairDrift(db, directory, kind, workosId, nativeId, resource, maps, errors);
+    if (drift?.result) result = drift.result;
+  }
+
   try {
     if (shouldPersistLogs(directory))
       await insertProxyLog(db, {
@@ -269,7 +306,7 @@ async function pushToNative(
         source: "backfill",
         mode: directory.mode,
         method: "PUT",
-        path: `/${kind}/${nativeId}`,
+        path: `/${kind}/${drift?.nativeId ?? nativeId}`,
         request_body: JSON.stringify(resource),
         native_status: result.status,
         native_ms: result.ms,
@@ -282,10 +319,209 @@ async function pushToNative(
   }
   if (isSuccess(result.status)) {
     counts.mirrored += 1;
+    if (drift) {
+      pushError(
+        errors,
+        `${kind}/${nativeId}: id drift — ${drift.attr} "${drift.value}" is native id ` +
+          `${drift.nativeId}, WorkOS holds ${workosId}; reconciled via mapping`,
+      );
+    }
   } else {
     counts.failed += 1;
-    pushError(errors, `${kind}/${nativeId}: native returned ${result.status}`);
+    pushError(errors, `${kind}/${nativeId}: ${describeFailure(result.status)}`);
   }
+}
+
+async function putNative(
+  directory: Directory,
+  kind: ResourceType,
+  id: string,
+  resource: Record<string, unknown>,
+): Promise<UpstreamResult> {
+  return scimFetch(joinScimUrl(directory.native_url, `/${kind}/${encodeURIComponent(id)}`), {
+    method: "PUT",
+    token: directory.native_token,
+    body: JSON.stringify({ ...resource, id }),
+    migratedId: id,
+  });
+}
+
+interface DriftRepair {
+  /** The id the colliding native row actually holds. */
+  nativeId: string;
+  /** The unique attribute it collided on, and its value, for the report. */
+  attr: "userName" | "displayName";
+  value: string;
+  /** The repair PUT's result, or null if the row couldn't be resolved. */
+  result: UpstreamResult | null;
+}
+
+/**
+ * Resolve the native row a 409 collided with by its unique attribute, update it
+ * in place under its own id, and map shared-id -> that drifted id. Returns null
+ * when the collision can't be attributed to a resolvable row (no value on the
+ * WorkOS resource, native can't find one, or the row isn't this directory's),
+ * leaving the original 409 to be reported as an unresolved failure.
+ *
+ * `userName`/`displayName` are unique per native namespace, not per directory, so
+ * in a deployment that fronts several directories into one native SCIM namespace
+ * a match on the attribute is not evidence that the row is this directory's — see
+ * `unattributedReason`.
+ */
+async function repairDrift(
+  db: Datastore,
+  directory: Directory,
+  kind: ResourceType,
+  workosId: string,
+  nativeId: string,
+  resource: Record<string, unknown>,
+  maps: IdTranslationMaps,
+  errors: string[],
+): Promise<DriftRepair | null> {
+  const attr = kind === "Users" ? "userName" : "displayName";
+  const value = typeof resource[attr] === "string" ? (resource[attr] as string) : null;
+  if (!value) return null;
+
+  let driftedId: string;
+  try {
+    const resolved = await findNativeIdByAttr(directory, kind, attr, value);
+    if (!resolved || resolved === nativeId) return null;
+    driftedId = resolved;
+  } catch (error) {
+    pushError(errors, `${kind}/${nativeId}: resolving drift by ${attr}: ${errorMessage(error)}`);
+    return null;
+  }
+
+  const unowned = await unattributedReason(db, directory, kind, workosId, driftedId, resource);
+  if (unowned) {
+    pushError(
+      errors,
+      `${kind}/${nativeId}: ${attr} "${value}" is native id ${driftedId}, which ${unowned}; ` +
+        "drift left unrepaired",
+    );
+    return null;
+  }
+
+  let result: UpstreamResult;
+  try {
+    result = await putNative(directory, kind, driftedId, resource);
+  } catch (error) {
+    pushError(errors, `${kind}/${driftedId}: ${errorMessage(error)}`);
+    return { nativeId: driftedId, attr, value, result: null };
+  }
+  if (isSuccess(result.status)) {
+    await upsertMapping(db, {
+      directory_id: directory.id,
+      resource_type: kind,
+      native_id: driftedId,
+      workos_id: workosId,
+      strategy: "fallback-post",
+    });
+    // Reflect the repair in the live translation maps so a group pushed later in
+    // this same reconcile addresses a repaired user by its drifted native id
+    // (the translator reads these maps by reference); the DB row alone wouldn't
+    // be observed until the next reconcile.
+    maps.workosToNative[kind].set(workosId, driftedId);
+    maps.nativeToWorkos[kind].set(driftedId, workosId);
+  }
+  return { nativeId: driftedId, attr, value, result };
+}
+
+/**
+ * Why the matched native row can't be treated as this directory's resource, or
+ * null when it can. Attribution is positive — one of:
+ *
+ * - the mapping table already binds the row to this directory and this WorkOS id;
+ * - the row's id *is* the `externalId` WorkOS holds for the resource, which is the
+ *   signature of the drift this repair exists for: the listener created the row
+ *   under the IdP id (`idp_id` == `externalId`) while WorkOS kept the shared id.
+ *
+ * A row another directory in the same native namespace maps is never written —
+ * that would be one tenant's reconcile overwriting another tenant's resource.
+ * `externalId` equality between the two *resources* is deliberately not enough:
+ * a directory admin controls their own `externalId`s, so they could mint one
+ * matching the victim's and re-open the cross-directory write.
+ */
+async function unattributedReason(
+  db: Datastore,
+  directory: Directory,
+  kind: ResourceType,
+  workosId: string,
+  driftedId: string,
+  resource: Record<string, unknown>,
+): Promise<string | null> {
+  const others = await listOtherMappingsByNativeId(db, directory, kind, driftedId);
+  const foreign = others.find((mapping) =>
+    sharesNamespace(directory.native_url, mapping.native_url),
+  );
+  if (foreign) return `is already mapped by directory ${foreign.directory_id}`;
+
+  const mine = await getMapping(db, directory.id, kind, driftedId);
+  if (mine) {
+    return mine.workos_id === workosId
+      ? null
+      : `this directory already maps it to WorkOS ${mine.workos_id}`;
+  }
+
+  const ours = resource.externalId;
+  if (typeof ours !== "string" || !ours) {
+    return "is unmapped, and the WorkOS resource has no externalId to attribute it by";
+  }
+  if (ours !== driftedId) return `is unmapped and is not this directory's externalId ${ours}`;
+  return null;
+}
+
+/**
+ * Whether two directories' native base URLs can address the same native app, and
+ * so whether their ids can collide. Compared canonically, because equivalent URLs
+ * are stored verbatim (`https://x:443/scim/v2` and `https://X/scim/v2/` are one
+ * endpoint). Fails closed: a URL that won't parse is treated as possibly shared,
+ * which only ever refuses a repair.
+ */
+function sharesNamespace(ours: string, theirs: string): boolean {
+  const a = nativeNamespaceKey(ours);
+  const b = nativeNamespaceKey(theirs);
+  return a === null || b === null ? true : a === b;
+}
+
+/** GET native filtered on a unique attribute, returning the first match's id. */
+async function findNativeIdByAttr(
+  directory: Directory,
+  kind: ResourceType,
+  attr: "userName" | "displayName",
+  value: string,
+): Promise<string | null> {
+  const escaped = value.replace(/([\\"])/g, "\\$1");
+  const filter = encodeURIComponent(`${attr} eq "${escaped}"`);
+  const page = await scimFetch(
+    `${joinScimUrl(directory.native_url, `/${kind}`)}?filter=${filter}`,
+    {
+      method: "GET",
+      token: directory.native_token,
+    },
+  );
+  if (!isSuccess(page.status)) {
+    throw new Error(`native returned ${page.status}`);
+  }
+  // Confirm the returned row actually carries the attribute we filtered on: a
+  // native app that ignores an unsupported ?filter would return its whole first
+  // page, and blindly taking Resources[0] could overwrite an unrelated person.
+  const body = parseJson(page.bodyText);
+  const match = Array.isArray(body?.Resources)
+    ? body.Resources.find(
+        (entry) =>
+          isRecord(entry) &&
+          typeof entry[attr] === "string" &&
+          (entry[attr] as string).toLowerCase() === value.toLowerCase(),
+      )
+    : null;
+  return isRecord(match) && typeof match.id === "string" ? match.id : null;
+}
+
+function describeFailure(status: number): string {
+  return status === 409
+    ? "native returned 409 (userName/displayName exists under a different id; drift unresolved)"
+    : `native returned ${status}`;
 }
 
 function pushError(errors: string[], message: string): void {

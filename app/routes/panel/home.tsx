@@ -1,6 +1,8 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import type { Route } from "./+types/home";
+
 import { Form, redirect, useActionData, useLoaderData, useNavigation } from "react-router";
 import {
+  type CreatedDirectory,
   getConfig,
   insertDirectory,
   listDirectories,
@@ -8,6 +10,7 @@ import {
   setDirectoriesLogPersistence,
   setDirectoryMode,
 } from "../../../workers/shared/db";
+import { publishMintedToken } from "../../../workers/shared/client-tokens";
 import { MODES, type Mode } from "../../../workers/shared/types";
 import { Button } from "../../vendor/design-system/components/button";
 import { Callout } from "../../vendor/design-system/components/callout";
@@ -105,7 +108,7 @@ function directoryError(error: unknown): string {
   return message;
 }
 
-export async function loader({ context }: LoaderFunctionArgs) {
+export async function loader({ context }: Route.LoaderArgs) {
   const { env } = context.cloudflare;
   const [directories, proxyPublicUrl, nativePublicUrl, nativeScimToken, mockWorkosToken] =
     await Promise.all([
@@ -125,8 +128,8 @@ export async function loader({ context }: LoaderFunctionArgs) {
   };
 }
 
-export async function action({ context, request }: ActionFunctionArgs) {
-  const { env } = context.cloudflare;
+export async function action({ context, request }: Route.ActionArgs) {
+  const { env, demoMode } = context.cloudflare;
   const form = await request.formData();
   const intent = form.get("intent");
   const field = (key: string) => String(form.get(key) ?? "").trim();
@@ -141,9 +144,9 @@ export async function action({ context, request }: ActionFunctionArgs) {
     if (tokenError) {
       return { error: tokenError };
     }
-    let id: string;
+    let created: CreatedDirectory;
     try {
-      id = await insertDirectory(env.DB, {
+      created = await insertDirectory(env.DB, {
         name,
         native_url: field("native_url"),
         native_token: field("native_token"),
@@ -155,7 +158,13 @@ export async function action({ context, request }: ActionFunctionArgs) {
     } catch (error) {
       return { error: directoryError(error) };
     }
-    return redirect(`/panel/directories/${id}`);
+    // The minted token is readable here and nowhere afterwards (ENT-6742). Showing
+    // it at mint is the held half of the ticket, so this keeps today's redirect and
+    // the operator recovers the token by rotating on the directory page.
+    //
+    // Only a bundled simulator gets a plaintext copy; see publishMintedToken.
+    await publishMintedToken(env.DB, created.id, created.proxy_token, { demoMode });
+    return redirect(`/panel/directories/${created.id}`);
   }
 
   if (intent === "bulk-import") {
@@ -176,7 +185,8 @@ export async function action({ context, request }: ActionFunctionArgs) {
         continue;
       }
       try {
-        await insertDirectory(env.DB, r);
+        const created = await insertDirectory(env.DB, r);
+        await publishMintedToken(env.DB, created.id, created.proxy_token, { demoMode });
         imported++;
       } catch (error) {
         importErrors.push(`Row ${i + 1} (${r.name}): ${directoryError(error)}`);

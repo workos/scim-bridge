@@ -1,3 +1,5 @@
+// @ts-nocheck — vendored from workos/packages/design-system by
+// `npm run sync-design-system`, which overwrites this file. Edit it upstream.
 // This file follows Radix coding conventions so that it can be more easily
 // ported down the road. Disabling conflicting lint rules here.
 

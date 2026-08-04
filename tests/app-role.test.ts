@@ -9,6 +9,7 @@ import {
   type AppConfig,
 } from "../server/config";
 import { getConfig, listDirectories } from "../workers/shared/db";
+import { hashProxyToken } from "../workers/shared/crypto";
 import nativeWorker from "../workers/native/index";
 import type { PocEnv } from "../workers/shared/types";
 import {
@@ -106,7 +107,7 @@ describe("APP_ROLE", () => {
 
   describe("boot-seeded tokens", () => {
     it("mints the bundled endpoints' tokens on first boot, once", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       // Migration 0002 used to generate these in SQL, which would give each
       // driver a different secret; a fresh database now starts without them.
       expect(await getConfig(env.DB, "native.scim_token")).toBeNull();
@@ -129,7 +130,7 @@ describe("APP_ROLE", () => {
 
   describe("env-seeded config", () => {
     it("lands the native-app secrets and the bridge URL in poc_config", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       await seedNativeAppConfig(env, nativeAppConfig({ bridgeStatusUrl: "https://bridge.test" }));
 
       expect(await getConfig(env.DB, "native.scim_token")).toBe("native-secret");
@@ -143,7 +144,7 @@ describe("APP_ROLE", () => {
     });
 
     it("does not rotate the boot-seeded token when the var is unset", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const unset = nativeAppConfig({ nativeScimToken: null, bridgeStatusUrl: null });
       // First boot mints the token; a restart with NATIVE_SCIM_TOKEN still unset
       // must leave it alone, or every restart would break the bridge's writes.
@@ -159,7 +160,7 @@ describe("APP_ROLE", () => {
 
   describe("env-seeded directories", () => {
     it("keys each row on the WorkOS directory id and is re-runnable", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const config = nativeAppConfig({
         directories: [
           { workos_directory_id: "directory_01A", proxy_token: "tok_a", name: "Acme" },
@@ -173,17 +174,21 @@ describe("APP_ROLE", () => {
       expect(rows).toHaveLength(2);
       // The row id IS the WorkOS id, so it resolves an event's directory_id
       // locally and is an id the bridge's status endpoint accepts.
-      expect(rows.map((d) => [d.id, d.workos_directory_id, d.proxy_token, d.name])).toEqual([
-        ["directory_01A", "directory_01A", "tok_a", "Acme"],
-        ["directory_01B", "directory_01B", "tok_b", "directory_01B"],
+      expect(rows.map((d) => [d.id, d.workos_directory_id, d.proxy_token_hash, d.name])).toEqual([
+        ["directory_01A", "directory_01A", await hashProxyToken("tok_a"), "Acme"],
+        ["directory_01B", "directory_01B", await hashProxyToken("tok_b"), "directory_01B"],
       ]);
+      // The declared token is hashed like any other, so DIRECTORIES_JSON stays the
+      // only plaintext copy in this role (ENT-6742). Asserted against the digest of
+      // the declared value rather than "not tok_a", which a typo would also satisfy.
+      expect(rows.map((d) => d.proxy_token_hint)).toEqual(["ok_a", "ok_b"]);
       // Left at the table default: if the bridge is unreachable the listener
       // reads this mode and stays inert rather than applying events.
       expect(rows.every((d) => d.mode === "passthrough")).toBe(true);
     });
 
     it("updates a rotated proxy token in place", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = {
         workos_directory_id: "directory_01A",
         proxy_token: "tok_a",
@@ -197,11 +202,12 @@ describe("APP_ROLE", () => {
 
       const rows = await listDirectories(env.DB);
       expect(rows).toHaveLength(1);
-      expect(rows[0].proxy_token).toBe("tok_rotated");
+      expect(rows[0].proxy_token_hash).toBe(await hashProxyToken("tok_rotated"));
+      expect(rows[0].proxy_token_hash).not.toBe(await hashProxyToken("tok_a"));
     });
 
     it("boots cleanly when a proxy token moves to a different directory id", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       await seedNativeAppDirectories(
         env,
         nativeAppConfig({
@@ -210,8 +216,10 @@ describe("APP_ROLE", () => {
           ],
         }),
       );
-      // proxy_token is UNIQUE table-wide, so re-creating the directory under a
-      // new id with the same token must not collide with the row holding it.
+      // proxy_token_hash is UNIQUE table-wide, so re-creating the directory under a
+      // new id with the same token must not collide with the row holding it — the
+      // digest of a given token is the same value every time, which is what makes
+      // the lookup possible and the collision reachable.
       await seedNativeAppDirectories(
         env,
         nativeAppConfig({
@@ -223,11 +231,11 @@ describe("APP_ROLE", () => {
 
       const rows = await listDirectories(env.DB);
       expect(rows.map((d) => d.id)).toEqual(["directory_01NEW"]);
-      expect(rows[0].proxy_token).toBe("tok_a");
+      expect(rows[0].proxy_token_hash).toBe(await hashProxyToken("tok_a"));
     });
 
     it("drops a directory removed from DIRECTORIES_JSON", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       await seedNativeAppDirectories(
         env,
         nativeAppConfig({
@@ -250,7 +258,7 @@ describe("APP_ROLE", () => {
     });
 
     it("drops every row when the var is emptied", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       await seedNativeAppDirectories(env, nativeAppConfig());
       await seedNativeAppDirectories(env, nativeAppConfig({ directories: [] }));
 
@@ -266,7 +274,7 @@ describe("APP_ROLE", () => {
     });
 
     async function seedNativeApp(overrides: Partial<AppConfig> = {}): Promise<PocEnv> {
-      const env = createEnv();
+      const env = await createEnv();
       // The fake upstreams only answer the two known hosts, so the bridge is
       // reachable at the native host's base.
       const config = nativeAppConfig({ bridgeStatusUrl: NATIVE_URL, ...overrides });

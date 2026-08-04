@@ -1,10 +1,11 @@
 import Database from "better-sqlite3";
-import type {
-  Datastore,
-  DatastoreAllResult,
-  DatastoreMigrator,
-  DatastoreRunResult,
-  DatastoreStatement,
+import {
+  TransientDatastoreError,
+  type Datastore,
+  type DatastoreAllResult,
+  type DatastoreMigrator,
+  type DatastoreRunResult,
+  type DatastoreStatement,
 } from "../../workers/shared/datastore";
 
 /**
@@ -30,18 +31,40 @@ class SqliteStatement implements DatastoreStatement {
   }
 
   async first<T = Row>(): Promise<T | null> {
-    const row = this.getStmt(this.sql).get(...this.params) as Row | undefined;
-    return row === undefined ? null : (row as T);
+    try {
+      const row = this.getStmt(this.sql).get(...this.params) as Row | undefined;
+      return row === undefined ? null : (row as T);
+    } catch (error) {
+      rethrow(error);
+    }
   }
 
   async all<T = Row>(): Promise<DatastoreAllResult<T>> {
-    const results = this.getStmt(this.sql).all(...this.params) as T[];
-    return { results, success: true, meta: {} };
+    try {
+      const results = this.getStmt(this.sql).all(...this.params) as T[];
+      return { results, success: true, meta: {} };
+    } catch (error) {
+      rethrow(error);
+    }
   }
 
   async run(): Promise<DatastoreRunResult> {
-    return runOne(this.getStmt(this.sql), this.params);
+    try {
+      return runOne(this.getStmt(this.sql), this.params);
+    } catch (error) {
+      rethrow(error);
+    }
   }
+}
+
+/** SQLite's own retryable failures: another writer holds the lock. */
+function isTransientSqliteError(error: unknown): boolean {
+  const code = (error as { code?: string } | null)?.code;
+  return code === "SQLITE_BUSY" || code === "SQLITE_BUSY_SNAPSHOT" || code === "SQLITE_LOCKED";
+}
+
+function rethrow(error: unknown): never {
+  throw isTransientSqliteError(error) ? new TransientDatastoreError(error) : error;
 }
 
 function runOne(stmt: Database.Statement, params: unknown[]): DatastoreRunResult {
@@ -82,7 +105,11 @@ export class SqliteDatastore implements Datastore {
     const tx = this.db.transaction((list: SqliteStatement[]) =>
       list.map((s) => runOne(this.getStmt(s.sql), s.params)),
     );
-    return tx(own);
+    try {
+      return tx(own);
+    } catch (error) {
+      rethrow(error);
+    }
   }
 }
 

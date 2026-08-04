@@ -1,5 +1,5 @@
 import type { Directory, WorkerHandler } from "../shared/types";
-import { getDirectoryById, withD1Retry } from "../shared/db";
+import { getDirectoryById, withDatastoreRetry } from "../shared/db";
 import * as client from "./client";
 import type { ActionContext } from "./client";
 import { seedDirectory } from "./auto";
@@ -81,7 +81,7 @@ async function route(request: Request, env: IdpEnv): Promise<Response> {
 
     if (url.pathname === "/reset") {
       await idpScheduler.stop(env, directory.id);
-      await withD1Retry(() =>
+      await withDatastoreRetry(() =>
         env.DB.batch([
           env.DB.prepare(
             "DELETE FROM idp_group_members WHERE group_id IN (SELECT id FROM idp_groups WHERE directory_id = ?)",

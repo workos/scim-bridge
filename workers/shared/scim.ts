@@ -1,6 +1,6 @@
 import type { Directory, IdMapping, ResourceType } from "./types";
 import { MIGRATED_ID_HEADER } from "./types";
-import { getMapping, upsertMapping, withD1Retry } from "./db";
+import { getMapping, upsertMapping, withDatastoreRetry } from "./db";
 import type { Datastore } from "./datastore";
 
 export const SCIM_PREFIX = "/scim/v2";
@@ -83,6 +83,29 @@ export function parseJson(text: string | null): Record<string, unknown> | null {
 
 export function joinScimUrl(base: string, path: string): string {
   return base.replace(/\/+$/, "") + path;
+}
+
+/**
+ * Canonical key for the native SCIM namespace a base URL addresses, so two
+ * directories configured with equivalent-but-differently-written URLs (default
+ * port written out, upper-case host, trailing slash) are recognised as the same
+ * native app. Returns null for a URL that can't be parsed — callers that use
+ * this to decide whether resources can collide must treat that as "might be the
+ * same namespace" rather than assuming isolation.
+ */
+export function nativeNamespaceKey(base: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(base);
+  } catch {
+    return null;
+  }
+  const port = url.port && url.port !== defaultPort(url.protocol) ? `:${url.port}` : "";
+  return `${url.protocol.toLowerCase()}//${url.hostname.toLowerCase()}${port}${url.pathname.replace(/\/+$/, "")}`;
+}
+
+function defaultPort(protocol: string): string {
+  return protocol === "https:" ? "443" : protocol === "http:" ? "80" : "";
 }
 
 export interface ScimPath {
@@ -214,7 +237,7 @@ export interface IdTranslationMaps {
 export type IdTranslator = (kind: ResourceType, id: string) => string;
 
 export async function loadIdMaps(db: Datastore, directoryId: string): Promise<IdTranslationMaps> {
-  const { results } = await withD1Retry(() =>
+  const { results } = await withDatastoreRetry(() =>
     db
       .prepare("SELECT resource_type, native_id, workos_id FROM id_mappings WHERE directory_id = ?")
       .bind(directoryId)

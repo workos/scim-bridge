@@ -1,23 +1,40 @@
-import { decryptSecret, encryptSecret } from "./crypto";
+import {
+  decryptSecret,
+  encryptSecret,
+  hashProxyToken,
+  isHashedToken,
+  proxyTokenHint,
+} from "./crypto";
 import { newDirectoryId, newProxyToken } from "./ids";
-import type { Datastore } from "./datastore";
+import { TransientDatastoreError, type Datastore } from "./datastore";
 import type { Directory, IdMapping, Mode, ProxyLogEntry, ResourceType } from "./types";
 
-/** Retry transient local-dev D1 errors (miniflare surfaces these when several
- *  wrangler dev processes hit one SQLite file concurrently). Not needed against
- *  real D1, but harmless there. */
-export async function withD1Retry<T>(fn: () => Promise<T>): Promise<T> {
+/**
+ * Retry a datastore operation when the failure was transient.
+ *
+ * `TransientDatastoreError` is the only signal: each driver classifies its own
+ * engine's errors by code - SQLite's `SQLITE_BUSY`/`SQLITE_LOCKED`, Postgres's
+ * serialization and deadlock codes plus a connection the pool lost - and anything
+ * unclassified is rethrown on the first attempt.
+ *
+ * There used to be a message-substring fallback as well. It matched `internal
+ * error`, which is broad enough to hit errors that are not transient at all, and
+ * six attempts of latency in front of the real error is worse for whoever is
+ * reading the logs than not retrying. Its other patterns were D1 wording, which
+ * nothing produces now.
+ *
+ * As deployed this is a narrow safety net rather than a hot path: `busy_timeout`
+ * absorbs SQLite contention inside the driver, and READ COMMITTED with a single
+ * writer means Postgres cannot raise a serialization failure. What it is really
+ * for is a connection lost mid-statement — an RDS failover or a restart.
+ */
+export async function withDatastoreRetry<T>(fn: () => Promise<T>): Promise<T> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 6; attempt++) {
     try {
       return await fn();
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const transient =
-        /database is locked|SQLITE_BUSY|internal error|Failed to parse body as JSON|Network connection lost|storage caused object to be reset|reset because its code was updated/i.test(
-          message,
-        );
-      if (!transient) throw error;
+      if (!(error instanceof TransientDatastoreError)) throw error;
       lastError = error;
       await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
     }
@@ -26,14 +43,14 @@ export async function withD1Retry<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export async function getConfig(db: Datastore, key: string): Promise<string | null> {
-  const row = await withD1Retry(() =>
+  const row = await withDatastoreRetry(() =>
     db.prepare("SELECT value FROM poc_config WHERE key = ?").bind(key).first<{ value: string }>(),
   );
   return row?.value ?? null;
 }
 
 export async function setConfig(db: Datastore, key: string, value: string): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "INSERT INTO poc_config (key, value, updated_at) VALUES (?, ?, datetime('now')) " +
@@ -42,6 +59,34 @@ export async function setConfig(db: Datastore, key: string, value: string): Prom
       .bind(key, value)
       .run(),
   );
+}
+
+/**
+ * Set a config value only if the key is absent, and return the value that is
+ * actually stored — which may be another instance's, not the one passed in.
+ *
+ * `setConfig` overwrites, so two instances booting at once would both see a key
+ * absent and both write it. For a generated secret that is worse than a lost
+ * write: `seedDemoDirectory` copies `native.scim_token` into a directory row, so
+ * the loser's token would be stored on the row while the winner's sits in
+ * config, and the demo would 401 for a reason two boots old. `DO NOTHING` plus a
+ * read-back makes every racer agree on whichever value landed first.
+ */
+export async function setConfigIfAbsent(
+  db: Datastore,
+  key: string,
+  value: string,
+): Promise<string> {
+  await withDatastoreRetry(() =>
+    db
+      .prepare(
+        "INSERT INTO poc_config (key, value, updated_at) VALUES (?, ?, datetime('now')) " +
+          "ON CONFLICT (key) DO NOTHING",
+      )
+      .bind(key, value)
+      .run(),
+  );
+  return (await getConfig(db, key)) ?? value;
 }
 
 /** Decrypt the at-rest secrets on a directory row (native/WorkOS tokens). No-op
@@ -56,14 +101,23 @@ async function decryptDirectory(
   return directory;
 }
 
+/**
+ * Resolve the directory a presented bearer token belongs to.
+ *
+ * The token is hashed and the digest is looked up, so this authenticates without
+ * the database holding anything usable (ENT-6742). No constant-time compare: the
+ * comparison happens inside the index on a SHA-256 digest, and timing that tells an
+ * attacker something about the digest, not about the token that produced it.
+ */
 export async function getDirectoryByToken(db: Datastore, token: string): Promise<Directory | null> {
   if (!token) return null;
+  const hash = await hashProxyToken(token);
   return decryptDirectory(
     db,
-    await withD1Retry(() =>
+    await withDatastoreRetry(() =>
       db
-        .prepare("SELECT * FROM scim_directories WHERE proxy_token = ?")
-        .bind(token)
+        .prepare("SELECT * FROM scim_directories WHERE proxy_token_hash = ?")
+        .bind(hash)
         .first<Directory>(),
     ),
   );
@@ -72,14 +126,14 @@ export async function getDirectoryByToken(db: Datastore, token: string): Promise
 export async function getDirectoryById(db: Datastore, id: string): Promise<Directory | null> {
   return decryptDirectory(
     db,
-    await withD1Retry(() =>
+    await withDatastoreRetry(() =>
       db.prepare("SELECT * FROM scim_directories WHERE id = ?").bind(id).first<Directory>(),
     ),
   );
 }
 
 export async function listDirectories(db: Datastore): Promise<Directory[]> {
-  const { results } = await withD1Retry(() =>
+  const { results } = await withDatastoreRetry(() =>
     db.prepare("SELECT * FROM scim_directories ORDER BY created_at, name, id").all<Directory>(),
   );
   return Promise.all(results.map((d) => decryptDirectory(db, d) as Promise<Directory>));
@@ -94,23 +148,38 @@ export interface NewDirectory {
   workos_directory_id?: string;
   /** The bearer token the IdP will present, when it already has one to keep (a
    *  DNS swap in front of an existing SCIM hostname). Omitted → a fresh one is
-   *  minted. Stays plaintext: it is the key `getDirectoryByToken` looks up. */
+   *  minted. Hashed before it is stored; only the digest reaches the row. */
   proxy_token?: string;
 }
 
-/** Create a directory, encrypting the native/WorkOS tokens at rest, and return
- *  its id. The id and proxy token are minted here rather than by column
+/** A created directory: its id, plus the proxy token in the clear. This is the
+ *  only moment the token exists in a readable form — nothing can recover it from
+ *  the row afterwards, so a caller that needs to show or configure it must take it
+ *  from here (ENT-6742). */
+export interface CreatedDirectory {
+  id: string;
+  proxy_token: string;
+}
+
+/** Create a directory, encrypting the native/WorkOS tokens at rest and hashing the
+ *  proxy token. The id and proxy token are minted here rather than by column
  *  defaults, so every driver produces the same shapes (see shared/ids.ts). */
-export async function insertDirectory(db: Datastore, directory: NewDirectory): Promise<string> {
+export async function insertDirectory(
+  db: Datastore,
+  directory: NewDirectory,
+): Promise<CreatedDirectory> {
   const id = newDirectoryId();
   const nativeToken = await encryptSecret(db, directory.native_token ?? "");
   const workosToken = await encryptSecret(db, directory.workos_token ?? "");
-  await withD1Retry(() =>
+  const proxyToken = directory.proxy_token?.trim() || newProxyToken();
+  const proxyTokenHash = await hashProxyToken(proxyToken);
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "INSERT INTO scim_directories " +
-          "(id, name, native_url, native_token, workos_url, workos_token, workos_directory_id, proxy_token) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          "(id, name, native_url, native_token, workos_url, workos_token, workos_directory_id, " +
+          "proxy_token_hash, proxy_token_hint) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(
         id,
@@ -120,11 +189,81 @@ export async function insertDirectory(db: Datastore, directory: NewDirectory): P
         directory.workos_url ?? "",
         workosToken,
         directory.workos_directory_id || null,
-        directory.proxy_token?.trim() || newProxyToken(),
+        proxyTokenHash,
+        proxyTokenHint(proxyToken),
       )
       .run(),
   );
-  return id;
+  return { id, proxy_token: proxyToken };
+}
+
+/**
+ * Mint a new proxy token for a directory and return it in the clear.
+ *
+ * The only way back from a lost token, now that the row holds a digest. The
+ * previous token stops working the moment this returns, so whoever rotates has to
+ * paste the new one into the IdP before the next sync — which is why the caller
+ * gets the plaintext and the panel shows it once.
+ */
+export async function rotateProxyToken(db: Datastore, id: string): Promise<string> {
+  const token = newProxyToken();
+  // Hashed outside the retry closure: `withDatastoreRetry` takes a sync arrow, so
+  // an `await` in there is a type error (TS1308) rather than a subtle bug.
+  const hash = await hashProxyToken(token);
+  const { meta } = await withDatastoreRetry(() =>
+    db
+      .prepare(
+        "UPDATE scim_directories SET proxy_token_hash = ?, proxy_token_hint = ?, " +
+          "updated_at = datetime('now') WHERE id = ?",
+      )
+      .bind(hash, proxyTokenHint(token), id)
+      .run(),
+  );
+  if (!meta.changes) throw new Error(`No directory ${id} to rotate.`);
+  return token;
+}
+
+/**
+ * Convert rows written before ENT-6742, where `proxy_token_hash` still holds the
+ * plaintext token the column used to be called `proxy_token`.
+ *
+ * Runs at boot, once, and is a no-op afterwards. It has to happen here rather than
+ * in the migration because neither engine computes SHA-256 portably, and it has to
+ * happen at boot rather than lazily on first authentication because a lazy version
+ * leaves plaintext in the table for as long as a directory stays idle — and puts a
+ * "try it both ways" branch in the auth path, which is the branch you least want to
+ * get wrong.
+ *
+ * The `sha256:v1:` prefix is what makes a converted row distinguishable from an
+ * unconverted one; see `hashProxyToken` for why the alternative test does not work.
+ * This pass is the last moment `proxy_token_hint` can be filled in for these rows.
+ */
+export async function backfillProxyTokenHashes(db: Datastore): Promise<number> {
+  const { results } = await withDatastoreRetry(() =>
+    db
+      .prepare("SELECT id, proxy_token_hash FROM scim_directories")
+      .all<{ id: string; proxy_token_hash: string }>(),
+  );
+  const plaintext = results.filter((row) => !isHashedToken(row.proxy_token_hash));
+  if (!plaintext.length) return 0;
+
+  const statements = await Promise.all(
+    plaintext.map(async (row) =>
+      db
+        .prepare(
+          "UPDATE scim_directories SET proxy_token_hash = ?, proxy_token_hint = ? WHERE id = ?",
+        )
+        .bind(
+          await hashProxyToken(row.proxy_token_hash),
+          proxyTokenHint(row.proxy_token_hash),
+          row.id,
+        ),
+    ),
+  );
+  // One transaction: a partial pass would leave some directories authenticating
+  // against a digest and others against a plaintext that nothing hashes to.
+  await withDatastoreRetry(() => db.batch(statements));
+  return plaintext.length;
 }
 
 /** A directory declared by environment rather than imported through the panel:
@@ -147,35 +286,42 @@ export interface EnvDirectory {
  * table default (`passthrough`), the safe answer if the status endpoint is ever
  * unreachable: the listener stays inert.
  *
- * One transaction, and the deletes run first: `proxy_token` is UNIQUE across the
- * table, so a token that moved to a different directory id would otherwise
+ * One transaction, and the deletes run first: `proxy_token_hash` is UNIQUE across
+ * the table, so a token that moved to a different directory id would otherwise
  * collide with the row still holding it.
+ *
+ * The declared token is hashed like any other. `DIRECTORIES_JSON` remains the
+ * plaintext copy for this role — it is where the customer's app already keeps it —
+ * so nothing here needs to read the row back to authenticate outbound.
  */
 export async function reconcileDirectories(
   db: Datastore,
   directories: EnvDirectory[],
 ): Promise<void> {
   const ids = directories.map((d) => d.workos_directory_id);
+  const hashes = await Promise.all(directories.map((d) => hashProxyToken(d.proxy_token)));
   const undeclared = ids.length
     ? db
         .prepare(`DELETE FROM scim_directories WHERE id NOT IN (${ids.map(() => "?").join(", ")})`)
         .bind(...ids)
     : db.prepare("DELETE FROM scim_directories");
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db.batch([
       undeclared,
-      ...directories.map((directory) =>
+      ...directories.map((directory, index) =>
         db
           .prepare(
-            "INSERT INTO scim_directories (id, name, proxy_token, workos_directory_id) " +
-              "VALUES (?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET " +
-              "name = excluded.name, proxy_token = excluded.proxy_token, " +
-              "updated_at = datetime('now')",
+            "INSERT INTO scim_directories " +
+              "(id, name, proxy_token_hash, proxy_token_hint, workos_directory_id) " +
+              "VALUES (?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET " +
+              "name = excluded.name, proxy_token_hash = excluded.proxy_token_hash, " +
+              "proxy_token_hint = excluded.proxy_token_hint, updated_at = datetime('now')",
           )
           .bind(
             directory.workos_directory_id,
             directory.name,
-            directory.proxy_token,
+            hashes[index],
+            proxyTokenHint(directory.proxy_token),
             directory.workos_directory_id,
           ),
       ),
@@ -190,7 +336,7 @@ export async function setDirectoryNative(
   token: string,
 ): Promise<void> {
   const encrypted = await encryptSecret(db, token);
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "UPDATE scim_directories SET native_url = ?, native_token = ?, updated_at = datetime('now') WHERE id = ?",
@@ -207,7 +353,7 @@ export async function setDirectoryWorkos(
   token: string,
 ): Promise<void> {
   const encrypted = await encryptSecret(db, token);
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "UPDATE scim_directories SET workos_url = ?, workos_token = ?, updated_at = datetime('now') WHERE id = ?",
@@ -222,7 +368,7 @@ export async function setDirectoryWorkosDirectoryId(
   id: string,
   workosDirectoryId: string,
 ): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "UPDATE scim_directories SET workos_directory_id = ?, updated_at = datetime('now') WHERE id = ?",
@@ -233,7 +379,7 @@ export async function setDirectoryWorkosDirectoryId(
 }
 
 export async function setDirectoryMode(db: Datastore, id: string, mode: Mode): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare("UPDATE scim_directories SET mode = ?, updated_at = datetime('now') WHERE id = ?")
       .bind(mode, id)
@@ -253,7 +399,7 @@ export async function setDirectoryLogPersistence(
   id: string,
   on: boolean,
 ): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "UPDATE scim_directories SET log_persistence = ?, updated_at = datetime('now') WHERE id = ?",
@@ -271,7 +417,7 @@ export async function setDirectoriesLogPersistence(
 ): Promise<void> {
   if (ids.length === 0) return;
   const placeholders = ids.map(() => "?").join(", ");
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         `UPDATE scim_directories SET log_persistence = ?, updated_at = datetime('now') WHERE id IN (${placeholders})`,
@@ -287,7 +433,7 @@ export async function getMapping(
   resourceType: ResourceType,
   nativeId: string,
 ): Promise<IdMapping | null> {
-  return withD1Retry(() =>
+  return withDatastoreRetry(() =>
     db
       .prepare(
         "SELECT * FROM id_mappings WHERE directory_id = ? AND resource_type = ? AND native_id = ?",
@@ -303,7 +449,7 @@ export async function getMappingByWorkosId(
   resourceType: ResourceType,
   workosId: string,
 ): Promise<IdMapping | null> {
-  return withD1Retry(() =>
+  return withDatastoreRetry(() =>
     db
       .prepare(
         "SELECT * FROM id_mappings WHERE directory_id = ? AND resource_type = ? AND workos_id = ?",
@@ -313,6 +459,32 @@ export async function getMappingByWorkosId(
   );
 }
 
+/**
+ * Mappings of this native id held by *other* directories, each carrying that
+ * directory's native base URL so the caller can tell which of them address the
+ * same native app: ids only collide meaningfully within one native namespace, so
+ * two directories pointed at different endpoints can mint the same id for
+ * unrelated resources. URL comparison is the caller's job — it needs
+ * canonicalisation, which SQL string equality can't do.
+ */
+export async function listOtherMappingsByNativeId(
+  db: Datastore,
+  directory: Directory,
+  resourceType: ResourceType,
+  nativeId: string,
+): Promise<(IdMapping & { native_url: string })[]> {
+  const { results } = await withDatastoreRetry(() =>
+    db
+      .prepare(
+        "SELECT m.*, d.native_url FROM id_mappings m JOIN scim_directories d ON d.id = m.directory_id " +
+          "WHERE m.resource_type = ? AND m.native_id = ? AND m.directory_id != ?",
+      )
+      .bind(resourceType, nativeId, directory.id)
+      .all<IdMapping & { native_url: string }>(),
+  );
+  return results;
+}
+
 export async function upsertMapping(
   db: Datastore,
   mapping: Pick<
@@ -320,7 +492,7 @@ export async function upsertMapping(
     "directory_id" | "resource_type" | "native_id" | "workos_id" | "strategy"
   >,
 ): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "INSERT INTO id_mappings (directory_id, resource_type, native_id, workos_id, strategy) " +
@@ -345,7 +517,7 @@ export async function deleteMapping(
   resourceType: ResourceType,
   nativeId: string,
 ): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "DELETE FROM id_mappings WHERE directory_id = ? AND resource_type = ? AND native_id = ?",
@@ -358,7 +530,7 @@ export async function deleteMapping(
 /** Wipe the native app's directory and its DSync listener log — the customer
  *  app's own state. Leaves directories, mappings, and the WorkOS side alone. */
 export async function clearNativeDirectory(db: Datastore): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db.batch([
       db.prepare("DELETE FROM native_group_members"),
       db.prepare("DELETE FROM native_groups"),
@@ -380,7 +552,7 @@ export type ProxyLogInsert = Partial<Omit<ProxyLogEntry, "id" | "ts">> &
   Pick<ProxyLogEntry, "mode" | "method" | "path">;
 
 export async function insertProxyLog(db: Datastore, entry: ProxyLogInsert): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "INSERT INTO proxy_log (directory_id, source, mode, method, path, request_body, " +

@@ -8,6 +8,25 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # The conformance suite runs one spec against every driver, but it skips
+    # Postgres unless TEST_DATABASE_URL points at a real server — a fake would
+    # prove nothing about the dialect, which is the entire risk. Without this
+    # service the suite passes while exercising no Postgres code, which is the
+    # failure mode ENT-6754 existed to kill, one layer down. The suite itself
+    # refuses to skip the driver when CI is set, so a service that fails to come
+    # up is a red build rather than a quietly narrower one.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: scimtest
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,4 +40,15 @@ jobs:
       - run: npm run lint
       - run: npm run format:check
       - run: npm test
+        env:
+          TEST_DATABASE_URL: postgres://postgres:test@127.0.0.1:5432/scimtest
+      # The whole suite on Postgres, not only the conformance cases: those cover
+      # the behaviours someone thought to write down, these cover the ones the
+      # code actually relies on. This is what caught INSERT OR IGNORE.
+      - run: npm run test:postgres
+        env:
+          TEST_DATABASE_URL: postgres://postgres:test@127.0.0.1:5432/scimtest
+      # Neither engine may run fewer tests than the other — that is how "make it
+      # pass on Postgres" turns into "don't run it on Postgres".
+      - run: npm run test:engines
       - run: npm run build

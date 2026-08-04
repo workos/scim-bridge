@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import proxyWorker from "../workers/proxy/index";
 import { setDirectoryMode, setDirectoryWorkosDirectoryId } from "../workers/shared/db";
-import type { Directory } from "../workers/shared/types";
-import { createCtx, createEnv, proxyRequest, seedDirectory } from "./helpers";
+import type { PocEnv } from "../workers/shared/types";
+import { createCtx, createEnv, proxyRequest, seedDirectory, type SeededDirectory } from "./helpers";
 
 /** GET /status/directories/{id} as the native app's listener would. */
 function statusRequest(
-  directory: Directory,
+  directory: SeededDirectory,
   id: string,
   opts: { method?: string; headers?: Record<string, string> } = {},
 ): Request {
@@ -15,14 +15,14 @@ function statusRequest(
   });
 }
 
-async function fetchStatus(env: ReturnType<typeof createEnv>, request: Request): Promise<Response> {
+async function fetchStatus(env: PocEnv, request: Request): Promise<Response> {
   return proxyWorker.fetch(request, env, createCtx());
 }
 
 describe("status endpoint", () => {
   describe("auth", () => {
     it("rejects a request without a bearer token with 401", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const res = await fetchStatus(
@@ -35,7 +35,7 @@ describe("status endpoint", () => {
     });
 
     it("rejects an unknown bearer token with 401", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const res = await fetchStatus(
@@ -49,7 +49,7 @@ describe("status endpoint", () => {
     });
 
     it("returns 404 (not 403) when a token asks for another directory's id", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const dirA = await seedDirectory(env.DB, { name: "A" });
       const dirB = await seedDirectory(env.DB, { name: "B" });
 
@@ -60,7 +60,7 @@ describe("status endpoint", () => {
     });
 
     it("returns 404 when a token asks for another directory's workos_directory_id", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const dirA = await seedDirectory(env.DB, { name: "A" });
       const dirB = await seedDirectory(env.DB, {
         name: "B",
@@ -75,7 +75,7 @@ describe("status endpoint", () => {
 
   describe("lookup", () => {
     it("resolves the directory by its bridge id", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const res = await fetchStatus(env, statusRequest(directory, directory.id));
@@ -85,7 +85,7 @@ describe("status endpoint", () => {
     });
 
     it("resolves the directory by its workos_directory_id when set", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB, {
         workos_directory_id: "directory_01HXYZ",
       });
@@ -102,7 +102,7 @@ describe("status endpoint", () => {
 
   describe("response shape", () => {
     it("returns every status field for a dual-write directory", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB, {
         mode: "dual-write",
         workos_directory_id: "directory_01ABC",
@@ -121,7 +121,7 @@ describe("status endpoint", () => {
     });
 
     it("reports native_authoritative true for passthrough", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB, { mode: "passthrough" });
 
       const res = await fetchStatus(env, statusRequest(directory, directory.id));
@@ -134,7 +134,7 @@ describe("status endpoint", () => {
     });
 
     it("reports native_authoritative false for workos-only", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB, { mode: "workos-only" });
 
       const res = await fetchStatus(env, statusRequest(directory, directory.id));
@@ -148,7 +148,7 @@ describe("status endpoint", () => {
 
   describe("caching", () => {
     it("sends a short private Cache-Control max-age", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const res = await fetchStatus(env, statusRequest(directory, directory.id));
@@ -157,7 +157,7 @@ describe("status endpoint", () => {
     });
 
     it("returns the same ETag while the directory state is unchanged", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const first = await fetchStatus(env, statusRequest(directory, directory.id));
@@ -171,7 +171,7 @@ describe("status endpoint", () => {
     });
 
     it("changes the ETag when the mode changes", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB, { mode: "dual-write" });
 
       const before = await fetchStatus(env, statusRequest(directory, directory.id));
@@ -182,7 +182,7 @@ describe("status endpoint", () => {
     });
 
     it("answers a matching If-None-Match with an empty 304 that keeps the headers", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const first = await fetchStatus(env, statusRequest(directory, directory.id));
@@ -200,7 +200,7 @@ describe("status endpoint", () => {
     });
 
     it("serves a full 200 when If-None-Match carries a stale ETag", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB, { mode: "dual-write" });
 
       const first = await fetchStatus(env, statusRequest(directory, directory.id));
@@ -217,7 +217,7 @@ describe("status endpoint", () => {
     });
 
     it("supports HEAD with the same status and validators as GET", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const get = await fetchStatus(env, statusRequest(directory, directory.id));
@@ -234,7 +234,7 @@ describe("status endpoint", () => {
     });
 
     it("answers a conditional HEAD with 304", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const get = await fetchStatus(env, statusRequest(directory, directory.id));
@@ -252,7 +252,7 @@ describe("status endpoint", () => {
 
   describe("routing", () => {
     it.each(["POST", "PUT", "PATCH", "DELETE"])("returns 405 for %s", async (method) => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const res = await fetchStatus(env, statusRequest(directory, directory.id, { method }));
@@ -262,7 +262,7 @@ describe("status endpoint", () => {
     });
 
     it("returns 404 when the id segment is missing", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       for (const path of ["/status/directories", "/status/directories/"]) {
@@ -272,7 +272,7 @@ describe("status endpoint", () => {
     });
 
     it("returns 404 for extra path segments", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const res = await fetchStatus(
@@ -284,7 +284,7 @@ describe("status endpoint", () => {
     });
 
     it("decodes a percent-encoded id before matching", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB, {
         workos_directory_id: "directory 01 with spaces",
       });
@@ -301,7 +301,7 @@ describe("status endpoint", () => {
     });
 
     it("returns 404 for a malformed percent-encoding instead of throwing", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const res = await fetchStatus(env, statusRequest(directory, "%E0%A4%A"));
@@ -312,7 +312,7 @@ describe("status endpoint", () => {
 
   describe("auth parsing", () => {
     it("accepts a lowercase 'bearer' scheme", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const res = await fetchStatus(
@@ -328,7 +328,7 @@ describe("status endpoint", () => {
     // The listener polling this endpoint runs on the customer's side, so it may
     // present the token in whichever shape its HTTP client is configured with.
     it("accepts a bare token with no scheme", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const res = await fetchStatus(
@@ -343,7 +343,7 @@ describe("status endpoint", () => {
     });
 
     it("rejects another scheme carrying the token with 401", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const res = await fetchStatus(
@@ -357,7 +357,7 @@ describe("status endpoint", () => {
     });
 
     it("trims whitespace around the token after the Bearer scheme", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const res = await fetchStatus(
@@ -377,7 +377,7 @@ describe("status endpoint", () => {
             throw new Error("boom");
           },
         },
-      } as unknown as ReturnType<typeof createEnv>;
+      } as unknown as PocEnv;
 
       const res = await fetchStatus(
         broken,
@@ -393,7 +393,7 @@ describe("status endpoint", () => {
 
   describe("check precedence", () => {
     it("answers an unauthenticated POST with 405, not 401", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const res = await fetchStatus(
@@ -407,7 +407,7 @@ describe("status endpoint", () => {
     });
 
     it("answers a bad path shape with 404 even when the token is unknown", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       await seedDirectory(env.DB);
 
       const res = await fetchStatus(
@@ -424,7 +424,7 @@ describe("status endpoint", () => {
 
   describe("routing edges", () => {
     it("does not serve ids concatenated onto the prefix without a slash", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       // /status/directories<id> must not reach the status handler.
@@ -437,7 +437,7 @@ describe("status endpoint", () => {
     });
 
     it("tolerates a trailing slash after a valid id", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const res = await fetchStatus(
@@ -450,7 +450,7 @@ describe("status endpoint", () => {
     });
 
     it("serves the status body as application/json", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const ok = await fetchStatus(env, statusRequest(directory, directory.id));
@@ -467,7 +467,7 @@ describe("status endpoint", () => {
 
   describe("ETag composition", () => {
     it("sends the entity tag as a quoted opaque string", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const res = await fetchStatus(env, statusRequest(directory, directory.id));
@@ -476,7 +476,7 @@ describe("status endpoint", () => {
     });
 
     it("changes the ETag when workos_directory_id is set, not only on mode flips", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const before = await fetchStatus(env, statusRequest(directory, directory.id));
@@ -489,7 +489,7 @@ describe("status endpoint", () => {
     });
 
     it("does not honor If-None-Match: * (exact-match validators only)", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB);
 
       const res = await fetchStatus(
@@ -507,7 +507,7 @@ describe("status endpoint", () => {
 
   describe("mode flips", () => {
     it("reflects a setDirectoryMode cutover immediately", async () => {
-      const env = createEnv();
+      const env = await createEnv();
       const directory = await seedDirectory(env.DB, { mode: "dual-write" });
 
       const before = await fetchStatus(env, statusRequest(directory, directory.id));

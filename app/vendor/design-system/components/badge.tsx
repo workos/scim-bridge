@@ -1,3 +1,5 @@
+// @ts-nocheck — vendored from workos/packages/design-system by
+// `npm run sync-design-system`, which overwrites this file. Edit it upstream.
 import { Badge as ThemesBadge } from "@radix-ui/themes/dist/esm/components/badge.js";
 import * as React from "react";
 import type { MarginProps } from "../props.js";

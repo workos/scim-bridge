@@ -794,7 +794,7 @@ describe("scimFetch", () => {
 
 describe("loadIdMaps", () => {
   it("builds both directions, keyed per resource type", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB);
     await upsertMapping(env.DB, {
       directory_id: directory.id,
@@ -822,7 +822,7 @@ describe("loadIdMaps", () => {
   });
 
   it("only loads mappings for the requested directory", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const mine = await seedDirectory(env.DB);
     const other = await seedDirectory(env.DB);
     await upsertMapping(env.DB, {

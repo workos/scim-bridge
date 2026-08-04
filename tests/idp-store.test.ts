@@ -10,7 +10,7 @@ import { createEnv, seedDirectory } from "./helpers";
  */
 describe("idp store", () => {
   it("mints an id for a user and reads the row back", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB);
 
     const user = await store.insertUser(env.DB, {
@@ -33,7 +33,7 @@ describe("idp store", () => {
   });
 
   it("mints an id for a group and reads the row back", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB);
 
     const group = await store.insertGroup(env.DB, {
@@ -48,7 +48,7 @@ describe("idp store", () => {
   });
 
   it("lists a same-second seed by name, not by minted id", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB);
     for (const name of ["zoe@example.com", "ada@example.com", "mia@example.com"]) {
       await store.insertUser(env.DB, {
@@ -68,8 +68,13 @@ describe("idp store", () => {
       });
     }
 
-    // A seed writes every row within one second, so created_at alone leaves the
-    // order to the engine.
+    // Pin the timestamps rather than hoping three inserts land inside one
+    // second: the tie is the precondition under test, and the window widens with
+    // every millisecond of round-trip.
+    await env.DB.prepare("UPDATE idp_users SET created_at = ?").bind("2026-08-04 12:00:00").run();
+    await env.DB.prepare("UPDATE idp_groups SET created_at = ?").bind("2026-08-04 12:00:00").run();
+
+    // With created_at equal, only the tiebreaker decides the order.
     expect((await store.listUsers(env.DB, directory.id)).map((u) => u.user_name)).toEqual([
       "ada@example.com",
       "mia@example.com",
@@ -83,7 +88,7 @@ describe("idp store", () => {
   });
 
   it("keeps each directory's users and groups separate", async () => {
-    const env = createEnv();
+    const env = await createEnv();
     const a = await seedDirectory(env.DB, { name: "A" });
     const b = await seedDirectory(env.DB, { name: "B" });
     await store.insertUser(env.DB, {

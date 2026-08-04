@@ -11,6 +11,7 @@ import {
   seedDirectory,
   type FakeUpstreams,
   type RecordedCall,
+  type SeededDirectory,
 } from "./helpers";
 
 /**
@@ -63,7 +64,7 @@ describe("migrated-id dance", () => {
 
   /** Seed a dual-write directory and script the native leg to succeed. */
   async function setup(opts: Parameters<typeof seedDirectory>[1] = {}) {
-    const env = createEnv();
+    const env = await createEnv();
     const directory = await seedDirectory(env.DB, opts);
     fake = installFakeUpstreams();
     return { env, directory, fake };
@@ -71,7 +72,7 @@ describe("migrated-id dance", () => {
 
   async function send(
     env: PocEnv,
-    directory: Directory,
+    directory: SeededDirectory,
     method: string,
     path: string,
     body?: unknown,

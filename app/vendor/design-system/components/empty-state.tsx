@@ -1,3 +1,5 @@
+// @ts-nocheck — vendored from workos/packages/design-system by
+// `npm run sync-design-system`, which overwrites this file. Edit it upstream.
 "use client";
 import { Flex } from "@radix-ui/themes/dist/esm/components/flex.js";
 import { type TextProps, Text } from "@radix-ui/themes/dist/esm/components/text.js";

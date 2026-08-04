@@ -1,4 +1,5 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import type { Route } from "./+types/listener";
+
 import { Form, useFetcher, useLoaderData, useNavigation, useRevalidator } from "react-router";
 import { getConfig, setConfig } from "../../../workers/shared/db";
 import { CopyButton, FieldLabel, trimTrailingSlash } from "./ui";
@@ -34,7 +35,7 @@ async function detectNgrokTunnel(): Promise<string | null> {
   }
 }
 
-export async function loader({ context }: LoaderFunctionArgs) {
+export async function loader({ context }: Route.LoaderArgs) {
   const { env } = context.cloudflare;
   const [mockEmit, webhookSecret, nativePublicUrl, tunnelUrl] = await Promise.all([
     getConfig(env.DB, "mock_workos.emit_dsync"),
@@ -50,7 +51,7 @@ export async function loader({ context }: LoaderFunctionArgs) {
   } as const;
 }
 
-export async function action({ context, request }: ActionFunctionArgs) {
+export async function action({ context, request }: Route.ActionArgs) {
   const { env } = context.cloudflare;
   const form = await request.formData();
   const intent = String(form.get("intent") ?? "");
