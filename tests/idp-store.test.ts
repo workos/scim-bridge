@@ -68,8 +68,13 @@ describe("idp store", () => {
       });
     }
 
-    // A seed writes every row within one second, so created_at alone leaves the
-    // order to the engine.
+    // Pin the timestamps rather than hoping three inserts land inside one
+    // second: the tie is the precondition under test, and the window widens with
+    // every millisecond of round-trip.
+    await env.DB.prepare("UPDATE idp_users SET created_at = ?").bind("2026-08-04 12:00:00").run();
+    await env.DB.prepare("UPDATE idp_groups SET created_at = ?").bind("2026-08-04 12:00:00").run();
+
+    // With created_at equal, only the tiebreaker decides the order.
     expect((await store.listUsers(env.DB, directory.id)).map((u) => u.user_name)).toEqual([
       "ada@example.com",
       "mia@example.com",

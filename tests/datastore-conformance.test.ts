@@ -166,6 +166,12 @@ describe.each(drivers)("$name driver", ({ open }) => {
   it("orders a same-second insert deterministically", async () => {
     const db = await open();
     for (const name of ["Zeta", "Acme", "Mid"]) await insertDirectory(db, { name });
+    // The tie is the precondition, so make it rather than hope for it: three
+    // inserts usually share a second, and "usually" is a flake on any engine.
+    await db
+      .prepare("UPDATE scim_directories SET created_at = ?")
+      .bind("2026-08-04 12:00:00")
+      .run();
 
     expect((await listDirectories(db)).map((d) => d.name)).toEqual(["Acme", "Mid", "Zeta"]);
   });
