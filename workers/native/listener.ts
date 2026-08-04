@@ -229,10 +229,13 @@ async function upsertUserFromEvent(store: ScimStore, data: Json): Promise<Outcom
 
   const existing = await findUser(store, idpId, userName);
   if (!existing) {
-    // Adopt the IdP's id (== externalId) as our own, so the proxy, WorkOS, and
-    // this app all address the user by one shared id — a create born in
-    // workos-only stays reachable if the migration later rolls back.
-    const id = idpId;
+    // Address the user by the id WorkOS already holds (the event's resource id).
+    // For a directory migrated before cutover that is the pre-migration shared
+    // id; for a user born in workos-only WorkOS minted it from externalId, so it
+    // equals idp_id. Adopting idp_id instead would keep the shared id only for
+    // the born-here case and permanently diverge a re-created pre-cutover user,
+    // breaking the id-preserving rollback. Fall back to idp_id if absent.
+    const id = asString(data.id) ?? idpId;
     const resource = userResourceFromEvent(id, idpId, userName, active, data, {});
     await store.upsertUser({ id, userName, externalId: idpId, active, resource });
     return { action: "applied", detail: active ? "onboard()" : "provisioned inactive", idpId };
@@ -281,7 +284,11 @@ async function upsertGroupFromEvent(store: ScimStore, data: Json): Promise<Outco
   const existing = await findGroup(store, idpId, name);
   if (!existing) {
     if (!name) return { action: "ignored", detail: "group event carries no name", idpId };
-    const id = idpId;
+    // As with users, adopt the id WorkOS holds (the event's resource id) so a
+    // re-created pre-cutover group keeps its shared id; fall back to the
+    // externalId key. externalId stays keyed on raw_attributes (idpId here), not
+    // data.idp_id — which for a group is the displayName WorkOS surfaces.
+    const id = asString(data.id) ?? idpId;
     const resource = groupResourceFromEvent(id, idpId, name, {});
     await store.upsertGroup({ id, displayName: name, externalId: idpId, resource });
     return { action: "applied", detail: `group "${name}" created`, idpId };
@@ -363,7 +370,10 @@ async function changeMembership(
         idpId,
       };
     }
-    userId = userIdpId ?? crypto.randomUUID();
+    // Prefer the id WorkOS holds so a stub matches what a later full event (or a
+    // reconcile) addresses; the externalId key next, and a random id only when
+    // neither is present. A random id is guaranteed to diverge from WorkOS.
+    userId = asString(userData.id) ?? userIdpId ?? crypto.randomUUID();
     const active = userData.state === undefined ? true : userData.state === "active";
     await store.upsertUser({
       id: userId,
@@ -390,7 +400,7 @@ async function changeMembership(
         idpId,
       };
     }
-    groupId = groupIdpId ?? crypto.randomUUID();
+    groupId = asString(groupData.id) ?? groupIdpId ?? crypto.randomUUID();
     const displayName = groupName ?? groupIdpId ?? "unknown group";
     groupLabel = displayName;
     await store.upsertGroup({
