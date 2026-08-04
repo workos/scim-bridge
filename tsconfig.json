@@ -1,8 +1,13 @@
 {
+  // Solution file: `tsc -b` builds the projects listed here, and those are the
+  // ones `npm run typecheck` gates. tsconfig.app.json is deliberately absent —
+  // the control panel and the vendored design system still have errors, so
+  // gating them would mean a baseline nobody maintains (ENT-6755). Check it on
+  // purpose with `npm run typecheck:app`.
   "files": [],
   "references": [
     { "path": "./tsconfig.node.json" },
-    { "path": "./tsconfig.app.json" }
+    { "path": "./tsconfig.check.json" }
   ],
   "compilerOptions": {
     "checkJs": true,

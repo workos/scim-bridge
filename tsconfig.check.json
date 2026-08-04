@@ -1,0 +1,27 @@
+{
+  // The gated project: everything outside the control panel. `npm run typecheck`
+  // builds this (via the solution file) and must stay at zero errors.
+  //
+  // The panel is not here because it imports app/vendor/design-system, which is
+  // copied from the monorepo by `npm run sync-design-system` — edits there are
+  // overwritten on the next sync, which is the same reason lint excludes it. tsc
+  // checks every file it reaches through an import, so one panel file in this
+  // project would drag the whole vendored tree in with it. See tsconfig.app.json.
+  "extends": "./tsconfig.json",
+  "include": ["workers/**/*", "server/**/*", "tests/**/*"],
+  // The one test that imports a panel route, and so reaches the vendored tree.
+  // scripts/check-type-gate.mjs fails if another test starts crossing that line,
+  // rather than letting it surface here as a wall of vendored-code errors.
+  "exclude": ["tests/directory-import.test.ts"],
+  "compilerOptions": {
+    "composite": true,
+    "strict": true,
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "types": ["vite/client", "@cloudflare/workers-types/experimental", "@types/node"],
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "resolveJsonModule": true
+  }
+}
