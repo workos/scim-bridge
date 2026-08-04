@@ -738,6 +738,51 @@ describe("runReconcileFromWorkos", () => {
     expect(await mappingRows(env, directory.id)).toEqual([]);
   });
 
+  it("refuses to repair an unmapped colliding row when another directory fronts the native app", async () => {
+    const env = await createEnv();
+    // A neighbour on the same native app: the unmapped row may be theirs, or the
+    // app's own, and the only thing pointing at it is an externalId this
+    // directory's tenant minted — which they can set to any id they can read.
+    await seedDirectory(env.DB, { name: "Org B" });
+    const directory = await seedDirectory(env.DB, { name: "Org A", mode: "workos-only" });
+    fake = installFakeUpstreams();
+    fake.route("workos", "GET", "/Users", listPage([]));
+    fake.route(
+      "workos",
+      "GET",
+      "/Groups",
+      listPage([
+        {
+          id: "attacker-g1",
+          displayName: "Admins",
+          externalId: "victim-g1",
+          members: [{ value: "attacker-1" }],
+        },
+      ]),
+    );
+    fake.route(
+      "native",
+      "PUT",
+      "/Groups/attacker-g1",
+      scimJson(409, { detail: "displayName exists" }),
+    );
+    fake.route("native", "GET", "/Groups", () =>
+      listPage([{ id: "victim-g1", displayName: "Admins" }]),
+    );
+    fake.route("native", "PUT", "/Groups/victim-g1", (call) => scimJson(200, call.json()));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    expect(fake.callsTo("native").some((c) => c.path.startsWith("/Groups/victim-g1"))).toBe(false);
+    expect(summary.groups).toEqual({ total: 1, mirrored: 0, failed: 1 });
+    expect(summary.errors[0]).toBe(
+      'Groups/attacker-g1: displayName "Admins" is native id victim-g1, which is unmapped, and ' +
+        "another directory fronts this native app, so the tenant-supplied externalId cannot " +
+        "attribute it; drift left unrepaired",
+    );
+    expect(await mappingRows(env, directory.id)).toEqual([]);
+  });
+
   it("refuses to repair a colliding row mapped through an equivalent native url", async () => {
     const env = await createEnv();
     // Same native app, written differently: explicit default port and a trailing
