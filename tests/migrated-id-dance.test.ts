@@ -686,6 +686,36 @@ describe("migrated-id dance", () => {
       ]);
     });
 
+    it("mints a random id when another directory fronts the same native app", async () => {
+      // externalId is the tenant's own value and the minted id both addresses a
+      // native row and is recorded as this directory's mapping, so in a shared
+      // namespace deriving from it would let a tenant claim a neighbour's row.
+      const { env, directory, fake } = await setup({ mode: "workos-only" });
+      await seedDirectory(env.DB, { name: "Org B" });
+      fake.route("workos", "PUT", /^\/Users\//, scimJson(404, { detail: "nope" }), { once: true });
+      fake.route("workos", "POST", "/Users", (call) =>
+        scimJson(201, { id: call.headers.get(MIGRATED_ID_HEADER) }),
+      );
+
+      const res = await send(env, directory, "POST", "/scim/v2/Users", {
+        externalId: "victim-1",
+        userName: "a@b.c",
+      });
+
+      expect(res.status).toBe(201);
+      const created = (await res.json()) as { id: string };
+      expect(created.id).not.toBe("victim-1");
+      expect(created.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+      expect(await allMappings(env.DB, directory.id)).toEqual([
+        {
+          resource_type: "Users",
+          native_id: created.id,
+          workos_id: created.id,
+          strategy: "migrated-id",
+        },
+      ]);
+    });
+
     it("mints a random id when the create has no externalId", async () => {
       const { env, directory, fake } = await setup({ mode: "workos-only" });
       fake.route("workos", "PUT", /^\/Users\//, scimJson(404, { detail: "nope" }), { once: true });
