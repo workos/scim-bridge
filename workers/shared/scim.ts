@@ -1,6 +1,6 @@
 import type { Directory, IdMapping, ResourceType } from "./types";
 import { MIGRATED_ID_HEADER } from "./types";
-import { getMapping, upsertMapping, withD1Retry } from "./db";
+import { getMapping, upsertMapping, withDatastoreRetry } from "./db";
 import type { Datastore } from "./datastore";
 
 export const SCIM_PREFIX = "/scim/v2";
@@ -237,7 +237,7 @@ export interface IdTranslationMaps {
 export type IdTranslator = (kind: ResourceType, id: string) => string;
 
 export async function loadIdMaps(db: Datastore, directoryId: string): Promise<IdTranslationMaps> {
-  const { results } = await withD1Retry(() =>
+  const { results } = await withDatastoreRetry(() =>
     db
       .prepare("SELECT resource_type, native_id, workos_id FROM id_mappings WHERE directory_id = ?")
       .bind(directoryId)

@@ -16,7 +16,7 @@
 /**
  * A failure the caller may retry: a lock, a serialization conflict, a connection
  * the pool lost. Each driver decides what qualifies for its engine and wraps the
- * cause, so `withD1Retry` doesn't have to pattern-match error strings it can't
+ * cause, so `withDatastoreRetry` doesn't have to pattern-match error strings it can't
  * know.
  */
 export class TransientDatastoreError extends Error {

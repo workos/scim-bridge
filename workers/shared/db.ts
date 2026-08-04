@@ -4,14 +4,19 @@ import { TransientDatastoreError, type Datastore } from "./datastore";
 import type { Directory, IdMapping, Mode, ProxyLogEntry, ResourceType } from "./types";
 
 /**
- * Retry a transient datastore failure: a SQLite lock, a Postgres serialization
- * conflict or lost pooled connection, the miniflare wording D1 used to surface.
+ * Retry a datastore operation when the failure was transient.
  *
- * The driver classifies its own engine's errors and wraps them in
- * `TransientDatastoreError`; the string match stays as a fallback for anything
- * that reaches here unwrapped.
+ * Each driver classifies its own engine's errors and wraps them in
+ * `TransientDatastoreError` — SQLite's `SQLITE_BUSY`/`SQLITE_LOCKED`, Postgres's
+ * serialization and deadlock codes plus a connection the pool lost. The string
+ * match is a fallback for anything that arrives unwrapped.
+ *
+ * As deployed this is a narrow safety net rather than a hot path: `busy_timeout`
+ * absorbs SQLite contention inside the driver, and READ COMMITTED with a single
+ * writer means Postgres cannot raise a serialization failure. What it is really
+ * for is a connection lost mid-statement — an RDS failover or a restart.
  */
-export async function withD1Retry<T>(fn: () => Promise<T>): Promise<T> {
+export async function withDatastoreRetry<T>(fn: () => Promise<T>): Promise<T> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 6; attempt++) {
     try {
@@ -32,14 +37,14 @@ export async function withD1Retry<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export async function getConfig(db: Datastore, key: string): Promise<string | null> {
-  const row = await withD1Retry(() =>
+  const row = await withDatastoreRetry(() =>
     db.prepare("SELECT value FROM poc_config WHERE key = ?").bind(key).first<{ value: string }>(),
   );
   return row?.value ?? null;
 }
 
 export async function setConfig(db: Datastore, key: string, value: string): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "INSERT INTO poc_config (key, value, updated_at) VALUES (?, ?, datetime('now')) " +
@@ -66,7 +71,7 @@ export async function setConfigIfAbsent(
   key: string,
   value: string,
 ): Promise<string> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "INSERT INTO poc_config (key, value, updated_at) VALUES (?, ?, datetime('now')) " +
@@ -94,7 +99,7 @@ export async function getDirectoryByToken(db: Datastore, token: string): Promise
   if (!token) return null;
   return decryptDirectory(
     db,
-    await withD1Retry(() =>
+    await withDatastoreRetry(() =>
       db
         .prepare("SELECT * FROM scim_directories WHERE proxy_token = ?")
         .bind(token)
@@ -106,14 +111,14 @@ export async function getDirectoryByToken(db: Datastore, token: string): Promise
 export async function getDirectoryById(db: Datastore, id: string): Promise<Directory | null> {
   return decryptDirectory(
     db,
-    await withD1Retry(() =>
+    await withDatastoreRetry(() =>
       db.prepare("SELECT * FROM scim_directories WHERE id = ?").bind(id).first<Directory>(),
     ),
   );
 }
 
 export async function listDirectories(db: Datastore): Promise<Directory[]> {
-  const { results } = await withD1Retry(() =>
+  const { results } = await withDatastoreRetry(() =>
     db.prepare("SELECT * FROM scim_directories ORDER BY created_at, name, id").all<Directory>(),
   );
   return Promise.all(results.map((d) => decryptDirectory(db, d) as Promise<Directory>));
@@ -139,7 +144,7 @@ export async function insertDirectory(db: Datastore, directory: NewDirectory): P
   const id = newDirectoryId();
   const nativeToken = await encryptSecret(db, directory.native_token ?? "");
   const workosToken = await encryptSecret(db, directory.workos_token ?? "");
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "INSERT INTO scim_directories " +
@@ -195,7 +200,7 @@ export async function reconcileDirectories(
         .prepare(`DELETE FROM scim_directories WHERE id NOT IN (${ids.map(() => "?").join(", ")})`)
         .bind(...ids)
     : db.prepare("DELETE FROM scim_directories");
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db.batch([
       undeclared,
       ...directories.map((directory) =>
@@ -224,7 +229,7 @@ export async function setDirectoryNative(
   token: string,
 ): Promise<void> {
   const encrypted = await encryptSecret(db, token);
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "UPDATE scim_directories SET native_url = ?, native_token = ?, updated_at = datetime('now') WHERE id = ?",
@@ -241,7 +246,7 @@ export async function setDirectoryWorkos(
   token: string,
 ): Promise<void> {
   const encrypted = await encryptSecret(db, token);
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "UPDATE scim_directories SET workos_url = ?, workos_token = ?, updated_at = datetime('now') WHERE id = ?",
@@ -256,7 +261,7 @@ export async function setDirectoryWorkosDirectoryId(
   id: string,
   workosDirectoryId: string,
 ): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "UPDATE scim_directories SET workos_directory_id = ?, updated_at = datetime('now') WHERE id = ?",
@@ -267,7 +272,7 @@ export async function setDirectoryWorkosDirectoryId(
 }
 
 export async function setDirectoryMode(db: Datastore, id: string, mode: Mode): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare("UPDATE scim_directories SET mode = ?, updated_at = datetime('now') WHERE id = ?")
       .bind(mode, id)
@@ -287,7 +292,7 @@ export async function setDirectoryLogPersistence(
   id: string,
   on: boolean,
 ): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "UPDATE scim_directories SET log_persistence = ?, updated_at = datetime('now') WHERE id = ?",
@@ -305,7 +310,7 @@ export async function setDirectoriesLogPersistence(
 ): Promise<void> {
   if (ids.length === 0) return;
   const placeholders = ids.map(() => "?").join(", ");
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         `UPDATE scim_directories SET log_persistence = ?, updated_at = datetime('now') WHERE id IN (${placeholders})`,
@@ -321,7 +326,7 @@ export async function getMapping(
   resourceType: ResourceType,
   nativeId: string,
 ): Promise<IdMapping | null> {
-  return withD1Retry(() =>
+  return withDatastoreRetry(() =>
     db
       .prepare(
         "SELECT * FROM id_mappings WHERE directory_id = ? AND resource_type = ? AND native_id = ?",
@@ -337,7 +342,7 @@ export async function getMappingByWorkosId(
   resourceType: ResourceType,
   workosId: string,
 ): Promise<IdMapping | null> {
-  return withD1Retry(() =>
+  return withDatastoreRetry(() =>
     db
       .prepare(
         "SELECT * FROM id_mappings WHERE directory_id = ? AND resource_type = ? AND workos_id = ?",
@@ -361,7 +366,7 @@ export async function listOtherMappingsByNativeId(
   resourceType: ResourceType,
   nativeId: string,
 ): Promise<(IdMapping & { native_url: string })[]> {
-  const { results } = await withD1Retry(() =>
+  const { results } = await withDatastoreRetry(() =>
     db
       .prepare(
         "SELECT m.*, d.native_url FROM id_mappings m JOIN scim_directories d ON d.id = m.directory_id " +
@@ -380,7 +385,7 @@ export async function upsertMapping(
     "directory_id" | "resource_type" | "native_id" | "workos_id" | "strategy"
   >,
 ): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "INSERT INTO id_mappings (directory_id, resource_type, native_id, workos_id, strategy) " +
@@ -405,7 +410,7 @@ export async function deleteMapping(
   resourceType: ResourceType,
   nativeId: string,
 ): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "DELETE FROM id_mappings WHERE directory_id = ? AND resource_type = ? AND native_id = ?",
@@ -418,7 +423,7 @@ export async function deleteMapping(
 /** Wipe the native app's directory and its DSync listener log — the customer
  *  app's own state. Leaves directories, mappings, and the WorkOS side alone. */
 export async function clearNativeDirectory(db: Datastore): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db.batch([
       db.prepare("DELETE FROM native_group_members"),
       db.prepare("DELETE FROM native_groups"),
@@ -440,7 +445,7 @@ export type ProxyLogInsert = Partial<Omit<ProxyLogEntry, "id" | "ts">> &
   Pick<ProxyLogEntry, "mode" | "method" | "path">;
 
 export async function insertProxyLog(db: Datastore, entry: ProxyLogInsert): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "INSERT INTO proxy_log (directory_id, source, mode, method, path, request_body, " +

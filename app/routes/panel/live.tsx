@@ -9,7 +9,7 @@ import {
   getDirectoryById,
   listDirectories,
   setDirectoryMode,
-  withD1Retry,
+  withDatastoreRetry,
 } from "../../../workers/shared/db";
 import { runBackfill } from "../../../workers/shared/backfill";
 import { callIdpSimulator } from "./idp-simulator";
@@ -143,22 +143,22 @@ export async function loader({ context }: Route.LoaderArgs) {
   }
 
   const [nativeU, idpU, nativeG, idpG, workos, auto, events] = await Promise.all([
-    withD1Retry(() =>
+    withDatastoreRetry(() =>
       env.DB.prepare("SELECT user_name AS name, active FROM native_users").all<DirRow>(),
     ),
-    withD1Retry(() =>
+    withDatastoreRetry(() =>
       env.DB.prepare("SELECT user_name AS name, active FROM idp_users WHERE directory_id = ?")
         .bind(directory.id)
         .all<DirRow>(),
     ),
-    withD1Retry(() =>
+    withDatastoreRetry(() =>
       env.DB.prepare(
         "SELECT g.display_name AS name, COUNT(m.user_id) AS member_count " +
           "FROM native_groups g LEFT JOIN native_group_members m ON m.group_id = g.id " +
           "GROUP BY g.id ORDER BY g.display_name, g.id",
       ).all<GroupRow>(),
     ),
-    withD1Retry(() =>
+    withDatastoreRetry(() =>
       env.DB.prepare(
         "SELECT g.display_name AS name, COUNT(m.user_id) AS member_count " +
           "FROM idp_groups g LEFT JOIN idp_group_members m ON m.group_id = g.id " +
@@ -168,14 +168,14 @@ export async function loader({ context }: Route.LoaderArgs) {
         .all<GroupRow>(),
     ),
     fetchWorkosDirectory(directory.workos_url, directory.workos_token),
-    withD1Retry(() =>
+    withDatastoreRetry(() =>
       env.DB.prepare(
         "SELECT running, interval_ms, tick_count FROM idp_auto_state WHERE directory_id = ?",
       )
         .bind(directory.id)
         .first<AutoStateRow>(),
     ),
-    withD1Retry(() =>
+    withDatastoreRetry(() =>
       env.DB.prepare(
         "SELECT * FROM listener_events ORDER BY id DESC LIMIT 25",
       ).all<ListenerEvent>(),

@@ -1,4 +1,4 @@
-import { getConfig, listDirectories, truncateBody, withD1Retry } from "../shared/db";
+import { getConfig, listDirectories, truncateBody, withDatastoreRetry } from "../shared/db";
 import { fetchDirectoryStatus } from "./status-client";
 import { NATIVE_TABLES, ScimStore } from "./store";
 import type { GroupRow, ScimResource, UserRow } from "./store";
@@ -550,7 +550,7 @@ async function isNewestEvent(
   eventAt: string | null,
 ): Promise<boolean> {
   if (!eventAt) return true; // no timestamp to order by — apply in arrival order
-  const row = await withD1Retry(() =>
+  const row = await withDatastoreRetry(() =>
     db
       .prepare("SELECT event_at FROM listener_versions WHERE scope = ?")
       .bind(scope)
@@ -567,7 +567,7 @@ async function recordEventVersion(
   eventAt: string | null,
 ): Promise<void> {
   if (!eventAt) return;
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "INSERT INTO listener_versions (scope, event_at) VALUES (?, ?) " +
@@ -627,7 +627,7 @@ async function isDuplicate(db: Datastore, eventId: string): Promise<boolean> {
   // current mode when WorkOS redelivers it, or an event straddling the cutover
   // could never be applied via webhook. A stale redelivery is still guarded by
   // the version ledger, which the inert path advances.
-  const row = await withD1Retry(() =>
+  const row = await withDatastoreRetry(() =>
     db
       .prepare(
         "SELECT 1 AS one FROM listener_events " +
@@ -650,7 +650,7 @@ async function recordEvent(
     payload: string | null;
   },
 ): Promise<void> {
-  await withD1Retry(() =>
+  await withDatastoreRetry(() =>
     db
       .prepare(
         "INSERT INTO listener_events (event_id, event_type, idp_id, action, detail, payload) " +
