@@ -8,6 +8,7 @@ import {
   setDirectoryLogPersistence,
   type EnvDirectory,
 } from "../workers/shared/db";
+import { rememberClientToken, storeClientToken } from "../workers/shared/client-tokens";
 import { newScimToken } from "../workers/shared/ids";
 import type { PocEnv } from "../workers/shared/types";
 
@@ -252,6 +253,11 @@ export async function seedNativeAppConfig(env: PocEnv, config: AppConfig): Promi
  */
 export async function seedNativeAppDirectories(env: PocEnv, config: AppConfig): Promise<void> {
   await reconcileDirectories(env.DB, config.directories);
+  // The rows keep only a digest (ENT-6742), so the status client gets its copy from
+  // the environment we just read. In-process: this runs on every boot.
+  for (const directory of config.directories) {
+    rememberClientToken(directory.workos_directory_id, directory.proxy_token);
+  }
 }
 
 /**
@@ -264,13 +270,18 @@ export async function seedDemoDirectory(env: PocEnv, config: AppConfig): Promise
   const existing = await listDirectories(env.DB);
   if (existing.length > 0) return;
   const base = loopbackBase(config);
-  const id = await insertDirectory(env.DB, {
+  const { id, proxy_token } = await insertDirectory(env.DB, {
     name: "Demo directory",
     native_url: `${base}/__demo/native/scim/v2`,
     native_token: (await getConfig(env.DB, "native.scim_token")) ?? "",
     workos_url: `${base}/__demo/native/mock-workos/scim/v2`,
     workos_token: (await getConfig(env.DB, "mock_workos.scim_token")) ?? "",
   });
+  // The bundled IdP simulator drives this directory, so it needs the token the way
+  // Okta would have it: its own stored copy. Persisted rather than in-process,
+  // because this seed is a no-op on the next boot (a directory already exists) and
+  // the simulator still has to work.
+  await storeClientToken(env.DB, id, proxy_token);
   // The demo runs one directory you actively watch, so persist its logs.
   await setDirectoryLogPersistence(env.DB, id, true);
 }

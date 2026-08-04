@@ -118,7 +118,9 @@ directory configuration, not mappings** — that part matters.
 1. **Directories.** Re-import them, including each `proxy_token` (see
    [zero IdP-touch](#zero-idp-touch-deployment)); the IdP then authenticates
    again without being reconfigured. Keep an export somewhere you will still have
-   it — the CSV *is* the recovery procedure.
+   it — the CSV *is* the recovery procedure, and since the tokens are hashed at
+   rest it is now the *only* copy: you cannot read them back out of a surviving
+   database, only rotate them and reconfigure the IdP.
 2. **`id_mappings`.** These re-derive themselves, but by two different routes,
    and the second one is worth understanding before you decide how urgently to
    act:
@@ -142,11 +144,10 @@ directory configuration, not mappings** — that part matters.
 
 ### One more reason not to leave the file lying around
 
-`proxy_token` is stored in plaintext — it has to be, since the proxy looks
-directories up by it. So the database file *is* a set of live credentials: anyone
-who can read it can impersonate the IdP for every directory in it. That is a
-second argument for a volume you control (and for ENT-6742, which hashes the token
-at rest).
+Proxy tokens are hashed at rest (ENT-6742), so a copy of the database is no longer
+a set of live credentials. It is still a set of *upstream* ones: the native and
+WorkOS bearer tokens are only encrypted if `APP_ENCRYPTION_KEY` is set, and the id
+mappings are irreplaceable. Both are arguments for a volume you control.
 
 ## Import directories
 
@@ -166,6 +167,25 @@ Open `/panel`.
 Then copy the directory's **SCIM base URL + proxy token** into your IdP's SCIM
 config. It starts in `passthrough`, so repointing the IdP changes no behavior —
 every request still reaches your native app.
+
+### Proxy tokens are hashed, so they can't be read back
+
+The database stores `sha256(proxy_token)`, never the token (ENT-6742). Consequences
+worth knowing before you need them:
+
+- **The directory page shows the last 4 characters**, not the token. Match it
+  against what you pasted into the IdP.
+- **Rotate is the only recovery.** If the token was never copied, or was lost, use
+  **Rotate** on the directory page: it mints a new one, shows it once, and the
+  previous token stops working immediately — so paste it into the IdP before the
+  next sync. A directory whose IdP still presents the old token 401s until you do.
+- **Right after an import, the minted token is not displayed yet** (the display
+  policy for mint and bulk import is still being decided). Until it is, rotate once
+  on the new directory's page to get a token you can copy.
+- **Upgrading an existing deployment needs nothing.** The first boot on this version
+  hashes whatever plaintext tokens the database holds and logs how many it
+  converted. Every IdP keeps working with the token it already has; the conversion
+  is one-way, so from then on the CSV export is the only readable copy.
 
 ### Zero IdP-touch deployment
 

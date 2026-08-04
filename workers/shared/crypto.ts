@@ -16,12 +16,65 @@
  * degrade silently: a driver that didn't carry one would store every upstream
  * token in plaintext with nothing to say so.
  *
- * The proxy token is deliberately NOT encrypted — it is the lookup key
- * (`WHERE proxy_token = ?`), and AES-GCM is randomized, so an encrypted value
- * couldn't be matched against the token the IdP presents.
+ * The proxy token is not encrypted, it is HASHED — see `hashProxyToken` below.
+ * Encryption is the wrong tool for a value that is only ever compared: AES-GCM is
+ * randomized, so an encrypted token could not be matched against the one the IdP
+ * presents, which is why this column was plaintext until ENT-6742.
  */
 
 const PREFIX = "enc:v1:";
+
+/**
+ * Hash a proxy token for storage and for lookup.
+ *
+ * The proxy token is the only credential guarding the SCIM data plane, and it is
+ * only ever *compared* — nothing needs to read it back. So it is stored as a
+ * digest: whoever reads the database (a backup, a support query, a leaked volume)
+ * gets no usable credential, and a token still authenticates by hashing what was
+ * presented and looking that up.
+ *
+ * SHA-256 with no salt or stretching, deliberately. Salting would break the single
+ * indexed lookup that routes every SCIM request — there is no row to fetch the
+ * salt from until you know which row it is. Stretching (bcrypt/scrypt) defends
+ * low-entropy secrets against offline guessing; these are 24 random bytes from
+ * `newProxyToken`, so there is nothing to guess. That reasoning holds ONLY while
+ * the token is machine-generated at full entropy: ENT-6741 lets an operator import
+ * their IdP's existing token, and one of those could be weak. It is still their
+ * secret, chosen for a system that also stores it, and the alternative is refusing
+ * the import.
+ *
+ * Stored `sha256:v1:<hex>` rather than bare hex, mirroring `enc:v1:`. The prefix
+ * is what makes "has this row been hashed yet?" answerable — the boot backfill for
+ * rows written before ENT-6742 needs to tell a digest from a plaintext token, and
+ * "is it 64 hex characters?" is not that test: an imported token could itself be
+ * 64 hex characters, and the backfill would skip it and lock that directory out.
+ */
+const HASH_PREFIX = "sha256:v1:";
+
+export function isHashedToken(value: string): boolean {
+  return value.startsWith(HASH_PREFIX);
+}
+
+export async function hashProxyToken(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  const hex = Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return HASH_PREFIX + hex;
+}
+
+/**
+ * The last 4 characters of a token, stored alongside the digest so the panel has
+ * something to show for a credential it can no longer display.
+ *
+ * Last 4 of the plaintext, not of the digest: the operator matches it against what
+ * they pasted into Okta, and a digest prefix is meaningless to them. 4 characters
+ * of a 48-hex secret is negligible to an attacker — and this is the one moment
+ * they are available, since hashing is one-way and the plaintext is not kept.
+ */
+export function proxyTokenHint(token: string): string {
+  return token.slice(-4);
+}
 
 /** The slice of a handle this module needs: somewhere to find the raw key.
  *  `Datastore` requires the property, so every driver satisfies it — but a bare

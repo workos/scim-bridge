@@ -1,4 +1,5 @@
 import { getConfig } from "../shared/db";
+import { clientTokenFor } from "../shared/client-tokens";
 import type { Datastore } from "../shared/datastore";
 import type { Directory } from "../shared/types";
 import type { DirectoryStatus } from "../proxy/status";
@@ -45,10 +46,16 @@ export async function fetchDirectoryStatus(
     (await getConfig(db, "proxy.loopback_url")) ?? (await getConfig(db, "proxy.public_url"))
   )?.replace(/\/+$/, "");
   if (!base) return null;
+  // The directory row holds a digest (ENT-6742), so the token comes from the copy
+  // this process was started with — `DIRECTORIES_JSON` in native-app mode. Without
+  // one there is no credential to present, and the caller's own fallback (the row's
+  // mode) is the documented inert behaviour.
+  const token = await clientTokenFor(db, directory.id);
+  if (!token) return null;
   try {
     const response = await fetch(`${base}/status/directories/${encodeURIComponent(directory.id)}`, {
       headers: {
-        Authorization: `Bearer ${directory.proxy_token}`,
+        Authorization: `Bearer ${token}`,
         ...(cached?.etag ? { "If-None-Match": cached.etag } : {}),
       },
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),

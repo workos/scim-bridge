@@ -2,7 +2,8 @@ import type { ActionFunctionArgs } from "react-router";
 import { afterEach, describe, expect, it } from "vitest";
 import { action } from "../app/routes/panel/home";
 import proxyWorker from "../workers/proxy/index";
-import { insertDirectory, listDirectories } from "../workers/shared/db";
+import { getDirectoryByToken, insertDirectory, listDirectories } from "../workers/shared/db";
+import { hashProxyToken } from "../workers/shared/crypto";
 import type { Directory, PocEnv } from "../workers/shared/types";
 import {
   NATIVE_URL,
@@ -53,6 +54,18 @@ async function only(env: PocEnv): Promise<Directory> {
 /** Long enough to pass the fat-finger guard, as any real IdP token is. */
 const IDP_TOKEN = "okta_scim_tok_9f3ac81be24d";
 
+/**
+ * The token an operator supplied is honoured — which since ENT-6742 means it
+ * authenticates and the row does *not* contain it, rather than the row echoing it
+ * back. Both halves matter: a bug that stored the plaintext would still let the
+ * token authenticate, and a bug that stored nothing would still keep it out.
+ */
+async function expectStoredToken(row: Directory, token: string): Promise<void> {
+  expect(row.proxy_token_hash).toBe(await hashProxyToken(token));
+  expect(row.proxy_token_hint).toBe(token.slice(-4));
+  expect(JSON.stringify(row)).not.toContain(token);
+}
+
 describe("directory import", () => {
   describe("bulk CSV", () => {
     it("imports a row written against the original six columns", async () => {
@@ -67,8 +80,11 @@ describe("directory import", () => {
       const row = await only(env);
       expect(row.name).toBe("Acme — Okta");
       expect(row.workos_directory_id).toBe("directory_01A");
-      // No seventh column: insertDirectory mints the token (shared/ids.ts).
-      expect(row.proxy_token).toMatch(/^[0-9a-f]{48}$/);
+      // No seventh column: insertDirectory mints the token (shared/ids.ts). The row
+      // holds only its digest now (ENT-6742), so the minted shape is pinned where
+      // the plaintext still exists — "mints a 48-hex token" below.
+      expect(row.proxy_token_hash).toMatch(/^sha256:v1:[0-9a-f]{64}$/);
+      expect(row.proxy_token_hint).toHaveLength(4);
       expect(row.id).toMatch(/^dir_[0-9a-f]{16}$/);
     });
 
@@ -81,7 +97,7 @@ describe("directory import", () => {
       );
 
       expect(result).toEqual({ imported: 1, importErrors: [] });
-      expect((await only(env)).proxy_token).toBe(IDP_TOKEN);
+      await expectStoredToken(await only(env), IDP_TOKEN);
     });
 
     it("accepts a header row and mixes rows with and without the token", async () => {
@@ -99,8 +115,9 @@ describe("directory import", () => {
       expect(result).toEqual({ imported: 2, importErrors: [] });
       const rows = await listDirectories(env.DB);
       expect(rows.map((d) => d.name)).toEqual(["Acme", "Beta"]);
-      expect(rows[0].proxy_token).toBe(IDP_TOKEN);
-      expect(rows[1].proxy_token).toMatch(/^[0-9a-f]{48}$/);
+      await expectStoredToken(rows[0], IDP_TOKEN);
+      expect(rows[1].proxy_token_hash).toMatch(/^sha256:v1:[0-9a-f]{64}$/);
+      expect(rows[1].proxy_token_hash).not.toBe(rows[0].proxy_token_hash);
     });
 
     it("trims surrounding whitespace off an imported token", async () => {
@@ -108,7 +125,7 @@ describe("directory import", () => {
 
       await bulkImport(env, `Acme,,,,,,  ${IDP_TOKEN}  `);
 
-      expect((await only(env)).proxy_token).toBe(IDP_TOKEN);
+      await expectStoredToken(await only(env), IDP_TOKEN);
     });
 
     it("reports the row that duplicates a token and imports the rest", async () => {
@@ -191,7 +208,7 @@ describe("directory import", () => {
       const row = await only(env);
       expect(res.status).toBe(302);
       expect(res.headers.get("Location")).toBe(`/panel/directories/${row.id}`);
-      expect(row.proxy_token).toBe(IDP_TOKEN);
+      await expectStoredToken(row, IDP_TOKEN);
     });
 
     it("mints a token when the field is left blank", async () => {
@@ -199,7 +216,25 @@ describe("directory import", () => {
 
       await submit(env, { intent: "create-directory", name: "Acme — Okta", proxy_token: "" });
 
-      expect((await only(env)).proxy_token).toMatch(/^[0-9a-f]{48}$/);
+      const row = await only(env);
+      expect(row.proxy_token_hash).toMatch(/^sha256:v1:[0-9a-f]{64}$/);
+      // The minted token authenticates, which is the property the old assertion on
+      // the plaintext column was really standing in for.
+      expect(row.proxy_token_hint).toHaveLength(4);
+    });
+
+    it("mints a 48-hex token and stores only its digest", async () => {
+      const env = await createEnv();
+
+      // Straight through insertDirectory: the one caller that still sees the
+      // plaintext, and so the only place the minted shape is observable.
+      const created = await insertDirectory(env.DB, { name: "Acme" });
+
+      expect(created.proxy_token).toMatch(/^[0-9a-f]{48}$/);
+      const row = await only(env);
+      expect(row.proxy_token_hash).toBe(await hashProxyToken(created.proxy_token));
+      expect(row.proxy_token_hint).toBe(created.proxy_token.slice(-4));
+      expect(await getDirectoryByToken(env.DB, created.proxy_token)).toMatchObject({ id: row.id });
     });
 
     it("rejects a duplicate token with a message naming the conflict", async () => {

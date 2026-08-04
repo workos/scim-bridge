@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
 import proxyWorker from "../workers/proxy/index";
 import { setDirectoryMode, setDirectoryWorkosDirectoryId } from "../workers/shared/db";
-import type { Directory } from "../workers/shared/types";
 import type { PocEnv } from "../workers/shared/types";
-import { createCtx, createEnv, proxyRequest, seedDirectory } from "./helpers";
+import { createCtx, createEnv, proxyRequest, seedDirectory, type SeededDirectory } from "./helpers";
 
 /** GET /status/directories/{id} as the native app's listener would. */
 function statusRequest(
-  directory: Directory,
+  directory: SeededDirectory,
   id: string,
   opts: { method?: string; headers?: Record<string, string> } = {},
 ): Request {
