@@ -8,7 +8,11 @@ import {
   setDirectoryLogPersistence,
   type EnvDirectory,
 } from "../workers/shared/db";
-import { rememberClientToken, storeClientToken } from "../workers/shared/client-tokens";
+import {
+  DEMO_DIRECTORY_ID_KEY,
+  rememberClientToken,
+  storeClientToken,
+} from "../workers/shared/client-tokens";
 import { secretsMatch } from "../workers/shared/crypto";
 import { newScimToken } from "../workers/shared/ids";
 import type { PocEnv } from "../workers/shared/types";
@@ -400,7 +404,10 @@ export async function seedNativeAppDirectories(env: PocEnv, config: AppConfig): 
 export async function seedDemoDirectory(env: PocEnv, config: AppConfig): Promise<void> {
   if (!config.demoMode) return;
   const existing = await listDirectories(env.DB);
-  if (existing.length > 0) return;
+  if (existing.length > 0) {
+    await adoptSeededDemoDirectory(env, config, existing);
+    return;
+  }
   const base = loopbackBase(config);
   const { id, proxy_token } = await insertDirectory(env.DB, {
     name: "Demo directory",
@@ -414,6 +421,33 @@ export async function seedDemoDirectory(env: PocEnv, config: AppConfig): Promise
   // because this seed is a no-op on the next boot (a directory already exists) and
   // the simulator still has to work.
   await storeClientToken(env.DB, id, proxy_token);
+  // Name the directory the bundled simulators may drive. They are mounted without
+  // panel credentials, so they must resolve this id and no other — an operator's
+  // imported directory carries real upstream credentials and real users.
+  await setConfig(env.DB, DEMO_DIRECTORY_ID_KEY, id);
   // The demo runs one directory you actively watch, so persist its logs.
   await setDirectoryLogPersistence(env.DB, id, true);
+}
+
+/**
+ * Name the demo directory in a database seeded before it was recorded.
+ *
+ * The seed above is a no-op once any directory exists, so a demo that has been
+ * running since before `idp.demo_directory_id` would otherwise never get one and
+ * the simulator — which now resolves that id and no other — would drive nothing.
+ * Only the bundled directory qualifies: the one pointing at this process's own
+ * `/__demo/native` mount. An imported directory points at the customer's app, so
+ * it can never be adopted, and an ambiguous match adopts nothing.
+ */
+async function adoptSeededDemoDirectory(
+  env: PocEnv,
+  config: AppConfig,
+  existing: { id: string; native_url: string }[],
+): Promise<void> {
+  if (await getConfig(env.DB, DEMO_DIRECTORY_ID_KEY)) return;
+  const bundled = existing.filter((d) =>
+    d.native_url.startsWith(`${loopbackBase(config)}/__demo/native`),
+  );
+  if (bundled.length !== 1) return;
+  await setConfig(env.DB, DEMO_DIRECTORY_ID_KEY, bundled[0].id);
 }

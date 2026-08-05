@@ -9,6 +9,7 @@ import {
 import { hashProxyToken } from "../workers/shared/crypto";
 import {
   clientTokenFor,
+  DEMO_DIRECTORY_ID_KEY,
   forgetClientTokens,
   publishMintedToken,
 } from "../workers/shared/client-tokens";
@@ -367,13 +368,32 @@ describe("proxy token hashing", () => {
       return results;
     }
 
-    it("hands a bundled simulator the token in demo mode", async () => {
+    it("hands the bundled demo directory its token in demo mode", async () => {
       const env = await createEnv();
-      const { id, proxy_token } = await insertDirectory(env.DB, { name: "Acme" });
+      const { id, proxy_token } = await insertDirectory(env.DB, { name: "Demo directory" });
+      await setConfig(env.DB, DEMO_DIRECTORY_ID_KEY, id);
 
       await publishMintedToken(env.DB, id, proxy_token, { demoMode: true });
 
       expect(await clientTokenFor(env.DB, id)).toBe(proxy_token);
+    });
+
+    it("writes nothing for another directory, even in demo mode", async () => {
+      // The keying that made the simulator a confused deputy: gating on the
+      // process-wide flag kept a usable plaintext credential for every real
+      // directory minted or rotated while a demo was running, and /__demo answers
+      // without panel credentials (VULN-3076).
+      const env = await createEnv();
+      const demo = await insertDirectory(env.DB, { name: "Demo directory" });
+      await setConfig(env.DB, DEMO_DIRECTORY_ID_KEY, demo.id);
+      const { id, proxy_token } = await insertDirectory(env.DB, { name: "Acme" });
+      forgetClientTokens();
+
+      await publishMintedToken(env.DB, id, proxy_token, { demoMode: true });
+
+      expect(await clientTokenFor(env.DB, id)).toBeNull();
+      const values = (await plaintextRows(env)).map((row) => row.value);
+      expect(values).not.toContain(proxy_token);
     });
 
     it("writes nothing at all outside demo mode", async () => {
