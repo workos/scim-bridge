@@ -106,8 +106,15 @@ automated by a workflow holding `GITHUB_TOKEN`.
       `ghcr.io/workos/scim-bridge` until a first push creates the package, and a
       package that does not exist cannot be made public.
 - [ ] **GHCR package → public.** Org → Packages → `scim-bridge` → Package
-      settings → Change visibility → Public. Until this is done, the README's
-      first command returns `denied` for everyone outside the org (ENT-6598).
+      settings → Change visibility → Public. Until this is done, a pull returns
+      `denied` for everyone outside the org (ENT-6598).
+- [ ] **Delete the "Not yet" note in the README**, under *Running a published
+      image instead of building*, and re-read every `ghcr.io` line in the README
+      to confirm it is now true. The note exists because until the two steps
+      above are done, `docker pull ghcr.io/workos/scim-bridge:latest` fails with
+      `unauthorized` — which reads as "you lack permission", not "this is not
+      published yet". Do this in the same change that publishes; a caveat whose
+      removal depends on someone remembering is a caveat that ships.
 - [ ] **Confirm the package is linked to the repo.** The workflow stamps
       `org.opencontainers.image.source`, which GitHub uses to link the package
       to `workos/scim-bridge` and show this README on the package page. Check

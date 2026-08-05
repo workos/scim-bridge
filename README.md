@@ -15,10 +15,11 @@ id mappings.
 > migrated-id contract, and the platform changes it depends on are documented in
 > [`docs/`](./docs) and the WorkOS internal migration guide.
 
-## Try it in one command (no WorkOS account needed)
+## Try it, with no WorkOS account and no registry
 
 ```bash
-docker run -p 8080:8080 -e DEMO_MODE=true ghcr.io/workos/scim-bridge:latest
+docker build -t scim-bridge .
+docker run -p 8080:8080 -e DEMO_MODE=true scim-bridge
 ```
 
 Open `http://localhost:8080/panel`. `DEMO_MODE` mounts a simulated IdP and a
@@ -41,7 +42,14 @@ IdP points at is `http://localhost:8080/scim/v2`. The SQLite database persists i
 the `scim-bridge-data` volume. To set `PUBLIC_URL` and the rest, `cp .env.example
 .env` first — compose reads `.env` if it is there, and ignores it if it is not.
 
-Or run the image directly:
+### Running a published image instead of building
+
+> **Not yet.** Nothing has been pushed to `ghcr.io/workos/scim-bridge` — today
+> the command below fails with `unauthorized`, which looks like a permissions
+> problem and is really "this has not been published". Build from this checkout
+> until it has; the two paths produce the same image.
+> ([`docs/releasing.md`](./docs/releasing.md#human-steps-going-public) tracks the
+> publish, and removing this note is a step in it.)
 
 ```bash
 docker run -p 8080:8080 -v scim-bridge-data:/data \
