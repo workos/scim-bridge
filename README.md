@@ -90,12 +90,21 @@ imported through the control panel.
 | `PUBLIC_URL` | recommended | `http://127.0.0.1:$PORT` | Externally reachable base URL your IdP uses; drives the SCIM base URL shown in the panel. |
 | `PORT` | no | `8080` | HTTP port the server listens on. |
 | `DATABASE_PATH` | no | `/data/scim-bridge.db` | SQLite file path. Mount a volume here to persist. The default is a path *inside the image*; running outside a container, set it to somewhere that exists. |
-| `PANEL_AUTH_USER` / `PANEL_AUTH_PASSWORD` | no | — | HTTP Basic credentials guarding the control panel. Both blank = unauthenticated (front it with your own proxy/SSO). |
+| `PANEL_AUTH_USER` / `PANEL_AUTH_PASSWORD` | **yes** | — | HTTP Basic credentials guarding the control panel. The bridge refuses to start without them. |
+| `PANEL_AUTH_DISABLED` | no | `false` | Set to `true` to run `/panel` unauthenticated on purpose, when something in front of the bridge already authenticates it. |
 | `APP_ENCRYPTION_KEY` | no | — | When set, encrypts each directory's native + WorkOS bearer tokens at rest (AES-256-GCM). Keep it stable; leave unset to store them in plaintext. |
 | `DEMO_MODE` | no | `false` | Mount the bundled IdP + native-app simulators under `/__demo` for a self-contained end-to-end demo. |
 
 The `/scim/v2` data-plane is always authenticated by the per-directory proxy
 token the panel mints — panel auth does not gate it.
+
+**Why the panel's credentials are mandatory.** The directory page renders each
+directory's native and WorkOS bearer tokens into the page, because that is how
+you edit them. An unauthenticated panel therefore hands out the credentials this
+bridge writes to your application and to WorkOS with, to anyone who can reach
+the port. `APP_ENCRYPTION_KEY` does not change that — it encrypts at rest, and
+the panel decrypts to render. The proxy token is safe either way (it is stored
+as a hash), but these two cannot be: the bridge has to present them upstream.
 
 ## Importing a directory
 
@@ -152,6 +161,12 @@ migration still works, the ids just aren't shared.
 `DEMO_MODE=true` mounts a simulated IdP and native SCIM app in-process (under
 `/__demo`) and points a new directory at them, so you can drive the whole
 migration loop with no real IdP or WorkOS account. Leave it off in production.
+
+The `/__demo` mounts are **not** behind panel auth. The panel drives them by
+fetching its own loopback URL and that request carries no credentials, so gating
+them would make `DEMO_MODE` and `PANEL_AUTH_*` mutually exclusive. Nothing real
+is behind them — a fake IdP and a fake customer app — and they do not exist
+unless `DEMO_MODE` is set.
 
 > The **proxy handles many directories** — each imported directory is routed by
 > its own proxy token. The **bundled simulator**, though, models a **single**

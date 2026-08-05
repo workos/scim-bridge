@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   decidePanelAuth,
   loadConfig,
+  panelAuthExempt,
   seedGeneratedTokens,
   seedNativeAppConfig,
   seedNativeAppDirectories,
@@ -20,14 +21,22 @@ import {
   type FakeUpstreams,
 } from "./helpers";
 
+/**
+ * A bridge config that is allowed to have no panel credentials. Every bare
+ * `loadConfig({})` in a bridge role now refuses to boot (VULN-1612), so the
+ * cases below that are about something else say so explicitly rather than
+ * quietly depending on the unsafe default they were written against.
+ */
+const OPEN_PANEL = { PANEL_AUTH_DISABLED: "true" } as const;
+
 /** The image runs as the bridge by default and as the customer-app stand-in
  *  under APP_ROLE=native-app (see docs/runbook.md). */
 describe("APP_ROLE", () => {
   describe("config parsing", () => {
     it("defaults to the bridge role", () => {
-      expect(loadConfig({}).role).toBe("bridge");
-      expect(loadConfig({ APP_ROLE: "" }).role).toBe("bridge");
-      expect(loadConfig({ APP_ROLE: "bridge" }).role).toBe("bridge");
+      expect(loadConfig({ ...OPEN_PANEL }).role).toBe("bridge");
+      expect(loadConfig({ ...OPEN_PANEL, APP_ROLE: "" }).role).toBe("bridge");
+      expect(loadConfig({ ...OPEN_PANEL, APP_ROLE: "bridge" }).role).toBe("bridge");
     });
 
     it("accepts the native-app role, whitespace included", () => {
@@ -64,7 +73,7 @@ describe("APP_ROLE", () => {
         /unsigned/,
       );
       // The bridge never serves /webhooks/dsync, so it boots without one.
-      expect(loadConfig({}).webhookSecret).toBeNull();
+      expect(loadConfig({ ...OPEN_PANEL }).webhookSecret).toBeNull();
     });
 
     it("leaves the optional native-app vars null when unset, panel auth included", () => {
@@ -416,6 +425,135 @@ describe("APP_ROLE", () => {
  * boundary (VULN-1612). These pin the decision itself, which is why it lives in
  * config.ts rather than inside the middleware.
  */
+describe("panel auth is required to boot", () => {
+  /**
+   * The panel renders each directory's native and WorkOS bearer tokens into the
+   * page as form values, and APP_ENCRYPTION_KEY does not help (the panel
+   * decrypts to render). Blank-means-open therefore served those credentials to
+   * anyone who could reach the port — and blank was the default, was what
+   * `.env.example` shipped, and was what docker-compose ran. The refusal is the
+   * fix; these cases are what stops it being quietly relaxed again.
+   */
+  it("refuses to start a bridge with no panel credentials", () => {
+    expect(() => loadConfig({})).toThrow(/PANEL_AUTH_USER and PANEL_AUTH_PASSWORD are required/);
+    // The message has to say what is at stake, or the next operator "fixes" it
+    // with the opt-out without knowing what they are opting out of.
+    expect(() => loadConfig({})).toThrow(/bearer tokens in plaintext/);
+    // Blank strings are what `PANEL_AUTH_USER=` in a .env produces.
+    expect(() => loadConfig({ PANEL_AUTH_USER: "", PANEL_AUTH_PASSWORD: "" })).toThrow(
+      /are required/,
+    );
+    // A whitespace username is not a credential — it trims away.
+    expect(() => loadConfig({ PANEL_AUTH_USER: "   " })).toThrow(/are required/);
+  });
+
+  it("treats a whitespace-only password as set, and therefore boots", async () => {
+    // Asymmetric on purpose, and worth pinning: the username is trimmed, the
+    // password is not, because trimming a password silently changes it. So
+    // PANEL_AUTH_PASSWORD="  " is a real (bad) password rather than an empty
+    // one, which makes this the half-configured case — it boots, and denies
+    // everything, rather than serving the panel open.
+    const config = loadConfig({ PANEL_AUTH_USER: "   ", PANEL_AUTH_PASSWORD: "  " });
+    expect(config.panelAuthUser).toBeNull();
+    expect(config.panelAuthPassword).toBe("  ");
+    expect(await decidePanelAuth(config, null)).toBe("denied");
+  });
+
+  it("starts when both credentials are set", () => {
+    const config = loadConfig({ PANEL_AUTH_USER: "ada", PANEL_AUTH_PASSWORD: "hunter2" });
+    expect(config.panelAuthUser).toBe("ada");
+    expect(config.panelAuthPassword).toBe("hunter2");
+    expect(config.panelAuthDisabled).toBe(false);
+  });
+
+  it("starts on a half-configured pair, which denies every request", async () => {
+    // Not a leak, so not a boot failure: decidePanelAuth answers "denied" to
+    // everything when only one half is set (#27). Refusing to boot here would
+    // turn a locked-out panel into a container that will not start.
+    const config = loadConfig({ PANEL_AUTH_USER: "ada" });
+    expect(await decidePanelAuth(config, null)).toBe("denied");
+  });
+
+  it("starts with the explicit opt-out, and records it", () => {
+    const config = loadConfig({ PANEL_AUTH_DISABLED: "true" });
+    expect(config.panelAuthDisabled).toBe(true);
+    // Still "open" at request time — the opt-out is about consent, not behaviour.
+    expect(config.panelAuthUser).toBeNull();
+  });
+
+  it("does not treat a falsy or garbled opt-out as consent", () => {
+    for (const value of ["false", "no", "0", "", "  ", "maybe", "TRUE-ish"]) {
+      expect(() => loadConfig({ PANEL_AUTH_DISABLED: value })).toThrow(/are required/);
+    }
+    // …while the spellings `bool()` accepts do work.
+    for (const value of ["true", "TRUE", " yes ", "1", "on"]) {
+      expect(loadConfig({ PANEL_AUTH_DISABLED: value }).panelAuthDisabled).toBe(true);
+    }
+  });
+
+  it("does not exempt DEMO_MODE from the requirement", () => {
+    // A demo is the deployment most likely to be put on the internet and left
+    // there, and nothing stops someone importing a real directory into one.
+    expect(() => loadConfig({ DEMO_MODE: "true" })).toThrow(/are required/);
+  });
+
+  it("does not apply to the native-app role, which serves no panel", () => {
+    const config = loadConfig({ APP_ROLE: "native-app", WEBHOOK_SECRET: "whsec_123" });
+    expect(config.role).toBe("native-app");
+    expect(config.panelAuthUser).toBeNull();
+  });
+
+  it("reports a malformed DIRECTORIES_JSON before the panel-auth policy", () => {
+    // Two things wrong at once: the one the operator can only learn from us
+    // (a parse error at a character offset) has to win over the one the error
+    // message can explain in full.
+    expect(() => loadConfig({ DIRECTORIES_JSON: "{" })).toThrow(/not valid JSON/);
+  });
+});
+
+describe("what panel auth never challenges", () => {
+  const closed = { demoMode: false };
+  const demo = { demoMode: true };
+
+  it("lets through the paths that authenticate themselves", () => {
+    // The IdP cannot send Basic credentials, and a load balancer will not.
+    expect(panelAuthExempt("/healthz", closed)).toBe(true);
+    expect(panelAuthExempt("/scim/v2", closed)).toBe(true);
+    expect(panelAuthExempt("/scim/v2/Users", closed)).toBe(true);
+    expect(panelAuthExempt("/scim/v2/Groups/abc", closed)).toBe(true);
+    expect(panelAuthExempt("/status/directories", closed)).toBe(true);
+    expect(panelAuthExempt("/status/directories/dir_1", closed)).toBe(true);
+  });
+
+  it("challenges the panel and everything else", () => {
+    expect(panelAuthExempt("/", closed)).toBe(false);
+    expect(panelAuthExempt("/panel", closed)).toBe(false);
+    expect(panelAuthExempt("/panel/directories/dir_1", closed)).toBe(false);
+    expect(panelAuthExempt("/panel/live", closed)).toBe(false);
+  });
+
+  it("does not let a prefix near-miss through", () => {
+    // The exemptions are equality-or-slash for exactly this reason: a
+    // startsWith("/healthz") would hand /healthzsecrets to the world.
+    expect(panelAuthExempt("/healthzz", closed)).toBe(false);
+    expect(panelAuthExempt("/scim/v2extra", closed)).toBe(false);
+    expect(panelAuthExempt("/status/directoriesX", closed)).toBe(false);
+    expect(panelAuthExempt("/__demoevil", demo)).toBe(false);
+    expect(panelAuthExempt("/panel/scim/v2", closed)).toBe(false);
+  });
+
+  it("exempts the simulators only in demo mode", () => {
+    // The panel drives them over its own loopback URL with no credentials, so
+    // gating them made DEMO_MODE and PANEL_AUTH_* mutually exclusive.
+    expect(panelAuthExempt("/__demo", demo)).toBe(true);
+    expect(panelAuthExempt("/__demo/idp/seed", demo)).toBe(true);
+    expect(panelAuthExempt("/__demo/native/scim/v2/Users", demo)).toBe(true);
+    // With the simulators unmounted the path is a 404 either way; keeping the
+    // exemption conditional means the gate never has a hole it is not using.
+    expect(panelAuthExempt("/__demo/idp/seed", closed)).toBe(false);
+  });
+});
+
 describe("panel auth", () => {
   const basic = (user: string, pass: string) =>
     `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
