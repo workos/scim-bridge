@@ -15,18 +15,41 @@ id mappings.
 > migrated-id contract, and the platform changes it depends on are documented in
 > [`docs/`](./docs) and the WorkOS internal migration guide.
 
-## Quickstart (Docker)
+## Try it, with no WorkOS account and no registry
 
 ```bash
-cp .env.example .env       # then edit PUBLIC_URL etc.
+docker build -t scim-bridge .
+docker run -p 8080:8080 -e DEMO_MODE=true scim-bridge
+```
+
+Open `http://localhost:8080/panel`. `DEMO_MODE` mounts a simulated IdP and a
+simulated native app inside the container and points a directory at them, so you
+can drive the whole migration — passthrough → dual-write → backfill → cut over,
+and roll it back — against nothing but itself. Start on **Live state**: seed the
+directory, then change modes and watch the three columns converge.
+
+No volume is mounted above, so the demo starts clean every run. Leave
+`DEMO_MODE` off in production.
+
+## Quickstart (your own directories)
+
+```bash
 docker compose up --build
 ```
 
 The control panel is at `http://localhost:8080/panel` and the SCIM base URL your
 IdP points at is `http://localhost:8080/scim/v2`. The SQLite database persists in
-the `scim-bridge-data` volume.
+the `scim-bridge-data` volume. To set `PUBLIC_URL` and the rest, `cp .env.example
+.env` first — compose reads `.env` if it is there, and ignores it if it is not.
 
-Or run the image directly:
+### Running a published image instead of building
+
+> **Not yet.** Nothing has been pushed to `ghcr.io/workos/scim-bridge` — today
+> the command below fails with `unauthorized`, which looks like a permissions
+> problem and is really "this has not been published". Build from this checkout
+> until it has; the two paths produce the same image.
+> ([`docs/releasing.md`](./docs/releasing.md#human-steps-going-public) tracks the
+> publish, and removing this note is a step in it.)
 
 ```bash
 docker run -p 8080:8080 -v scim-bridge-data:/data \
@@ -40,6 +63,23 @@ Apple Silicon laptop. **`:latest` is for trying it out** — for anything you
 depend on, pin a version or a digest: see
 [Releases and image tags](#releases-and-image-tags).
 
+### Running it outside a container
+
+`npm start` runs the same server, with two differences worth knowing before you
+lose an evening to them:
+
+- **It does not read `.env`.** Only `docker compose` does. Outside a container,
+  pass the variables in the environment (`PUBLIC_URL=… npm start`) or export
+  them.
+- **`DATABASE_PATH` defaults to `/data/scim-bridge.db`**, which is the path
+  inside the image. On a host machine there is usually no `/data`, and the
+  server exits at boot with `Cannot open database because the directory does
+  not exist`. Set it:
+
+```bash
+DATABASE_PATH=./scim-bridge.db PUBLIC_URL=http://localhost:8080 npm start
+```
+
 ## Configuration (environment variables)
 
 Only process-wide settings are configured here. Per-directory settings are
@@ -49,7 +89,7 @@ imported through the control panel.
 | --- | --- | --- | --- |
 | `PUBLIC_URL` | recommended | `http://127.0.0.1:$PORT` | Externally reachable base URL your IdP uses; drives the SCIM base URL shown in the panel. |
 | `PORT` | no | `8080` | HTTP port the server listens on. |
-| `DATABASE_PATH` | no | `/data/scim-bridge.db` | SQLite file path. Mount a volume here to persist. |
+| `DATABASE_PATH` | no | `/data/scim-bridge.db` | SQLite file path. Mount a volume here to persist. The default is a path *inside the image*; running outside a container, set it to somewhere that exists. |
 | `PANEL_AUTH_USER` / `PANEL_AUTH_PASSWORD` | no | — | HTTP Basic credentials guarding the control panel. Both blank = unauthenticated (front it with your own proxy/SSO). |
 | `APP_ENCRYPTION_KEY` | no | — | When set, encrypts each directory's native + WorkOS bearer tokens at rest (AES-256-GCM). Keep it stable; leave unset to store them in plaintext. |
 | `DEMO_MODE` | no | `false` | Mount the bundled IdP + native-app simulators under `/__demo` for a self-contained end-to-end demo. |
@@ -62,11 +102,23 @@ token the panel mints — panel auth does not gate it.
 1. Open `/panel` and create a directory to migrate.
 2. Paste your **existing app's SCIM** base URL + bearer token, and the **WorkOS
    directory** endpoint + bearer token (from the WorkOS dashboard).
-3. Copy the minted **SCIM base URL + proxy token** into your IdP's SCIM
-   configuration. The directory starts in `passthrough`, so repointing the IdP
-   changes no behavior — every request still reaches your native app.
-4. Advance the mode: `passthrough → dual-write → backfill → cut over`, verifying
+3. **Press Rotate to get the proxy token.** The directory page shows only the
+   last four characters of it — the token itself is stored as a hash and cannot
+   be read back. **Rotate** mints a new one and displays it once, with a Copy
+   button; take it then, because reloading the page loses it. If you already
+   have a bearer token your IdP presents today, you can supply it as the proxy
+   token at import instead and skip this.
+4. Paste that token, and the **SCIM base URL** the page shows, into your IdP's
+   SCIM configuration. The directory starts in `passthrough`, so repointing the
+   IdP changes no behavior — every request still reaches your native app.
+5. Advance the mode: `passthrough → dual-write → backfill → cut over`, verifying
    convergence in the Live/Mappings tabs. Roll back any time before commit.
+
+> Rotating invalidates the previous token **immediately**, so a directory whose
+> IdP is already syncing will `401` until you paste the new one. On a live
+> directory, rotate at a moment you can follow straight through.
+> [`docs/runbook.md`](./docs/runbook.md#proxy-tokens-are-hashed-so-they-cant-be-read-back)
+> has the recovery paths.
 
 ## How WorkOS handles each SCIM request
 
