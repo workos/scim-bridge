@@ -1,10 +1,10 @@
 # The directory status endpoint (for your DSync listener)
 
-During the migration your app receives WorkOS Directory Sync events, but it
-must only **apply** them once WorkOS is authoritative for that directory —
-before cutover the proxy still writes your app directly, and applying an echo
-would fight that write path. The proxy exposes a per-directory status endpoint
-your listener polls to make that call:
+During the migration your app receives WorkOS Directory Sync events, but it must
+only **apply** them once the proxy has stopped writing your app directly —
+before that, applying an echo would fight that write path or duplicate it. The
+proxy exposes a per-directory status endpoint that tells your listener, per
+event, whether to apply it:
 
 ```
 GET {PUBLIC_URL}/status/directories/{directory_id}
@@ -25,29 +25,59 @@ Response:
   "workos_directory_id": "directory_01HXYZ...",
   "mode": "dual-write",
   "native_authoritative": true,
+  "apply_dsync_events": false,
   "updated_at": "2026-07-31 14:00:00"
 }
 ```
 
-`native_authoritative` is derived from the mode — `true` for `passthrough` and
-`dual-write` (your app still owns the directory; **ignore** DSync events),
-`false` for `workos-only` (WorkOS owns it; **handle** them). A rollback flips
-it back to `true`.
+## Which field to key on
+
+**`apply_dsync_events` is the one your listener reads.** `true` means apply the
+event; `false` means acknowledge it and drop it. That is the whole contract —
+you do not need to know why.
+
+`native_authoritative` answers a *different* question: who owns the directory's
+data right now. It is useful for a status display or an operator report. Do not
+derive your handle-vs-ignore decision from it, and do not derive it from `mode`
+either.
+
+They look interchangeable today, and that is the trap. For all three current
+modes they are exact opposites:
+
+| `mode` | `native_authoritative` | `apply_dsync_events` |
+| --- | --- | --- |
+| `passthrough` | `true` | `false` |
+| `dual-write` | `true` | `false` |
+| `workos-only` | `false` | `true` |
+
+They stop being opposites as soon as a mode exists where WorkOS owns the data
+but the proxy still writes your app directly — WorkOS is authoritative, yet your
+listener must stay inert, because applying the events *as well* would process
+every change twice. A listener that inferred "not authoritative ⇒ apply" would
+double-apply every change in exactly the mode meant to make a migration safer.
+`apply_dsync_events` is how we tell you, so you never have to track which modes
+mean what.
+
+**If the field is missing**, you are talking to a bridge older than this
+contract. Fall back to `mode === "workos-only"`, which is what those bridges
+meant, and treat any mode you do not recognise as "do not apply".
 
 The response carries an `ETag` and `Cache-Control: private, max-age=5`, so a
 listener that asks once per event can revalidate cheaply with `If-None-Match`
-(a `304` means nothing changed). Keep the cache short-lived: a stale
-`native_authoritative` delays your app noticing a cutover or rollback.
+(a `304` means nothing changed). The `ETag` covers `apply_dsync_events`
+explicitly, so a `304` can never withhold a change to the instruction. Keep the
+cache short-lived anyway: a stale instruction delays your app noticing a cutover
+or rollback.
 
 ## Handle-vs-ignore in your listener
 
 ```ts
-const statusCache = new Map<string, { authoritative: boolean; expires: number }>();
+const statusCache = new Map<string, { apply: boolean; expires: number }>();
 
-/** True when this app (not WorkOS) still owns the directory. */
-async function nativeAuthoritative(directoryId: string): Promise<boolean> {
+/** True when this app should apply DSync events for the directory. */
+async function shouldApplyDsyncEvents(directoryId: string): Promise<boolean> {
   const cached = statusCache.get(directoryId);
-  if (cached && cached.expires > Date.now()) return cached.authoritative;
+  if (cached && cached.expires > Date.now()) return cached.apply;
 
   // You already store the proxy token per directory to configure your IdP;
   // key it by the WorkOS directory id when you set that id in the panel.
@@ -56,30 +86,35 @@ async function nativeAuthoritative(directoryId: string): Promise<boolean> {
     { headers: { Authorization: `Bearer ${proxyTokenFor(directoryId)}` } },
   );
   if (!response.ok) throw new Error(`status endpoint answered ${response.status}`);
-  const status = (await response.json()) as { native_authoritative: boolean };
-  statusCache.set(directoryId, {
-    authoritative: status.native_authoritative,
-    expires: Date.now() + 5_000,
-  });
-  return status.native_authoritative;
+  const status = (await response.json()) as {
+    mode: string;
+    apply_dsync_events?: boolean;
+  };
+  // Obey the instruction when it is there; an older bridge that doesn't send
+  // one meant `workos-only`. Never re-derive it from `native_authoritative`.
+  const apply = status.apply_dsync_events ?? status.mode === "workos-only";
+  statusCache.set(directoryId, { apply, expires: Date.now() + 5_000 });
+  return apply;
 }
 
 app.post("/webhooks/dsync", async (req, res) => {
   const event = req.body;
-  if (await nativeAuthoritative(event.data.directory_id)) {
-    // Pre-cutover: the proxy writes this app directly; applying the WorkOS
-    // echo would fight it. Acknowledge and drop.
+  if (!(await shouldApplyDsyncEvents(event.data.directory_id))) {
+    // The proxy is writing this app directly; applying the WorkOS echo would
+    // fight it, or double-apply it. Acknowledge and drop.
     return res.json({ received: true });
   }
-  await applyDsyncEvent(event); // workos-only: WorkOS is the source of truth
+  await applyDsyncEvent(event); // WorkOS is the source of truth for this app
   res.json({ received: true });
 });
 ```
 
 On an error from the endpoint, fail toward **not applying** the event and let
-the webhook retry — guessing "handle" while your app is still authoritative can
-clobber newer native state.
+the webhook retry — guessing "apply" while the proxy is still writing your app
+can clobber newer native state or duplicate a change.
 
 The bundled reference listener (`workers/native/listener.ts`) consumes this
-endpoint the same way via `workers/native/status-client.ts`, falling back to
-its shared database only when the endpoint isn't mounted (`npm run dev`).
+endpoint the same way via `workers/native/status-client.ts` — it reads
+`apply_dsync_events` and never re-derives it — falling back to its shared
+database only when the endpoint isn't mounted (`npm run dev`), and to
+`mode === "workos-only"` when the bridge is old enough not to send the field.

@@ -12,15 +12,40 @@ export interface DirectoryStatus {
   directory_id: string;
   workos_directory_id: string | null;
   mode: Directory["mode"];
+  /** Who owns the directory's data. Descriptive — for display and reporting.
+   *  NOT an instruction: see `apply_dsync_events`. */
   native_authoritative: boolean;
+  /** What the listener must do with a DSync event for this directory. This is
+   *  the field a listener keys on. */
+  apply_dsync_events: boolean;
   updated_at: string;
 }
 
 /**
+ * Whether a listener should apply DSync events for a directory in this mode.
+ *
+ * Today this is exactly `!native_authoritative`, because for all three current
+ * modes "WorkOS owns the data" and "the listener should apply events" happen to
+ * be the same question. They are not the same question. ENT-6767's WorkOS-primary
+ * dual-write mode is the counterexample: WorkOS is authoritative, but the proxy
+ * still writes the native app directly, so a listener that also applied the
+ * events would process every change twice. That mode will return `false` here
+ * while `native_authoritative` is `false` too.
+ *
+ * Keep this the single place the instruction is decided, and keep it exported —
+ * the ETag has to be computed from the same value the body carries.
+ */
+export function appliesDsyncEvents(mode: Directory["mode"]): boolean {
+  return mode === "workos-only";
+}
+
+/**
  * GET /status/directories/{id} — the migration-mode status of one directory,
- * for the customer's native app's DSync event listener: while the native app is
- * authoritative (before cutover) it must keep ignoring DSync events, and once
- * WorkOS is authoritative (workos-only) it must apply them.
+ * for the customer's native app's DSync event listener: `apply_dsync_events`
+ * tells the listener whether to apply an event or stay inert. Before cutover the
+ * proxy writes the native app directly, so applying a WorkOS echo would fight
+ * that write path; once WorkOS is authoritative (`workos-only`) the listener is
+ * how the native app learns about changes.
  *
  * Authenticated by the directory's own proxy token — the same credential the
  * IdP presents to the /scim/v2 data-plane — so a token can only ever read the
@@ -64,18 +89,35 @@ export async function handleStatus(request: Request, env: PocEnv, url: URL): Pro
     return statusError(404, `This token's directory is not ${requestedId}.`);
   }
 
+  const applyDsyncEvents = appliesDsyncEvents(directory.mode);
   const body: DirectoryStatus = {
     directory_id: directory.id,
     workos_directory_id: directory.workos_directory_id,
     mode: directory.mode,
     native_authoritative: directory.mode !== "workos-only",
+    apply_dsync_events: applyDsyncEvents,
     updated_at: directory.updated_at,
   };
   // Covers every field of the representation: mode and workos_directory_id
   // directly, updated_at for anything else. SQLite's datetime('now') contains
   // a space, which is not a valid ETag character (RFC 7232), so it is folded
   // to a T.
-  const etag = `"${directory.mode}:${directory.workos_directory_id ?? ""}:${directory.updated_at.replaceAll(" ", "T")}"`;
+  //
+  // `apply_dsync_events` is carried EXPLICITLY rather than left to the mode
+  // segment that happens to determine it today. Two reasons, both about the
+  // worst bug this endpoint can have — a 304 that withholds a changed
+  // instruction:
+  //  1. Across the deploy that added the field, the representation changes
+  //     while mode and updated_at do not. Without a new segment a listener
+  //     holding a pre-deploy validator would get a 304 and keep a cached body
+  //     that has no `apply_dsync_events` in it at all.
+  //  2. It makes the property structural instead of incidental. If the
+  //     instruction ever stops being a pure function of mode (a per-directory
+  //     pause switch, say), the validator still changes with it — nobody has to
+  //     remember to come back here.
+  // A redundant ETag segment can only cost an extra 200; it can never withhold
+  // a change.
+  const etag = `"${directory.mode}:${directory.workos_directory_id ?? ""}:${directory.updated_at.replaceAll(" ", "T")}:apply=${applyDsyncEvents ? "1" : "0"}"`;
   const headers = {
     ETag: etag,
     "Cache-Control": `private, max-age=${CACHE_MAX_AGE_SECONDS}`,
