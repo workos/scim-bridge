@@ -9,8 +9,19 @@ import type { DirectoryStatus } from "../proxy/status";
 const TTL_MS = 5_000;
 const FETCH_TIMEOUT_MS = 2_000;
 
+/**
+ * A status payload as *received*, which is not the same type as one we serve.
+ * A listener may be talking to a bridge older than itself, so every field the
+ * contract has gained since the endpoint shipped is optional here.
+ * `apply_dsync_events` (ENT-6768) is the first; callers must handle its absence
+ * rather than assume this bridge wrote the response.
+ */
+export type ReceivedDirectoryStatus = Omit<DirectoryStatus, "apply_dsync_events"> & {
+  apply_dsync_events?: boolean;
+};
+
 interface CacheEntry {
-  status: DirectoryStatus;
+  status: ReceivedDirectoryStatus;
   etag: string | null;
   freshUntil: number;
 }
@@ -34,7 +45,7 @@ const failedUntil = new Map<string, number>();
 export async function fetchDirectoryStatus(
   db: Datastore,
   directory: Directory,
-): Promise<DirectoryStatus | null> {
+): Promise<ReceivedDirectoryStatus | null> {
   const now = Date.now();
   const cached = cache.get(directory.id);
   if (cached && cached.freshUntil > now) return cached.status;
@@ -68,7 +79,7 @@ export async function fetchDirectoryStatus(
       failedUntil.set(directory.id, now + TTL_MS);
       return null;
     }
-    const status = (await response.json()) as DirectoryStatus;
+    const status = (await response.json()) as ReceivedDirectoryStatus;
     cache.set(directory.id, {
       status,
       etag: response.headers.get("ETag"),

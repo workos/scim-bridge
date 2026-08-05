@@ -73,12 +73,14 @@ export async function handleDsyncWebhook(request: Request, db: Datastore): Promi
   // Before cutover the proxy writes the native app directly (passthrough and
   // dual-write), so its DSync listener must stay inert: applying a WorkOS echo
   // here would fight the direct write path and could clobber authoritative
-  // native state with a stale or out-of-order event. Only workos-only makes the
-  // listener the source of truth. Echoes are still logged (as ignored) so the
-  // console shows they arrived and were deliberately not applied. Inertness is
-  // decided PER DIRECTORY (the proxy handles many), keyed on the event.
-  const mode = await directoryModeForEvent(db, data);
-  if (mode !== "workos-only") {
+  // native state with a stale or out-of-order event. Echoes are still logged
+  // (as ignored) so the console shows they arrived and were deliberately not
+  // applied. Inertness is decided PER DIRECTORY (the proxy handles many), keyed
+  // on the event, and it is *told* to us by the status endpoint rather than
+  // inferred from the mode or from who is authoritative — see
+  // dsyncInstructionForEvent.
+  const instruction = await dsyncInstructionForEvent(db, data);
+  if (!instruction.apply) {
     // Keep the last-writer-wins high-water mark advancing even while inert, so a
     // stale pre-cutover webhook that is delivered late (out of order) can't be
     // applied after cutover on top of newer state the app already holds. We
@@ -90,7 +92,7 @@ export async function handleDsyncWebhook(request: Request, db: Datastore): Promi
       eventType,
       idpId: asString(data.idp_id),
       action: "ignored",
-      detail: `listener inactive in ${mode ?? "pre-cutover"} mode — the proxy writes the native app directly until cutover`,
+      detail: `listener inactive in ${instruction.mode ?? "pre-cutover"} mode — the proxy writes the native app directly until cutover`,
       payload: rawBody,
     });
     return Response.json({ received: true });
@@ -580,29 +582,69 @@ async function recordEventVersion(
   );
 }
 
+/** What the listener should do with an event, and the mode to say so in the log. */
+interface DsyncInstruction {
+  /** Apply the event, or stay inert. Read from the endpoint's instruction field
+   *  whenever it is present — never re-derived from `mode` or from
+   *  `native_authoritative`. */
+  apply: boolean;
+  /** Reporting only. `null` when no directory could be resolved for the event. */
+  mode: string | null;
+}
+
 /**
- * The migration mode of the directory a DSync event belongs to. The listener
- * only applies events once that directory's mode is `workos-only`; the proxy is
- * multi-directory, so this is resolved per event rather than globally.
+ * The fallback instruction for a directory in this mode, used only when the
+ * bridge did not send one. Deliberately conservative: stay inert unless the
+ * directory is fully cut over.
  *
- * The mode is read from the proxy's `GET /status/directories/{id}` endpoint,
- * authenticated by the directory's proxy token — the same contract a real
- * customer's native app (a separate service with no access to this database)
- * polls from its own listener. A real deployment keys the lookup on the WorkOS
- * directory id the event carries (`event.data.directory_id`); the panel's
- * per-directory "WorkOS directory id" field links the two. When the endpoint
- * is unreachable (e.g. `npm run dev`, which mounts only the panel) the mode
- * falls back to the directory row this bundled listener already shares.
+ * This is the pre-ENT-6768 rule, and it is what an older bridge meant by the
+ * modes it can report. It is duplicated from `appliesDsyncEvents` in
+ * workers/proxy/status.ts on purpose — that one is this bridge's live policy and
+ * may grow cases (ENT-6767); this one is a frozen compatibility shim for a peer
+ * that predates the instruction field, and must not follow it. Failing toward
+ * inert is also the right default for a mode this listener has never heard of.
+ */
+function applyFromModeFallback(mode: string | null): boolean {
+  return mode === "workos-only";
+}
+
+/**
+ * Whether the listener should apply a DSync event, for the directory the event
+ * belongs to. The proxy is multi-directory, so this is resolved per event rather
+ * than globally.
+ *
+ * The instruction is read from the proxy's `GET /status/directories/{id}`
+ * endpoint, authenticated by the directory's proxy token — the same contract a
+ * real customer's native app (a separate service with no access to this
+ * database) polls from its own listener. A real deployment keys the lookup on
+ * the WorkOS directory id the event carries (`event.data.directory_id`); the
+ * panel's per-directory "WorkOS directory id" field links the two.
+ *
+ * It reads `apply_dsync_events` and nothing else. It does NOT infer the answer
+ * from `mode`, and it does NOT infer it from `native_authoritative`: "who owns
+ * the data" and "what the listener should do" coincide for every mode that
+ * exists today and stop coinciding at ENT-6767, where WorkOS is authoritative
+ * but the proxy still writes native directly — a listener that applied events
+ * there would process every change twice. This is a reference implementation a
+ * customer copies, so inferring here would reintroduce the bug at the customer.
+ *
+ * Two fallbacks, both to `mode === "workos-only"` and both documented in
+ * docs/listener-status.md:
+ *  - the response carries no `apply_dsync_events` (a bridge older than this
+ *    listener), so there is no instruction to obey;
+ *  - the endpoint is unreachable (e.g. `npm run dev`, which mounts only the
+ *    panel), so the mode falls back to the directory row this bundled listener
+ *    already shares.
  *
  * The bundled simulator models a SINGLE directory (its mock WorkOS and native
  * app are one shared store, and its demo events carry no `directory_id`), so a
  * lone directory that was never linked to a WorkOS directory resolves to itself.
  * A directory that names its WorkOS id must match the event's, or an event for
  * another directory would be applied to it — so a mismatch, like several
- * directories with no id to map, returns `null` and leaves the event unapplied
- * rather than guessed onto the wrong directory.
+ * directories with no id to map, leaves the event unapplied rather than guessed
+ * onto the wrong directory.
  */
-async function directoryModeForEvent(db: Datastore, data: Json): Promise<string | null> {
+async function dsyncInstructionForEvent(db: Datastore, data: Json): Promise<DsyncInstruction> {
   const directories = await listDirectories(db);
   const directoryId = asString(data.directory_id);
   const byId = directoryId
@@ -611,9 +653,14 @@ async function directoryModeForEvent(db: Datastore, data: Json): Promise<string 
   const unlinkedLone =
     directories.length === 1 && !directories[0].workos_directory_id ? directories[0] : undefined;
   const directory = byId ?? unlinkedLone;
-  if (!directory) return null;
+  if (!directory) return { apply: false, mode: null };
+
   const status = await fetchDirectoryStatus(db, directory);
-  return status?.mode ?? directory.mode;
+  if (!status) return { apply: applyFromModeFallback(directory.mode), mode: directory.mode };
+  return {
+    apply: status.apply_dsync_events ?? applyFromModeFallback(status.mode),
+    mode: status.mode,
+  };
 }
 
 async function isDuplicate(db: Datastore, eventId: string): Promise<boolean> {

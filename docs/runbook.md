@@ -237,6 +237,16 @@ Advance the directory's mode from its page, verifying convergence in the
    endpoint — `GET /status/directories/{id}`, shown on the directory page —
    see [listener-status.md](./listener-status.md).
 
+   The listener keys on that response's **`apply_dsync_events`** and on nothing
+   else. The endpoint also reports `native_authoritative`, which describes who
+   owns the data and is there for display; it is not the instruction. The two
+   are exact opposites in all three modes today, which is why it is easy to use
+   the wrong one and not notice — until a mode exists where WorkOS is
+   authoritative but the proxy still writes native directly (ENT-6767), where a
+   listener keyed on `native_authoritative` would apply every change a second
+   time. When the field is absent the listener falls back to
+   `mode === "workos-only"`, so an older bridge still behaves correctly.
+
 **Rollback:** before cutover, move the mode back toward passthrough — the native
 system stayed current, so no data is lost. After cutover (`workos-only`), native
 is kept current by the DSync listener; if you're unsure it stayed caught up, run
@@ -329,7 +339,7 @@ no longer declares are deleted, so removing a directory (or moving its token to 
 new directory id) takes effect on the next restart with no manual cleanup.
 
 The listener applies an event only when its `directory_id` matches a declared
-directory *and* the bridge reports `workos-only` for it (see
+directory *and* the bridge answers `apply_dsync_events: true` for it (see
 [listener-status.md](./listener-status.md)). If `BRIDGE_STATUS_URL` is
 unreachable it falls back to the seeded row, which stays at `passthrough` —
 events are logged as ignored rather than applied, so a cutover that looks inert
@@ -350,6 +360,8 @@ directory and watch it converge.
 | Proxy returns 401 and the token looks right | Check the header shape. `Authorization: Bearer <token>` (any casing of the scheme) and a bare `Authorization: <token>` both authenticate, so it doesn't matter whether the IdP adds the prefix or sends the field verbatim; any other scheme (`Basic …`) does not. The one shape that still fails is a doubled prefix — typing `Bearer <token>` into an IdP that then adds its own. |
 | Proxy returns 502 | The native (passthrough/dual-write) or WorkOS (workos-only) endpoint is unreachable — verify the URL/token with the directory page's test buttons. |
 | WorkOS answers 400 `invalidSyntax` on a mirror or backfill | An attribute the native app sent as `null` where WorkOS expects a string. The bridge drops null-valued keys from every WorkOS-bound resource body, so this should only appear on a `PATCH` (whose `Operations` are deliberately left alone — a null there can be a meaningful remove) or for a genuinely malformed value. |
+| Listener ignores events after cutover | `GET /status/directories/{id}` must answer `apply_dsync_events: true`. If it answers `false` with `mode: workos-only`, the row didn't flip; if the listener ignores a `true`, it is deriving the decision from `mode` or `native_authoritative` instead of reading the field. |
+| Listener applies each change twice | It is inferring "apply" from `native_authoritative` (or from "not passthrough/dual-write") rather than reading `apply_dsync_events`. Those agree in every mode today, so this only shows up once a mode separates them. |
 | Mappings show `fallback-post` | The migrated-id contract wasn't active for that WorkOS directory (flag/`migrated`/`created_at` prerequisites) — ids aren't shared. |
 | Tokens look like `enc:v1:…` in the DB | Expected — they're encrypted at rest. Never change `APP_ENCRYPTION_KEY` after writing, or they become unreadable. |
 | Panel 500s after setting a key | The key changed since tokens were written; restore the original `APP_ENCRYPTION_KEY`. |

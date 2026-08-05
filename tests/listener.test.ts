@@ -389,6 +389,139 @@ describe("dsync listener", () => {
     });
   });
 
+  /**
+   * ENT-6768. The listener must key on `apply_dsync_events` and on nothing else
+   * — not the mode, not `native_authoritative`. No mode that exists today can
+   * make those three disagree, which is exactly why these payloads are hand-built:
+   * they are the ENT-6767 shape, and this is the regression test for a bug we
+   * have not yet had the chance to make.
+   *
+   * The pair matters. A listener hardwired to "never apply" passes the inert
+   * cases; one hardwired to "always apply" passes the applying ones. Only a
+   * listener that actually reads the field passes both.
+   */
+  describe("apply_dsync_events is the instruction", () => {
+    /** Serve `body` from the status endpoint the listener polls. */
+    async function serveStatus(env: PocEnv, body: unknown): Promise<void> {
+      await setConfig(env.DB, "proxy.loopback_url", NATIVE_URL);
+      fake = installFakeUpstreams();
+      fake.route("native", "GET", "/status/directories/", () => Response.json(body));
+    }
+
+    it("stays inert when told not to apply, even though WorkOS is authoritative and the mode is workos-only", async () => {
+      // Both derivations the listener could have used point the other way:
+      // mode === "workos-only" and native_authoritative === false each say
+      // "apply". Only the instruction says otherwise, and the instruction wins.
+      const { env, directory } = await seedListenerEnv({ mode: "passthrough" });
+      await serveStatus(env, {
+        directory_id: directory.id,
+        workos_directory_id: null,
+        mode: "workos-only",
+        native_authoritative: false,
+        apply_dsync_events: false,
+        updated_at: directory.updated_at,
+      });
+
+      await deliver(env, envelope("dsync.user.created", ada));
+
+      expect((await lastEvent(env.DB)).action).toBe("ignored");
+      expect(await nativeUsers(env.DB)).toHaveLength(0);
+    });
+
+    it("stays inert on the ENT-6767 WorkOS-primary shape", async () => {
+      // Rung 3: WorkOS answers the IdP, but the proxy still writes native
+      // directly, so applying the events too would process every change twice.
+      // A listener that inferred "not authoritative ⇒ apply" would double-apply.
+      const { env, directory } = await seedListenerEnv({ mode: "passthrough" });
+      await serveStatus(env, {
+        directory_id: directory.id,
+        workos_directory_id: null,
+        mode: "workos-primary",
+        native_authoritative: false,
+        apply_dsync_events: false,
+        updated_at: directory.updated_at,
+      });
+
+      await deliver(env, envelope("dsync.user.created", ada));
+
+      const event = await lastEvent(env.DB);
+      expect(event.action).toBe("ignored");
+      expect(event.detail).toContain("workos-primary");
+      expect(await nativeUsers(env.DB)).toHaveLength(0);
+    });
+
+    it("applies when told to, even though the native app is still authoritative", async () => {
+      // The mirror image, and the half that stops "always stay inert" from
+      // passing this suite.
+      const { env, directory } = await seedListenerEnv({ mode: "passthrough" });
+      await serveStatus(env, {
+        directory_id: directory.id,
+        workos_directory_id: null,
+        mode: "dual-write",
+        native_authoritative: true,
+        apply_dsync_events: true,
+        updated_at: directory.updated_at,
+      });
+
+      await deliver(env, envelope("dsync.user.created", ada));
+
+      expect((await lastEvent(env.DB)).action).toBe("applied");
+      expect(await nativeUsers(env.DB)).toHaveLength(1);
+    });
+
+    describe("tolerating a bridge that predates the field", () => {
+      // A listener may poll an older bridge, whose payload carries no
+      // instruction at all. Documented fallback: mode === "workos-only".
+      it("applies when an older bridge reports workos-only", async () => {
+        const { env, directory } = await seedListenerEnv({ mode: "passthrough" });
+        await serveStatus(env, {
+          directory_id: directory.id,
+          workos_directory_id: null,
+          mode: "workos-only",
+          native_authoritative: false,
+          updated_at: directory.updated_at,
+        });
+
+        await deliver(env, envelope("dsync.user.created", ada));
+
+        expect((await lastEvent(env.DB)).action).toBe("applied");
+        expect(await nativeUsers(env.DB)).toHaveLength(1);
+      });
+
+      it("stays inert when an older bridge reports a pre-cutover mode", async () => {
+        const { env, directory } = await seedListenerEnv({ mode: "workos-only" });
+        await serveStatus(env, {
+          directory_id: directory.id,
+          workos_directory_id: null,
+          mode: "dual-write",
+          native_authoritative: true,
+          updated_at: directory.updated_at,
+        });
+
+        await deliver(env, envelope("dsync.user.created", ada));
+
+        expect((await lastEvent(env.DB)).action).toBe("ignored");
+        expect(await nativeUsers(env.DB)).toHaveLength(0);
+      });
+
+      it("stays inert for a mode an older bridge names that this listener has never heard of", async () => {
+        const { env, directory } = await seedListenerEnv({ mode: "workos-only" });
+        await serveStatus(env, {
+          directory_id: directory.id,
+          workos_directory_id: null,
+          mode: "some-future-mode",
+          native_authoritative: false,
+          updated_at: directory.updated_at,
+        });
+
+        await deliver(env, envelope("dsync.user.created", ada));
+
+        expect((await lastEvent(env.DB)).action).toBe("ignored");
+        expect(await nativeUsers(env.DB)).toHaveLength(0);
+      });
+    });
+  });
+
   describe("status client", () => {
     const statusBody = (directory: Directory) => ({
       directory_id: directory.id,
