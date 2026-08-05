@@ -10,9 +10,15 @@ for itself.
 ```bash
 # 1. Write the notes first. The workflow refuses to release without them.
 $EDITOR CHANGELOG.md            # rename [Unreleased] to [0.3.0] - YYYY-MM-DD
+
+# 2. Bump package.json to the same number. npm prints it on every container
+#    start, so a stale one misreports what an operator is running. The workflow
+#    refuses to release when it disagrees with the tag.
+npm version 0.3.0 --no-git-tag-version
+
 git commit -am "release: 0.3.0"
 
-# 2. Tag it. Nothing else is needed.
+# 3. Tag it. Nothing else is needed.
 git tag v0.3.0
 git push origin main v0.3.0
 ```
