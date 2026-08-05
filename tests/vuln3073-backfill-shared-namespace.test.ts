@@ -177,6 +177,46 @@ describe("VULN-3073: backfill claims co-tenant rows in a shared native namespace
     expect(results.map((r) => r.native_id)).toEqual(["u1", "u2"]);
   });
 
+  it("re-checks sharing per row: a namespace that becomes shared mid-backfill still refuses the co-tenant row", async () => {
+    const env = await createEnv();
+    const attacker = await seedDirectory(env.DB, { name: "Org A", mode: "dual-write" });
+
+    fake = installFakeUpstreams();
+    // The directory is alone when the run starts (not shared). The operator points a
+    // second directory at the same native app while the snapshot is in flight.
+    fake.route(
+      "native",
+      "GET",
+      /^\/Users(\?|$)/,
+      async () => {
+        await seedDirectory(env.DB, { name: "Org B (configured mid-run)", mode: "dual-write" });
+        return scimJson(200, {
+          schemas: ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+          totalResults: 1,
+          startIndex: 1,
+          itemsPerPage: 1,
+          Resources: [{ id: "vic-1", userName: "victim.user@orgb.example", active: true }],
+        });
+      },
+      { once: true },
+    );
+    fake.route("native", "GET", /^\/Groups(\?|$)/, () =>
+      scimJson(200, { totalResults: 0, startIndex: 1, itemsPerPage: 0, Resources: [] }),
+    );
+    installStatefulWorkos(fake);
+
+    // By the time the row is minted the namespace is shared, so it is refused even
+    // though the run began un-shared.
+    const backfill = await runBackfill(env.DB, attacker);
+    expect(backfill.users).toEqual({ total: 1, mirrored: 0, failed: 1 });
+    const mapping = await env.DB.prepare(
+      "SELECT native_id FROM id_mappings WHERE directory_id = ? AND native_id = ?",
+    )
+      .bind(attacker.id, "vic-1")
+      .first();
+    expect(mapping).toBeNull();
+  });
+
   it("negative control: with NO backfill, a post-cutover attacker PUT is refused (404)", async () => {
     const env = await createEnv();
     const attacker = await seedDirectory(env.DB, { name: "Org A", mode: "workos-only" });
