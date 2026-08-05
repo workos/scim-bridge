@@ -165,6 +165,38 @@ describe("migrated-id dance", () => {
       ]);
     });
 
+    it("refuses to mirror a first-touch PUT when another directory fronts the native app", async () => {
+      // The native leg replaces any existing row and answers 2xx, so without this
+      // the tenant could name a neighbour's row and have the mirror mint a mapping
+      // claiming it — a claim that outlives cutover and steers a later reconcile.
+      const { env, directory, fake } = await setup();
+      await seedDirectory(env.DB, { name: "Org B" });
+      fake.route("native", "PUT", "/Users/victim-1", scimJson(200, { id: "victim-1" }));
+
+      const res = await send(env, directory, "PUT", "/scim/v2/Users/victim-1", {
+        userName: "attacker@evil.example",
+        active: false,
+      });
+
+      // The native app is authoritative in dual-write, so the IdP still sees its
+      // answer; only the claim on the id is refused.
+      expect(res.status).toBe(200);
+      expect(fake.callsTo("workos")).toHaveLength(0);
+      expect(await allMappings(env.DB, directory.id)).toEqual([]);
+    });
+
+    it("still mirrors a mapped PUT in a shared namespace", async () => {
+      const { env, directory, fake } = await setup();
+      await seedDirectory(env.DB, { name: "Org B" });
+      await seedMapping(env.DB, directory, "Users", "u1", "u1", "migrated-id");
+      fake.route("native", "PUT", "/Users/u1", scimJson(200, { id: "u1" }));
+      fake.route("workos", "PUT", "/Users/u1", scimJson(200, { id: "u1" }));
+
+      await send(env, directory, "PUT", "/scim/v2/Users/u1", { userName: "ada@example.com" });
+
+      expect(legs(fake.callsTo("workos"))).toEqual(["PUT /Users/u1"]);
+    });
+
     it("lost create race: POST 409s and the re-PUT resolves the winner's row", async () => {
       const { env, directory, fake } = await setup();
       fake.route("native", "PUT", "/Users/u1", scimJson(200, { id: "u1" }));

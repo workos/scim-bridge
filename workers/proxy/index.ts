@@ -250,6 +250,22 @@ async function mirrorDualWrite(
   if (!nativeId) return;
 
   if (method === "PUT") {
+    // The path id is the tenant's own value, and minting a mapping from it is
+    // this directory's claim on a native row. Where a neighbour fronts the same
+    // native app the tenant could name the neighbour's row — the native leg
+    // replaces it and answers 2xx for any existing id — and the claim would
+    // outlive cutover, satisfying the replace leg's guard and steering a later
+    // reconcile onto that row. Fail closed on the mirror only: the native write
+    // already happened and is the authoritative side in this mode.
+    if (
+      !(await getMapping(db, directory.id, kind, nativeId)) &&
+      (await nativeNamespaceIsShared(db, directory))
+    ) {
+      log.error =
+        `${kind}/${nativeId}: unmapped, and another directory fronts this native app, so the ` +
+        "id in the request cannot be adopted as this directory's; mirror skipped";
+      return;
+    }
     const resource = parseJson(requestBody) ?? {};
     const body = kind === "Groups" ? translateResourceIds(resource, kind, translate) : resource;
     applyMirrorResult(log, await mirrorUpsert(db, directory, kind, nativeId, body));
