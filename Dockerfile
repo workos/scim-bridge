@@ -11,7 +11,18 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json* ./
-RUN npm ci || npm install
+
+# Every dependency must resolve from the public registry. This runs inside the
+# build, not only in CI, because the image is the thing we publish: a lockfile
+# pointing at WorkOS's Socket proxy builds fine on a WorkOS machine and E401s for
+# everyone else (#45/#50), and "only WorkOS can rebuild it" defeats publishing it.
+COPY scripts/check-public-registry.mjs scripts/
+RUN node scripts/check-public-registry.mjs
+
+# `npm ci` only — no `|| npm install` fallback. The fallback turned an
+# unresolvable or stale lockfile into a green build against a *different*
+# dependency tree, which is the one failure the lockfile exists to prevent.
+RUN npm ci
 
 COPY . .
 RUN npm run build && npm prune --omit=dev

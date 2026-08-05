@@ -34,6 +34,12 @@ docker run -p 8080:8080 -v scim-bridge-data:/data \
   ghcr.io/workos/scim-bridge:latest
 ```
 
+The image is published for `linux/amd64` and `linux/arm64` under one manifest,
+so the same command works on an EC2 host, on Cloudflare Containers, and on an
+Apple Silicon laptop. **`:latest` is for trying it out** — for anything you
+depend on, pin a version or a digest: see
+[Releases and image tags](#releases-and-image-tags).
+
 ## Configuration (environment variables)
 
 Only process-wide settings are configured here. Per-directory settings are
@@ -195,6 +201,30 @@ The datastore is a configured choice: a SQLite file (default) or Postgres, behin
 one narrow interface — see [docs/runbook.md#durable-storage](docs/runbook.md#durable-storage)
 for which to pick and why.
 
+## Releases and image tags
+
+Every release is a git tag `vX.Y.Z`, a [GitHub
+Release](https://github.com/workos/scim-bridge/releases) whose notes say what
+changes for an operator, and a matching set of image tags. What changed in each
+version is in [`CHANGELOG.md`](./CHANGELOG.md).
+
+| Reference | Moves? | Use it for |
+| --- | --- | --- |
+| `ghcr.io/workos/scim-bridge@sha256:…` | never | **Production.** The only reference that cannot change under you; each release's notes print it. |
+| `ghcr.io/workos/scim-bridge:0.3.0` | never in practice | Production, if you would rather read a version than a hash. A published version tag is never overwritten. |
+| `ghcr.io/workos/scim-bridge:0.3` | with each patch | Picking up fixes without a redeploy decision. |
+| `ghcr.io/workos/scim-bridge:latest` | with each release | Trying it out. An unattended `latest` will upgrade you across breaking changes. |
+
+Images carry build provenance and an SBOM, so your scanner can answer "are we
+exposed to CVE-x" without asking us:
+
+```bash
+docker buildx imagetools inspect ghcr.io/workos/scim-bridge:latest
+```
+
+Cutting a release, and the checks the pipeline runs before publishing anything,
+are documented in [`docs/releasing.md`](./docs/releasing.md).
+
 ## License
 
-See [`LICENSE`](./LICENSE).
+MIT — see [`LICENSE`](./LICENSE).
