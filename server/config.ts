@@ -54,9 +54,14 @@ export interface AppConfig {
   demoMode: boolean;
   /** Optional key reserved for encrypting per-directory tokens at rest. */
   encryptionKey: string | null;
-  /** Optional HTTP Basic credentials guarding the control panel. */
+  /** HTTP Basic credentials guarding the control panel. Required in the
+   *  `bridge` role unless `panelAuthDisabled` says otherwise. */
   panelAuthUser: string | null;
   panelAuthPassword: string | null;
+  /** Operator's explicit acknowledgement that /panel is served unauthenticated
+   *  — because something in front of it authenticates, or because nothing
+   *  reachable matters. Without it a bridge with no credentials refuses to boot. */
+  panelAuthDisabled: boolean;
   /** `native-app` role: bearer token the bridge presents to this app's /scim/v2. */
   nativeScimToken: string | null;
   /** `native-app` role: HMAC secret of the WorkOS webhook endpoint feeding /webhooks/dsync. */
@@ -157,6 +162,50 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     );
   }
 
+  // Parsed before the policy check below so a malformed value reports itself
+  // rather than being masked by "you also have not set panel credentials".
+  const envDirectories = directories(env.DIRECTORIES_JSON);
+
+  const panelAuthUser = env.PANEL_AUTH_USER?.trim() || null;
+  const panelAuthPassword = env.PANEL_AUTH_PASSWORD || null;
+  const panelAuthDisabled = bool(env.PANEL_AUTH_DISABLED);
+  // Refuse to boot rather than serve the panel to anyone who can reach the port.
+  //
+  // /panel is not a dashboard of read-only status: the directory page renders
+  // each directory's native and WorkOS bearer tokens into the HTML as form
+  // values, so an unauthenticated panel hands out the credentials the bridge
+  // uses to write to the customer's own SCIM service and to WorkOS.
+  // APP_ENCRYPTION_KEY does not help — it encrypts at rest, and the panel
+  // decrypts to render. Unlike the proxy token (hashed since #41), these two
+  // cannot be hashed: the bridge has to present them upstream.
+  //
+  // Blank-means-open was the default, `.env.example` shipped it, and
+  // docker-compose publishes :8080 — so the documented path was the unsafe one.
+  // Being explicit about it is one variable; leaving it implicit was a credential
+  // leak that looked like a working deployment.
+  if (role === "bridge" && !panelAuthDisabled && (!panelAuthUser || !panelAuthPassword)) {
+    // Half a pair is a different mistake and needs a different sentence. It is
+    // not a leak — every request is denied, including the correct one — but the
+    // container starts, logs "control panel: …", and then rejects the operator's
+    // own password with nothing anywhere saying why. Found by copying the
+    // .env.example this change first shipped, which set a username and left the
+    // password blank.
+    const halfConfigured = Boolean(panelAuthUser) !== Boolean(panelAuthPassword);
+    throw new Error(
+      halfConfigured
+        ? `Panel auth is half-configured: ${panelAuthUser ? "PANEL_AUTH_USER" : "PANEL_AUTH_PASSWORD"} ` +
+            `is set and ${panelAuthUser ? "PANEL_AUTH_PASSWORD" : "PANEL_AUTH_USER"} is blank. ` +
+            "That combination denies every request, including yours, and says nothing about " +
+            "why. Set both, or set neither plus PANEL_AUTH_DISABLED=true."
+        : "PANEL_AUTH_USER and PANEL_AUTH_PASSWORD are required: the control panel renders " +
+            "every directory's native and WorkOS bearer tokens in plaintext, so without them " +
+            "anyone who can reach this port can read the credentials this bridge writes with " +
+            "(APP_ENCRYPTION_KEY does not change that — the panel decrypts to render). " +
+            "Set both, or set PANEL_AUTH_DISABLED=true if something in front of the bridge " +
+            "already authenticates /panel.",
+    );
+  }
+
   return {
     role,
     databaseDriver: driver,
@@ -166,18 +215,44 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     publicUrl,
     demoMode: bool(env.DEMO_MODE),
     encryptionKey: env.APP_ENCRYPTION_KEY?.trim() || null,
-    panelAuthUser: env.PANEL_AUTH_USER?.trim() || null,
-    panelAuthPassword: env.PANEL_AUTH_PASSWORD || null,
+    panelAuthUser,
+    panelAuthPassword,
+    panelAuthDisabled,
     nativeScimToken: env.NATIVE_SCIM_TOKEN?.trim() || null,
     webhookSecret,
     bridgeStatusUrl: bridgeStatusUrl ? trimTrailingSlash(bridgeStatusUrl) : null,
-    directories: directories(env.DIRECTORIES_JSON),
+    directories: envDirectories,
   };
 }
 
 /** Loopback base the in-process demo mounts are reachable at. */
 export function loopbackBase(config: AppConfig): string {
   return `http://127.0.0.1:${config.port}`;
+}
+
+/**
+ * Paths the panel's Basic-auth gate never challenges.
+ *
+ * Everything here authenticates itself or has nothing to protect:
+ *  - `/scim/v2` and `/status/directories` verify each request's own
+ *    per-directory proxy token, and the IdP cannot send Basic credentials.
+ *  - `/healthz` is what a load balancer probes.
+ *  - `/__demo` is the bundled fake IdP and fake customer app, and only exists
+ *    when DEMO_MODE is set. The panel drives them by fetching its own loopback
+ *    URL with no credentials on the request, so gating them made DEMO_MODE and
+ *    PANEL_AUTH_* mutually exclusive: seeding failed with "The IdP simulator
+ *    rejected that request", which names no cause an operator could act on.
+ *
+ * A predicate rather than five conditions inline in the middleware, because the
+ * middleware only exists once the react-router build is mounted and this list
+ * is exactly the sort of thing that grows a hole nobody can test for.
+ */
+export function panelAuthExempt(path: string, config: Pick<AppConfig, "demoMode">): boolean {
+  if (path === "/healthz") return true;
+  if (path === "/scim/v2" || path.startsWith("/scim/v2/")) return true;
+  if (path === "/status/directories" || path.startsWith("/status/directories/")) return true;
+  if (config.demoMode && (path === "/__demo" || path.startsWith("/__demo/"))) return true;
+  return false;
 }
 
 export type PanelAuthDecision = "open" | "granted" | "denied";

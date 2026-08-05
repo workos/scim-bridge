@@ -13,6 +13,7 @@ import type { PocEnv } from "../workers/shared/types";
 import {
   decidePanelAuth,
   loadConfig,
+  panelAuthExempt,
   seedConfig,
   seedDemoDirectory,
   seedNativeAppConfig,
@@ -136,21 +137,13 @@ async function mountBridge(): Promise<void> {
     "production",
   );
 
-  // Guard the control panel with optional HTTP Basic auth. The SCIM data-plane
-  // (/scim) and the directory status endpoint (/status) authenticate each
-  // request by its own proxy token, and /healthz stays open for load-balancer
-  // probes, so none of them are gated here.
+  // Guard the control panel with HTTP Basic auth — required, unless the operator
+  // set PANEL_AUTH_DISABLED to say something in front of us does it instead
+  // (loadConfig refuses to boot otherwise). What is deliberately not gated, and
+  // why, is `panelAuthExempt`.
   app.use("*", async (c, next) => {
     const path = new URL(c.req.url).pathname;
-    if (
-      path === "/healthz" ||
-      path === "/scim/v2" ||
-      path.startsWith("/scim/v2/") ||
-      path === "/status/directories" ||
-      path.startsWith("/status/directories/")
-    ) {
-      return next();
-    }
+    if (panelAuthExempt(path, config)) return next();
 
     const decision = await decidePanelAuth(config, c.req.header("Authorization") ?? null);
     if (decision !== "denied") return next();
@@ -221,5 +214,14 @@ serve({ fetch: app.fetch, port: config.port, hostname: "0.0.0.0" }, (info) => {
   } else {
     console.log(`  control panel: ${config.publicUrl}/panel`);
     console.log(`  SCIM base URL: ${config.publicUrl}/scim/v2`);
+    // Loud on every boot, not once at setup: an operator who set this to get
+    // past the refusal, meaning to put a proxy in front, should be reminded
+    // every time the container restarts until they have.
+    if (config.panelAuthDisabled) {
+      console.warn(
+        "  WARNING: PANEL_AUTH_DISABLED=true — /panel is unauthenticated and serves " +
+          "every directory's native and WorkOS bearer tokens to anyone who can reach it.",
+      );
+    }
   }
 });
