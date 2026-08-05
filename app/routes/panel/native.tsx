@@ -4,17 +4,12 @@ import { Form, useLoaderData, useNavigation, useRevalidator } from "react-router
 import { datastoreContext } from "../../context";
 import type { ListenerEvent } from "../../../workers/shared/types";
 import { clearNativeDirectory, withDatastoreRetry } from "../../../workers/shared/db";
-import * as AlertDialog from "../../vendor/design-system/components/alert-dialog";
-import { Badge } from "../../vendor/design-system/components/badge";
-import { Button } from "../../vendor/design-system/components/button";
-import { Card } from "../../vendor/design-system/components/card";
-import { Code } from "../../vendor/design-system/components/code";
-import * as EmptyState from "../../vendor/design-system/components/empty-state";
-import { Flex } from "../../vendor/design-system/components/flex";
-import { Heading } from "../../vendor/design-system/components/heading";
-import { Status } from "../../vendor/design-system/components/status";
-import * as Table from "../../vendor/design-system/components/table";
-import { Text } from "../../vendor/design-system/components/text";
+import { Card, Code, Flex, Heading, Table, Text } from "@radix-ui/themes";
+import * as AlertDialog from "../../ui/alert-dialog";
+import * as EmptyState from "../../ui/empty-state";
+import { Badge } from "../../ui/badge";
+import { Button } from "../../ui/button";
+import { Status } from "../../ui/status";
 import { CardHeader } from "./ui";
 
 export async function action({ context, request }: Route.ActionArgs) {
@@ -166,44 +161,42 @@ export default function PanelNative() {
             />
           ) : (
             <Table.Root>
-              <Table.Content>
-                <Table.Header>
-                  <Table.Row>
-                    <Table.ColumnHeader>User name</Table.ColumnHeader>
-                    <Table.ColumnHeader>External id</Table.ColumnHeader>
-                    <Table.ColumnHeader>Status</Table.ColumnHeader>
-                    <Table.ColumnHeader>Id</Table.ColumnHeader>
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {users.map((user: NativeUserRow) => (
-                    <Table.Row key={user.id}>
-                      <Table.Cell>
-                        <Text size="2" weight="medium">
-                          {user.user_name}
+              <Table.Header>
+                <Table.Row>
+                  <Table.ColumnHeaderCell>User name</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>External id</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Status</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Id</Table.ColumnHeaderCell>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {users.map((user: NativeUserRow) => (
+                  <Table.Row key={user.id}>
+                    <Table.Cell>
+                      <Text size="2" weight="medium">
+                        {user.user_name}
+                      </Text>
+                    </Table.Cell>
+                    <Table.Cell>
+                      {user.external_id ? (
+                        <Code size="1">{user.external_id}</Code>
+                      ) : (
+                        <Text color="gray" size="1">
+                          —
                         </Text>
-                      </Table.Cell>
-                      <Table.Cell>
-                        {user.external_id ? (
-                          <Code size="1">{user.external_id}</Code>
-                        ) : (
-                          <Text color="gray" size="1">
-                            —
-                          </Text>
-                        )}
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Status color={user.active ? "green" : "red"}>
-                          {user.active ? "Active" : "Deactivated"}
-                        </Status>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Code size="1">{user.id}</Code>
-                      </Table.Cell>
-                    </Table.Row>
-                  ))}
-                </Table.Body>
-              </Table.Content>
+                      )}
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Status color={user.active ? "green" : "red"}>
+                        {user.active ? "Active" : "Deactivated"}
+                      </Status>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Code size="1">{user.id}</Code>
+                    </Table.Cell>
+                  </Table.Row>
+                ))}
+              </Table.Body>
             </Table.Root>
           )}
         </Flex>
@@ -219,51 +212,49 @@ export default function PanelNative() {
             />
           ) : (
             <Table.Root>
-              <Table.Content>
-                <Table.Header>
-                  <Table.Row>
-                    <Table.ColumnHeader>Name</Table.ColumnHeader>
-                    <Table.ColumnHeader>External id</Table.ColumnHeader>
-                    <Table.ColumnHeader>Members</Table.ColumnHeader>
-                    <Table.ColumnHeader>Id</Table.ColumnHeader>
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {groups.map((group: NativeGroupRow) => {
-                    const memberNames = membersByGroup.get(group.id) ?? [];
-                    return (
-                      <Table.Row key={group.id}>
-                        <Table.Cell>
-                          <Text size="2" weight="medium">
-                            {group.display_name}
+              <Table.Header>
+                <Table.Row>
+                  <Table.ColumnHeaderCell>Name</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>External id</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Members</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Id</Table.ColumnHeaderCell>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {groups.map((group: NativeGroupRow) => {
+                  const memberNames = membersByGroup.get(group.id) ?? [];
+                  return (
+                    <Table.Row key={group.id}>
+                      <Table.Cell>
+                        <Text size="2" weight="medium">
+                          {group.display_name}
+                        </Text>
+                      </Table.Cell>
+                      <Table.Cell>
+                        {group.external_id ? (
+                          <Code size="1">{group.external_id}</Code>
+                        ) : (
+                          <Text color="gray" size="1">
+                            —
                           </Text>
-                        </Table.Cell>
-                        <Table.Cell>
-                          {group.external_id ? (
-                            <Code size="1">{group.external_id}</Code>
-                          ) : (
-                            <Text color="gray" size="1">
-                              —
-                            </Text>
-                          )}
-                        </Table.Cell>
-                        <Table.Cell>
-                          {memberNames.length > 0 ? (
-                            <Text size="2">{memberNames.join(", ")}</Text>
-                          ) : (
-                            <Text color="gray" size="1">
-                              No members
-                            </Text>
-                          )}
-                        </Table.Cell>
-                        <Table.Cell>
-                          <Code size="1">{group.id}</Code>
-                        </Table.Cell>
-                      </Table.Row>
-                    );
-                  })}
-                </Table.Body>
-              </Table.Content>
+                        )}
+                      </Table.Cell>
+                      <Table.Cell>
+                        {memberNames.length > 0 ? (
+                          <Text size="2">{memberNames.join(", ")}</Text>
+                        ) : (
+                          <Text color="gray" size="1">
+                            No members
+                          </Text>
+                        )}
+                      </Table.Cell>
+                      <Table.Cell>
+                        <Code size="1">{group.id}</Code>
+                      </Table.Cell>
+                    </Table.Row>
+                  );
+                })}
+              </Table.Body>
             </Table.Root>
           )}
         </Flex>
@@ -282,48 +273,46 @@ export default function PanelNative() {
             />
           ) : (
             <Table.Root>
-              <Table.Content>
-                <Table.Header>
-                  <Table.Row>
-                    <Table.ColumnHeader>Time</Table.ColumnHeader>
-                    <Table.ColumnHeader>Event</Table.ColumnHeader>
-                    <Table.ColumnHeader>IdP id</Table.ColumnHeader>
-                    <Table.ColumnHeader>Action</Table.ColumnHeader>
-                    <Table.ColumnHeader>Detail</Table.ColumnHeader>
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {events.map((event: ListenerEvent) => (
-                    <Table.Row key={event.id}>
-                      <Table.Cell>
-                        <Text color="gray" size="1" style={{ whiteSpace: "nowrap" }}>
-                          {event.ts}
-                        </Text>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Code size="1">{event.event_type}</Code>
-                      </Table.Cell>
-                      <Table.Cell>
-                        {event.idp_id ? (
-                          <Code size="1">{event.idp_id}</Code>
-                        ) : (
-                          <Text color="gray" size="1">
-                            —
-                          </Text>
-                        )}
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Badge color={ACTION_BADGE_COLORS[event.action]}>{event.action}</Badge>
-                      </Table.Cell>
-                      <Table.Cell>
+              <Table.Header>
+                <Table.Row>
+                  <Table.ColumnHeaderCell>Time</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Event</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>IdP id</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Action</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Detail</Table.ColumnHeaderCell>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {events.map((event: ListenerEvent) => (
+                  <Table.Row key={event.id}>
+                    <Table.Cell>
+                      <Text color="gray" size="1" style={{ whiteSpace: "nowrap" }}>
+                        {event.ts}
+                      </Text>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Code size="1">{event.event_type}</Code>
+                    </Table.Cell>
+                    <Table.Cell>
+                      {event.idp_id ? (
+                        <Code size="1">{event.idp_id}</Code>
+                      ) : (
                         <Text color="gray" size="1">
-                          {event.detail ?? ""}
+                          —
                         </Text>
-                      </Table.Cell>
-                    </Table.Row>
-                  ))}
-                </Table.Body>
-              </Table.Content>
+                      )}
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Badge color={ACTION_BADGE_COLORS[event.action]}>{event.action}</Badge>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Text color="gray" size="1">
+                        {event.detail ?? ""}
+                      </Text>
+                    </Table.Cell>
+                  </Table.Row>
+                ))}
+              </Table.Body>
             </Table.Root>
           )}
         </Flex>

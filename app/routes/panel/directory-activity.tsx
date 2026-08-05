@@ -4,16 +4,11 @@ import { useLoaderData, useRevalidator } from "react-router";
 import { datastoreContext } from "../../context";
 import type { ProxyLogEntry } from "../../../workers/shared/types";
 import { withDatastoreRetry } from "../../../workers/shared/db";
-import { Badge } from "../../vendor/design-system/components/badge";
-import { Button } from "../../vendor/design-system/components/button";
-import { Callout } from "../../vendor/design-system/components/callout";
-import { Card } from "../../vendor/design-system/components/card";
-import { Code } from "../../vendor/design-system/components/code";
-import * as Dialog from "../../vendor/design-system/components/dialog";
-import * as EmptyState from "../../vendor/design-system/components/empty-state";
-import { Flex } from "../../vendor/design-system/components/flex";
-import * as Table from "../../vendor/design-system/components/table";
-import { Text } from "../../vendor/design-system/components/text";
+import { Callout, Card, Code, Flex, Table, Text } from "@radix-ui/themes";
+import * as Dialog from "../../ui/dialog";
+import * as EmptyState from "../../ui/empty-state";
+import { Badge } from "../../ui/badge";
+import { Button } from "../../ui/button";
 import { CardHeader, formatBody, StatusCodeBadge } from "./ui";
 
 export async function loader({ context, params }: Route.LoaderArgs) {
@@ -121,74 +116,72 @@ export default function DirectoryActivity() {
           />
         ) : (
           <Table.Root>
-            <Table.Content>
-              <Table.Header>
-                <Table.Row>
-                  <Table.ColumnHeader>Time</Table.ColumnHeader>
-                  <Table.ColumnHeader>Source</Table.ColumnHeader>
-                  <Table.ColumnHeader>Request</Table.ColumnHeader>
-                  <Table.ColumnHeader>Mode</Table.ColumnHeader>
-                  <Table.ColumnHeader>Native</Table.ColumnHeader>
-                  <Table.ColumnHeader>WorkOS</Table.ColumnHeader>
-                  <Table.ColumnHeader>Response</Table.ColumnHeader>
-                  <Table.ColumnHeader />
-                </Table.Row>
-              </Table.Header>
-              <Table.Body>
-                {entries.map((entry: ProxyLogEntry) => {
-                  const failed = entry.error != null || (entry.response_status ?? 0) >= 400;
-                  return (
-                    <Table.Row
-                      key={entry.id}
-                      style={failed ? { backgroundColor: "var(--red-a2)" } : undefined}
-                    >
-                      <Table.Cell>
-                        <Text color="gray" size="1" style={{ whiteSpace: "nowrap" }}>
-                          {entry.ts}
-                        </Text>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Badge color={entry.source === "backfill" ? "yellow" : "gray"}>
-                          {entry.source}
-                        </Badge>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Code size="1" className="whitespace-nowrap">
-                          {entry.method} {entry.path}
-                        </Code>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Text color="gray" size="1">
-                          {entry.mode}
-                        </Text>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <StatusCodeBadge status={entry.native_status} />
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Flex align="center" gap="2">
-                          {entry.workos_request && (
-                            <Code size="1" className="whitespace-nowrap">
-                              {entry.workos_request}
-                            </Code>
-                          )}
-                          <StatusCodeBadge status={entry.workos_status} />
-                        </Flex>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Flex align="center" gap="2">
-                          <StatusCodeBadge status={entry.response_status} />
-                          {entry.error != null && <Badge color="red">error</Badge>}
-                        </Flex>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <EntryDialog entry={entry} />
-                      </Table.Cell>
-                    </Table.Row>
-                  );
-                })}
-              </Table.Body>
-            </Table.Content>
+            <Table.Header>
+              <Table.Row>
+                <Table.ColumnHeaderCell>Time</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell>Source</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell>Request</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell>Mode</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell>Native</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell>WorkOS</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell>Response</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell />
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {entries.map((entry: ProxyLogEntry) => {
+                const failed = entry.error != null || (entry.response_status ?? 0) >= 400;
+                return (
+                  <Table.Row
+                    key={entry.id}
+                    style={failed ? { backgroundColor: "var(--red-a2)" } : undefined}
+                  >
+                    <Table.Cell>
+                      <Text color="gray" size="1" style={{ whiteSpace: "nowrap" }}>
+                        {entry.ts}
+                      </Text>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Badge color={entry.source === "backfill" ? "yellow" : "gray"}>
+                        {entry.source}
+                      </Badge>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Code size="1" className="whitespace-nowrap">
+                        {entry.method} {entry.path}
+                      </Code>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Text color="gray" size="1">
+                        {entry.mode}
+                      </Text>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <StatusCodeBadge status={entry.native_status} />
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Flex align="center" gap="2">
+                        {entry.workos_request && (
+                          <Code size="1" className="whitespace-nowrap">
+                            {entry.workos_request}
+                          </Code>
+                        )}
+                        <StatusCodeBadge status={entry.workos_status} />
+                      </Flex>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Flex align="center" gap="2">
+                        <StatusCodeBadge status={entry.response_status} />
+                        {entry.error != null && <Badge color="red">error</Badge>}
+                      </Flex>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <EntryDialog entry={entry} />
+                    </Table.Cell>
+                  </Table.Row>
+                );
+              })}
+            </Table.Body>
           </Table.Root>
         )}
       </Flex>

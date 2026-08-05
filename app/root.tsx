@@ -1,15 +1,15 @@
 import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
 import type { LinksFunction, MetaFunction } from "react-router";
-import { Theme } from "./vendor/design-system/components/theme";
+import { Theme } from "@radix-ui/themes";
 
 import "./app.css";
-import "./design-system.css";
+import "./theme.css";
 
 export const meta: MetaFunction = () => [
-  { title: "Cloudflare Internal App Example" },
+  { title: "SCIM migration panel" },
   {
     name: "description",
-    content: "Example internal app using D1, Workers AI, and Workflows on Cloudflare",
+    content: "Control panel for the reversible SCIM migration proxy",
   },
 ];
 
@@ -25,7 +25,14 @@ export default function App() {
         <Links />
       </head>
       <body>
-        <Theme hasBackground={false}>
+        {/*
+         * Deliberately neutral. The vendored Theme defaulted to WorkOS's brand
+         * accent (purple) and gray ramp; this is a tool a customer self-hosts, so
+         * it should not look like WorkOS's admin UI. `indigo`/`slate` are Radix's
+         * own defaults. `radius` is carried over because the panel's cards,
+         * inputs and badges were laid out against it.
+         */}
+        <Theme accentColor="indigo" grayColor="slate" radius="medium" hasBackground={false}>
           <Outlet />
         </Theme>
         <ScrollRestoration />

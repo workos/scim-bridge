@@ -1,9 +1,8 @@
-import path from "node:path";
-
+// postcss-workds went with the vendored design system (ENT-6762): it compiled
+// WorkDS's own `@breakpoints` at-rule, which nothing in app/ emits now.
 const config = {
   plugins: {
     "postcss-import": {},
-    [path.resolve(process.cwd(), "app/vendor/design-system/postcss-workds.cjs")]: {},
     "postcss-hover-media-feature": {},
     "postcss-custom-media": {},
   },

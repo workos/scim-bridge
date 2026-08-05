@@ -13,18 +13,20 @@ import {
 import { datastoreContext, demoModeContext } from "../../context";
 import { publishMintedToken } from "../../../workers/shared/client-tokens";
 import { MODES, type Mode } from "../../../workers/shared/types";
-import { Button } from "../../vendor/design-system/components/button";
-import { Callout } from "../../vendor/design-system/components/callout";
-import { Card } from "../../vendor/design-system/components/card";
-import { Code } from "../../vendor/design-system/components/code";
-import * as Dialog from "../../vendor/design-system/components/dialog";
-import { Flex } from "../../vendor/design-system/components/flex";
-import { Grid } from "../../vendor/design-system/components/grid";
-import { Heading } from "../../vendor/design-system/components/heading";
-import { Separator } from "../../vendor/design-system/components/separator";
-import { Text } from "../../vendor/design-system/components/text";
-import { TextArea } from "../../vendor/design-system/components/text-area";
-import * as TextField from "../../vendor/design-system/components/text-field";
+import {
+  Callout,
+  Card,
+  Code,
+  Flex,
+  Grid,
+  Heading,
+  Separator,
+  Text,
+  TextArea,
+  TextField,
+} from "@radix-ui/themes";
+import * as Dialog from "../../ui/dialog";
+import { Button } from "../../ui/button";
 import { DirectoryTable } from "./directory-table";
 import { CardHeader, CopyButton, FieldLabel, trimTrailingSlash } from "./ui";
 
@@ -350,7 +352,7 @@ export default function PanelHome() {
                     <Dialog.Close>
                       <Button>Cancel</Button>
                     </Dialog.Close>
-                    <Button color="purple" loading={pendingIntent === "bulk-import"} type="submit">
+                    <Button variant="solid" loading={pendingIntent === "bulk-import"} type="submit">
                       Import directories
                     </Button>
                   </Dialog.Footer>
@@ -361,7 +363,7 @@ export default function PanelHome() {
 
           <Dialog.Root>
             <Dialog.Trigger>
-              <Button color="purple">Import directory</Button>
+              <Button variant="solid">Import directory</Button>
             </Dialog.Trigger>
             <Dialog.Content size="3">
               <Form method="post">
@@ -401,7 +403,7 @@ export default function PanelHome() {
                       <Button>Cancel</Button>
                     </Dialog.Close>
                     <Button
-                      color="purple"
+                      variant="solid"
                       loading={pendingIntent === "create-directory"}
                       type="submit"
                     >

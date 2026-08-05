@@ -4,17 +4,19 @@ import { Form, useFetcher, useLoaderData, useNavigation, useRevalidator } from "
 import { datastoreContext } from "../../context";
 import { getConfig, setConfig } from "../../../workers/shared/db";
 import { CopyButton, FieldLabel, trimTrailingSlash } from "./ui";
-import { Badge } from "../../vendor/design-system/components/badge";
-import { Box } from "../../vendor/design-system/components/box";
-import { Button } from "../../vendor/design-system/components/button";
-import { Card } from "../../vendor/design-system/components/card";
-import { Code } from "../../vendor/design-system/components/code";
-import { Flex } from "../../vendor/design-system/components/flex";
-import { Heading } from "../../vendor/design-system/components/heading";
-import { Separator } from "../../vendor/design-system/components/separator";
-import { Switch } from "../../vendor/design-system/components/switch";
-import { Text } from "../../vendor/design-system/components/text";
-import * as TextField from "../../vendor/design-system/components/text-field";
+import {
+  Box,
+  Card,
+  Code,
+  Flex,
+  Heading,
+  Separator,
+  Switch,
+  Text,
+  TextField,
+} from "@radix-ui/themes";
+import { Badge } from "../../ui/badge";
+import { Button } from "../../ui/button";
 
 /** Detect a running local ngrok tunnel via its inspection API. Returns the
  *  public https URL, or null when ngrok isn't running (or can't be reached —

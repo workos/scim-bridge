@@ -12,24 +12,26 @@ import {
 import { datastoreContext } from "../../context";
 import { getConfig, listDirectories, withDatastoreRetry } from "../../../workers/shared/db";
 import type { IdpActivity } from "../../../workers/idp/types";
-import * as AlertDialog from "../../vendor/design-system/components/alert-dialog";
-import { Badge } from "../../vendor/design-system/components/badge";
-import { Box } from "../../vendor/design-system/components/box";
-import { Button } from "../../vendor/design-system/components/button";
-import { Callout } from "../../vendor/design-system/components/callout";
-import { Card } from "../../vendor/design-system/components/card";
-import { Code } from "../../vendor/design-system/components/code";
-import * as Dialog from "../../vendor/design-system/components/dialog";
-import * as EmptyState from "../../vendor/design-system/components/empty-state";
-import { Flex } from "../../vendor/design-system/components/flex";
-import { Grid } from "../../vendor/design-system/components/grid";
-import { Heading } from "../../vendor/design-system/components/heading";
-import * as Select from "../../vendor/design-system/components/select";
-import { Separator } from "../../vendor/design-system/components/separator";
-import { Status } from "../../vendor/design-system/components/status";
-import * as Table from "../../vendor/design-system/components/table";
-import { Text } from "../../vendor/design-system/components/text";
-import * as TextField from "../../vendor/design-system/components/text-field";
+import {
+  Box,
+  Callout,
+  Card,
+  Code,
+  Flex,
+  Grid,
+  Heading,
+  Select,
+  Separator,
+  Table,
+  Text,
+  TextField,
+} from "@radix-ui/themes";
+import * as AlertDialog from "../../ui/alert-dialog";
+import * as Dialog from "../../ui/dialog";
+import * as EmptyState from "../../ui/empty-state";
+import { Badge } from "../../ui/badge";
+import { Button } from "../../ui/button";
+import { Status } from "../../ui/status";
 import type { Mode } from "../../../workers/shared/types";
 import { CardHeader, FieldLabel, ModeBadge, trimTrailingSlash } from "./ui";
 
@@ -242,7 +244,7 @@ function AddUserDialog({ directoryId, pending }: { directoryId: string; pending:
   return (
     <Dialog.Root>
       <Dialog.Trigger>
-        <Button color="purple">Add user</Button>
+        <Button variant="solid">Add user</Button>
       </Dialog.Trigger>
       <Dialog.Content size="2">
         <Form method="post">
@@ -279,7 +281,7 @@ function AddUserDialog({ directoryId, pending }: { directoryId: string; pending:
               <Dialog.Close>
                 <Button>Cancel</Button>
               </Dialog.Close>
-              <Button color="purple" loading={pending} type="submit">
+              <Button variant="solid" loading={pending} type="submit">
                 Add user
               </Button>
             </Dialog.Footer>
@@ -320,7 +322,7 @@ function CreateGroupDialog({ directoryId, pending }: { directoryId: string; pend
               <Dialog.Close>
                 <Button>Cancel</Button>
               </Dialog.Close>
-              <Button color="purple" loading={pending} type="submit">
+              <Button variant="solid" loading={pending} type="submit">
                 Create group
               </Button>
             </Dialog.Footer>
@@ -375,7 +377,7 @@ function RenameUserDialog({ directoryId, user }: { directoryId: string; user: Id
               <Dialog.Close>
                 <Button>Cancel</Button>
               </Dialog.Close>
-              <Button color="purple" type="submit">
+              <Button variant="solid" type="submit">
                 Save changes
               </Button>
             </Dialog.Footer>
@@ -455,7 +457,7 @@ function RenameGroupDialog({ directoryId, group }: { directoryId: string; group:
               <Dialog.Close>
                 <Button>Cancel</Button>
               </Dialog.Close>
-              <Button color="purple" type="submit">
+              <Button variant="solid" type="submit">
                 Save changes
               </Button>
             </Dialog.Footer>
@@ -578,7 +580,7 @@ function ManageMembersDialog({
                       ))}
                     </Select.Content>
                   </Select.Root>
-                  <Button color="purple" type="submit">
+                  <Button variant="solid" type="submit">
                     Add member
                   </Button>
                 </Flex>
@@ -785,7 +787,7 @@ export default function PanelIdp() {
                     </Select.Content>
                   </Select.Root>
                 </Flex>
-                <Button color="purple" loading={pendingIntent === "auto-start"} type="submit">
+                <Button variant="solid" loading={pendingIntent === "auto-start"} type="submit">
                   Start auto-run
                 </Button>
               </Flex>
@@ -807,74 +809,72 @@ export default function PanelIdp() {
             />
           ) : (
             <Table.Root>
-              <Table.Content>
-                <Table.Header>
-                  <Table.Row>
-                    <Table.ColumnHeader>User name</Table.ColumnHeader>
-                    <Table.ColumnHeader>External id</Table.ColumnHeader>
-                    <Table.ColumnHeader>Name</Table.ColumnHeader>
-                    <Table.ColumnHeader>Status</Table.ColumnHeader>
-                    <Table.ColumnHeader>SCIM id</Table.ColumnHeader>
-                    <Table.ColumnHeader />
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {users.map((user: IdpUserRow) => (
-                    <Table.Row key={user.id}>
-                      <Table.Cell>
-                        <Text size="2" weight="medium">
-                          {user.user_name}
+              <Table.Header>
+                <Table.Row>
+                  <Table.ColumnHeaderCell>User name</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>External id</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Name</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Status</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>SCIM id</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell />
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {users.map((user: IdpUserRow) => (
+                  <Table.Row key={user.id}>
+                    <Table.Cell>
+                      <Text size="2" weight="medium">
+                        {user.user_name}
+                      </Text>
+                    </Table.Cell>
+                    <Table.Cell>
+                      {user.external_id ? (
+                        <Code size="1">{user.external_id}</Code>
+                      ) : (
+                        <Text color="gray" size="1">
+                          —
                         </Text>
-                      </Table.Cell>
-                      <Table.Cell>
-                        {user.external_id ? (
-                          <Code size="1">{user.external_id}</Code>
-                        ) : (
-                          <Text color="gray" size="1">
-                            —
-                          </Text>
-                        )}
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Text size="2">{fullName(user)}</Text>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Status color={user.active ? "green" : "gray"}>
-                          {user.active ? "Active" : "Deactivated"}
-                        </Status>
-                      </Table.Cell>
-                      <Table.Cell>
-                        {user.scim_id ? (
-                          <Code size="1">{user.scim_id}</Code>
-                        ) : (
-                          <Text color="gray" size="1">
-                            —
-                          </Text>
-                        )}
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Flex align="center" gap="2" justify="end">
-                          <Form method="post">
-                            <DirectoryField directoryId={directoryId} />
-                            <input name="intent" type="hidden" value="action" />
-                            <input
-                              name="action"
-                              type="hidden"
-                              value={user.active ? "deactivate-user" : "reactivate-user"}
-                            />
-                            <input name="userId" type="hidden" value={user.id} />
-                            <Button ghost size="1" type="submit">
-                              {user.active ? "Deactivate" : "Reactivate"}
-                            </Button>
-                          </Form>
-                          <RenameUserDialog directoryId={directoryId} user={user} />
-                          <DeleteUserDialog directoryId={directoryId} user={user} />
-                        </Flex>
-                      </Table.Cell>
-                    </Table.Row>
-                  ))}
-                </Table.Body>
-              </Table.Content>
+                      )}
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Text size="2">{fullName(user)}</Text>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Status color={user.active ? "green" : "gray"}>
+                        {user.active ? "Active" : "Deactivated"}
+                      </Status>
+                    </Table.Cell>
+                    <Table.Cell>
+                      {user.scim_id ? (
+                        <Code size="1">{user.scim_id}</Code>
+                      ) : (
+                        <Text color="gray" size="1">
+                          —
+                        </Text>
+                      )}
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Flex align="center" gap="2" justify="end">
+                        <Form method="post">
+                          <DirectoryField directoryId={directoryId} />
+                          <input name="intent" type="hidden" value="action" />
+                          <input
+                            name="action"
+                            type="hidden"
+                            value={user.active ? "deactivate-user" : "reactivate-user"}
+                          />
+                          <input name="userId" type="hidden" value={user.id} />
+                          <Button ghost size="1" type="submit">
+                            {user.active ? "Deactivate" : "Reactivate"}
+                          </Button>
+                        </Form>
+                        <RenameUserDialog directoryId={directoryId} user={user} />
+                        <DeleteUserDialog directoryId={directoryId} user={user} />
+                      </Flex>
+                    </Table.Cell>
+                  </Table.Row>
+                ))}
+              </Table.Body>
             </Table.Root>
           )}
         </Flex>
@@ -893,72 +893,70 @@ export default function PanelIdp() {
             />
           ) : (
             <Table.Root>
-              <Table.Content>
-                <Table.Header>
-                  <Table.Row>
-                    <Table.ColumnHeader>Name</Table.ColumnHeader>
-                    <Table.ColumnHeader>External id</Table.ColumnHeader>
-                    <Table.ColumnHeader>Members</Table.ColumnHeader>
-                    <Table.ColumnHeader>SCIM id</Table.ColumnHeader>
-                    <Table.ColumnHeader />
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {groups.map((group: IdpGroupRow) => {
-                    const groupMembers = membersByGroup.get(group.id) ?? [];
-                    const memberIds = new Set(groupMembers.map((m) => m.user_id));
-                    const candidates = (users as IdpUserRow[]).filter((u) => !memberIds.has(u.id));
-                    return (
-                      <Table.Row key={group.id}>
-                        <Table.Cell>
-                          <Text size="2" weight="medium">
-                            {group.display_name}
+              <Table.Header>
+                <Table.Row>
+                  <Table.ColumnHeaderCell>Name</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>External id</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Members</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>SCIM id</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell />
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {groups.map((group: IdpGroupRow) => {
+                  const groupMembers = membersByGroup.get(group.id) ?? [];
+                  const memberIds = new Set(groupMembers.map((m) => m.user_id));
+                  const candidates = (users as IdpUserRow[]).filter((u) => !memberIds.has(u.id));
+                  return (
+                    <Table.Row key={group.id}>
+                      <Table.Cell>
+                        <Text size="2" weight="medium">
+                          {group.display_name}
+                        </Text>
+                      </Table.Cell>
+                      <Table.Cell>
+                        {group.external_id ? (
+                          <Code size="1">{group.external_id}</Code>
+                        ) : (
+                          <Text color="gray" size="1">
+                            —
                           </Text>
-                        </Table.Cell>
-                        <Table.Cell>
-                          {group.external_id ? (
-                            <Code size="1">{group.external_id}</Code>
-                          ) : (
-                            <Text color="gray" size="1">
-                              —
-                            </Text>
-                          )}
-                        </Table.Cell>
-                        <Table.Cell>
-                          {groupMembers.length > 0 ? (
-                            <Text size="2">{groupMembers.map((m) => m.user_name).join(", ")}</Text>
-                          ) : (
-                            <Text color="gray" size="1">
-                              No members
-                            </Text>
-                          )}
-                        </Table.Cell>
-                        <Table.Cell>
-                          {group.scim_id ? (
-                            <Code size="1">{group.scim_id}</Code>
-                          ) : (
-                            <Text color="gray" size="1">
-                              —
-                            </Text>
-                          )}
-                        </Table.Cell>
-                        <Table.Cell>
-                          <Flex align="center" gap="2" justify="end">
-                            <ManageMembersDialog
-                              candidates={candidates}
-                              directoryId={directoryId}
-                              group={group}
-                              members={groupMembers}
-                            />
-                            <RenameGroupDialog directoryId={directoryId} group={group} />
-                            <DeleteGroupDialog directoryId={directoryId} group={group} />
-                          </Flex>
-                        </Table.Cell>
-                      </Table.Row>
-                    );
-                  })}
-                </Table.Body>
-              </Table.Content>
+                        )}
+                      </Table.Cell>
+                      <Table.Cell>
+                        {groupMembers.length > 0 ? (
+                          <Text size="2">{groupMembers.map((m) => m.user_name).join(", ")}</Text>
+                        ) : (
+                          <Text color="gray" size="1">
+                            No members
+                          </Text>
+                        )}
+                      </Table.Cell>
+                      <Table.Cell>
+                        {group.scim_id ? (
+                          <Code size="1">{group.scim_id}</Code>
+                        ) : (
+                          <Text color="gray" size="1">
+                            —
+                          </Text>
+                        )}
+                      </Table.Cell>
+                      <Table.Cell>
+                        <Flex align="center" gap="2" justify="end">
+                          <ManageMembersDialog
+                            candidates={candidates}
+                            directoryId={directoryId}
+                            group={group}
+                            members={groupMembers}
+                          />
+                          <RenameGroupDialog directoryId={directoryId} group={group} />
+                          <DeleteGroupDialog directoryId={directoryId} group={group} />
+                        </Flex>
+                      </Table.Cell>
+                    </Table.Row>
+                  );
+                })}
+              </Table.Body>
             </Table.Root>
           )}
         </Flex>
@@ -977,71 +975,69 @@ export default function PanelIdp() {
             />
           ) : (
             <Table.Root>
-              <Table.Content>
-                <Table.Header>
-                  <Table.Row>
-                    <Table.ColumnHeader>Time</Table.ColumnHeader>
-                    <Table.ColumnHeader>Origin</Table.ColumnHeader>
-                    <Table.ColumnHeader>Action</Table.ColumnHeader>
-                    <Table.ColumnHeader>Subject</Table.ColumnHeader>
-                    <Table.ColumnHeader>Request</Table.ColumnHeader>
-                    <Table.ColumnHeader>Status</Table.ColumnHeader>
-                    <Table.ColumnHeader>Detail</Table.ColumnHeader>
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {activity.map((entry: IdpActivity) => (
-                    <Table.Row
-                      key={entry.id}
-                      style={entry.ok ? undefined : { backgroundColor: "var(--red-a2)" }}
-                    >
-                      <Table.Cell>
-                        <Text color="gray" size="1" style={{ whiteSpace: "nowrap" }}>
-                          {entry.ts}
+              <Table.Header>
+                <Table.Row>
+                  <Table.ColumnHeaderCell>Time</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Origin</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Action</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Subject</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Request</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Status</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Detail</Table.ColumnHeaderCell>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {activity.map((entry: IdpActivity) => (
+                  <Table.Row
+                    key={entry.id}
+                    style={entry.ok ? undefined : { backgroundColor: "var(--red-a2)" }}
+                  >
+                    <Table.Cell>
+                      <Text color="gray" size="1" style={{ whiteSpace: "nowrap" }}>
+                        {entry.ts}
+                      </Text>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Badge color={ORIGIN_BADGE_COLORS[entry.origin]}>{entry.origin}</Badge>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Text size="2">{entry.action}</Text>
+                    </Table.Cell>
+                    <Table.Cell>
+                      {entry.subject ? (
+                        <Text size="2">{entry.subject}</Text>
+                      ) : (
+                        <Text color="gray" size="1">
+                          —
                         </Text>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Badge color={ORIGIN_BADGE_COLORS[entry.origin]}>{entry.origin}</Badge>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Text size="2">{entry.action}</Text>
-                      </Table.Cell>
-                      <Table.Cell>
-                        {entry.subject ? (
-                          <Text size="2">{entry.subject}</Text>
-                        ) : (
-                          <Text color="gray" size="1">
-                            —
-                          </Text>
-                        )}
-                      </Table.Cell>
-                      <Table.Cell>
-                        {entry.method && entry.path ? (
-                          <Code size="1" className="whitespace-nowrap">
-                            {entry.method} {entry.path}
-                          </Code>
-                        ) : (
-                          <Text color="gray" size="1">
-                            —
-                          </Text>
-                        )}
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Badge color={entry.ok ? "green" : "red"}>
-                          {entry.status != null ? entry.status : entry.ok ? "ok" : "error"}
-                        </Badge>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Box maxWidth="280px">
-                          <Text color="gray" size="1">
-                            {entry.detail ?? ""}
-                          </Text>
-                        </Box>
-                      </Table.Cell>
-                    </Table.Row>
-                  ))}
-                </Table.Body>
-              </Table.Content>
+                      )}
+                    </Table.Cell>
+                    <Table.Cell>
+                      {entry.method && entry.path ? (
+                        <Code size="1" className="whitespace-nowrap">
+                          {entry.method} {entry.path}
+                        </Code>
+                      ) : (
+                        <Text color="gray" size="1">
+                          —
+                        </Text>
+                      )}
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Badge color={entry.ok ? "green" : "red"}>
+                        {entry.status != null ? entry.status : entry.ok ? "ok" : "error"}
+                      </Badge>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Box maxWidth="280px">
+                        <Text color="gray" size="1">
+                          {entry.detail ?? ""}
+                        </Text>
+                      </Box>
+                    </Table.Cell>
+                  </Table.Row>
+                ))}
+              </Table.Body>
             </Table.Root>
           )}
         </Flex>

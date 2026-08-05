@@ -1,9 +1,11 @@
 {
-  // The control panel, plus everything it imports. NOT gated: this project still
-  // reports errors in app/routes/panel and app/vendor/design-system (the latter
-  // synced from the monorepo, so local fixes are overwritten). Kept as a project
-  // so editors resolve panel files, and so the cleanup can be measured with
-  // `npm run typecheck:app` (ENT-6755). The gate lives in tsconfig.check.json.
+  // The control panel, plus everything it imports. Not in the solution file yet,
+  // so not gated — but it now reports **zero** errors: ENT-6762 deleted the
+  // vendored design system, and the 32 remaining errors were all `variant`/`color`
+  // props that the vendored Badge and Button `Omit`ted while their call sites
+  // passed them anyway. Against public @radix-ui/themes both are simply valid.
+  // Adding a reference to this project is the whole of ENT-6755; measure with
+  // `npm run typecheck:app` until then. The gate lives in tsconfig.check.json.
   "extends": "./tsconfig.json",
   "include": [".react-router/types/**/*", "app/**/*", "workers/**/*", "server/**/*", "tests/**/*"],
   "compilerOptions": {
@@ -18,9 +20,7 @@
     "baseUrl": ".",
     "rootDirs": [".", "./.react-router/types"],
     "paths": {
-      "~/*": ["./app/*"],
-      "@workos-inc/design-system": ["./app/vendor/design-system"],
-      "@workos-inc/design-system/*": ["./app/vendor/design-system/*"]
+      "~/*": ["./app/*"]
     },
     "esModuleInterop": true,
     "resolveJsonModule": true

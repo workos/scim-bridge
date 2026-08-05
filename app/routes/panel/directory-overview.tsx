@@ -26,17 +26,10 @@ import {
 import { publishMintedToken } from "../../../workers/shared/client-tokens";
 import type { BackfillSummary, Mode } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
-import * as AlertDialog from "../../vendor/design-system/components/alert-dialog";
-import { Badge } from "../../vendor/design-system/components/badge";
-import { Button } from "../../vendor/design-system/components/button";
-import { Callout } from "../../vendor/design-system/components/callout";
-import { Card } from "../../vendor/design-system/components/card";
-import { Code } from "../../vendor/design-system/components/code";
-import { Flex } from "../../vendor/design-system/components/flex";
-import { Grid } from "../../vendor/design-system/components/grid";
-import { RadioCards } from "../../vendor/design-system/components/radio-cards";
-import { Text } from "../../vendor/design-system/components/text";
-import * as TextField from "../../vendor/design-system/components/text-field";
+import { Callout, Card, Code, Flex, Grid, RadioCards, Text, TextField } from "@radix-ui/themes";
+import * as AlertDialog from "../../ui/alert-dialog";
+import { Badge } from "../../ui/badge";
+import { Button } from "../../ui/button";
 import { FlowRail } from "./flow-rail";
 import { CardHeader, CopyButton, FieldLabel, trimTrailingSlash } from "./ui";
 
@@ -352,7 +345,7 @@ function ModeCard({ currentMode, pending }: { currentMode: Mode; pending: boolea
           {isCutover || isRollback ? (
             <AlertDialog.Root>
               <AlertDialog.Trigger>
-                <Button color="purple" disabled={pending}>
+                <Button variant="solid" disabled={pending}>
                   {isCutover ? "Cut over to WorkOS" : `Roll back to ${selected}`}
                 </Button>
               </AlertDialog.Trigger>
@@ -380,7 +373,7 @@ function ModeCard({ currentMode, pending }: { currentMode: Mode; pending: boolea
               </AlertDialog.Content>
             </AlertDialog.Root>
           ) : (
-            <Button color="purple" disabled={!dirty} loading={pending} onClick={applyMode}>
+            <Button variant="solid" disabled={!dirty} loading={pending} onClick={applyMode}>
               {dirty ? `Switch to ${selected}` : "Mode is up to date"}
             </Button>
           )}
@@ -433,7 +426,12 @@ function EndpointCard({
                 defaultValue={tokenValue}
                 id={tokenField}
                 name={tokenField}
-                suppressPasswordManagers
+                // Keep password managers out of a field that holds a bearer token: the
+                // vendored TextField spelled this `suppressPasswordManagers`.
+                data-1p-ignore="true"
+                data-lpignore="true"
+                data-protonpass-ignore="true"
+                data-bwignore="true"
               />
             </Flex>
           </Grid>
@@ -701,7 +699,7 @@ export default function DirectoryOverview() {
             <Form method="post">
               <input type="hidden" name="intent" value="run-backfill" />
               <Flex justify="end">
-                <Button color="purple" loading={pendingIntent === "run-backfill"} type="submit">
+                <Button variant="solid" loading={pendingIntent === "run-backfill"} type="submit">
                   Run backfill
                 </Button>
               </Flex>
@@ -731,7 +729,7 @@ export default function DirectoryOverview() {
               <input type="hidden" name="intent" value="reconcile-from-workos" />
               <Flex justify="end">
                 <Button
-                  color="purple"
+                  variant="solid"
                   loading={pendingIntent === "reconcile-from-workos"}
                   type="submit"
                 >

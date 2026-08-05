@@ -1,7 +1,5 @@
 import type { Mode } from "../../../workers/shared/types";
-import { Box } from "../../vendor/design-system/components/box";
-import { Flex } from "../../vendor/design-system/components/flex";
-import { Text } from "../../vendor/design-system/components/text";
+import { Box, Flex, Text } from "@radix-ui/themes";
 
 /** Per-mode edge state: which legs are live/mirroring/off and whether the DSync
  *  listener feeds native. Shared by the Live state tab and the directory page. */
@@ -69,7 +67,7 @@ export function FlowRail({
         </Flex>
       </Flex>
       {flow.listener && (
-        <Text size="1" style={{ color: "var(--purple-11)" }}>
+        <Text size="1" style={{ color: "var(--accent-11)" }}>
           ⤺ WorkOS → native app via the DSync event listener
         </Text>
       )}
@@ -91,7 +89,7 @@ function Node({
 }) {
   const ring =
     tone === "idp"
-      ? "border-[var(--purple-7)] bg-[var(--purple-2)]"
+      ? "border-[var(--accent-7)] bg-[var(--accent-2)]"
       : tone === "proxy"
         ? "border-[var(--gray-7)] bg-[var(--gray-2)]"
         : "border-[var(--gray-6)] bg-[var(--color-panel-solid)]";

@@ -2,21 +2,21 @@
   // The gated project: everything outside the control panel. `npm run typecheck`
   // builds this (via the solution file) and must stay at zero errors.
   //
-  // The panel is not here because it imports app/vendor/design-system, which is
-  // copied from the monorepo by `npm run sync-design-system` — edits there are
-  // overwritten on the next sync, which is the same reason lint excludes it. tsc
-  // checks every file it reaches through an import, so one panel file in this
-  // project would drag the whole vendored tree in with it. See tsconfig.app.json.
+  // The panel is not here yet, but the reason it wasn't is gone: it used to
+  // import app/vendor/design-system, a tree overwritten by a sync, so one panel
+  // file in this project dragged 470 unfixable files in with it. ENT-6762 deleted
+  // that tree and `npm run typecheck:app` now reports **zero** errors, so adding
+  // tsconfig.app.json to the solution file is all that remains of ENT-6755. Left
+  // for that ticket deliberately: this project changing what CI enforces should be
+  // its own reviewable commit, not a rider on a 470-file deletion.
   "extends": "./tsconfig.json",
   // app/context.ts is the one panel file in here, because server/index.ts imports
   // it to populate the request context and a composite project must list every
-  // file it reaches. It is safe to include: it pulls in react-router and
-  // workers/shared/datastore only, so it does not reach the vendored tree the way
-  // a route module would. Keep it that way — anything it imports lands in the gate.
+  // file it reaches.
   "include": ["workers/**/*", "server/**/*", "tests/**/*", "app/context.ts"],
-  // The one test that imports a panel route, and so reaches the vendored tree.
-  // scripts/check-type-gate.mjs fails if another test starts crossing that line,
-  // rather than letting it surface here as a wall of vendored-code errors.
+  // The one test that imports a panel route. scripts/check-type-gate.mjs fails if
+  // another test starts crossing that line. Now that the panel typechecks clean,
+  // this exclusion is what ENT-6755 gets to delete rather than maintain.
   "exclude": ["tests/directory-import.test.ts"],
   "compilerOptions": {
     "composite": true,

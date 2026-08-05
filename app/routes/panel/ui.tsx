@@ -1,9 +1,8 @@
 import { useState } from "react";
 import type { Mode } from "../../../workers/shared/types";
-import { Badge } from "../../vendor/design-system/components/badge";
-import { Button } from "../../vendor/design-system/components/button";
-import { Flex } from "../../vendor/design-system/components/flex";
-import { Text } from "../../vendor/design-system/components/text";
+import { Flex, Text } from "@radix-ui/themes";
+import { Badge } from "../../ui/badge";
+import { Button } from "../../ui/button";
 
 export const MODE_BADGE_COLORS = {
   passthrough: "gray",
