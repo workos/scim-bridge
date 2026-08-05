@@ -1,18 +1,39 @@
-.git
+# What must never enter the build context. Everything here is either a secret,
+# a local artifact that would be baked in stale, or dead weight in a published
+# image. `.github/scripts/check-image-secrets.sh` asserts the secret half of
+# this list is absent from the built image, so an accidental deletion here is a
+# red build rather than a published credential.
+
+# --- secrets and local state (never, under any circumstances) -----------------
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+*.pem
+data
+.localdata
+*.db
+*.db-wal
+*.db-shm
+
+# --- build inputs that must be produced inside the image, not copied in -------
 node_modules
 build
 .react-router
 *.tsbuildinfo
 .wrangler
-.dev.vars
-.env
-.env.*
-!.env.example
-data
-*.db
-*.db-wal
-*.db-shm
+
+# --- not needed at runtime ----------------------------------------------------
+.git
+.github
+tests
+docs
+coverage
+.vitest
+.claude
 Dockerfile
 .dockerignore
+docker-compose.yml
 npm-debug.log*
 .DS_Store
