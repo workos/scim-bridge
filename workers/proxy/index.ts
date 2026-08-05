@@ -3,6 +3,7 @@ import type { Directory, PocEnv, ResourceType, WorkerHandler } from "../shared/t
 import {
   deleteMapping,
   getDirectoryByToken,
+  getMapping,
   insertProxyLog,
   type ProxyLogInsert,
   shouldPersistLogs,
@@ -249,6 +250,22 @@ async function mirrorDualWrite(
   if (!nativeId) return;
 
   if (method === "PUT") {
+    // The path id is the tenant's own value, and minting a mapping from it is
+    // this directory's claim on a native row. Where a neighbour fronts the same
+    // native app the tenant could name the neighbour's row — the native leg
+    // replaces it and answers 2xx for any existing id — and the claim would
+    // outlive cutover, satisfying the replace leg's guard and steering a later
+    // reconcile onto that row. Fail closed on the mirror only: the native write
+    // already happened and is the authoritative side in this mode.
+    if (
+      !(await getMapping(db, directory.id, kind, nativeId)) &&
+      (await nativeNamespaceIsShared(db, directory))
+    ) {
+      log.error =
+        `${kind}/${nativeId}: unmapped, and another directory fronts this native app, so the ` +
+        "id in the request cannot be adopted as this directory's; mirror skipped";
+      return;
+    }
     const resource = parseJson(requestBody) ?? {};
     const body = kind === "Groups" ? translateResourceIds(resource, kind, translate) : resource;
     applyMirrorResult(log, await mirrorUpsert(db, directory, kind, nativeId, body));
@@ -472,6 +489,28 @@ async function replaceWithMigratedId(
   // Group member values are written in WorkOS-id space; the top-level id is
   // keyed off the path (nativeId), so mirrorUpsert owns it.
   const body = kind === "Groups" ? translateResourceIds(parsed, kind, toWorkos) : parsed;
+  // A replace with no mapping yet self-heals by minting one keyed on the path id.
+  // That id is the tenant's own value and the mapping is this directory's claim on
+  // a native row, so where a neighbour fronts the same native app it would let a
+  // tenant name the neighbour's (or the app's own) row and have a later reconcile
+  // write over it — the same attribution the create leg refuses to derive. Fail
+  // closed: nothing exists under this id yet, so 404 is the honest SCIM answer,
+  // and the IdP's create fallback goes through the leg that mints safely.
+  if (
+    !(await getMapping(db, directory.id, kind, nativeId)) &&
+    (await nativeNamespaceIsShared(db, directory))
+  ) {
+    // The reason names the neighbour, so it goes to the operator's log rather
+    // than to the tenant that just tried to claim the id.
+    log.error =
+      `${kind}/${nativeId}: unmapped, and another directory fronts this native app, so the ` +
+      "id in the request cannot be adopted as this directory's; replace refused";
+    return scimError(
+      404,
+      `No ${kind} resource with id ${nativeId} is mapped for this directory, so it cannot be ` +
+        "replaced. Create it first and use the id the response carries.",
+    );
+  }
   const result = await mirrorUpsert(db, directory, kind, nativeId, body);
   applyMirrorResult(log, result);
   if (!result.ok) {

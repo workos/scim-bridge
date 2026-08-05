@@ -12,8 +12,9 @@ A [Hono](https://hono.dev) server (`server/index.ts`) routes by path:
 
 - `POST/GET/... /scim/v2/*` → **the migration proxy** (`workers/proxy`), the
   SCIM data-plane. Authenticated per request by the directory's `proxy_token`.
-- `GET /status/directories/{id}` → the directory's migration-mode status
-  (`native_authoritative`), polled by the customer's DSync listener.
+- `GET /status/directories/{id}` → the directory's migration-mode status, polled
+  by the customer's DSync listener, which keys on the `apply_dsync_events`
+  instruction (not on the descriptive `native_authoritative`).
   Authenticated by the directory's `proxy_token`; `{id}` accepts the bridge's
   directory id or the directory's WorkOS id (`workos_directory_id`).
 - `/healthz` → liveness probe.

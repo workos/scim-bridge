@@ -116,6 +116,7 @@ describe("status endpoint", () => {
         workos_directory_id: "directory_01ABC",
         mode: "dual-write",
         native_authoritative: true,
+        apply_dsync_events: false,
         updated_at: directory.updated_at,
       });
     });
@@ -143,6 +144,102 @@ describe("status endpoint", () => {
         mode: "workos-only",
         native_authoritative: false,
       });
+    });
+  });
+
+  // ENT-6768. `native_authoritative` says who owns the data; `apply_dsync_events`
+  // says what the listener should do. They coincide for every mode that exists
+  // today, which is what makes adding the second field a no-op change — and they
+  // stop coinciding at ENT-6767's WorkOS-primary dual-write, where WorkOS is
+  // authoritative but the listener must still stay inert.
+  describe("the listener instruction", () => {
+    it.each([
+      { mode: "passthrough" as const, apply: false },
+      { mode: "dual-write" as const, apply: false },
+      { mode: "workos-only" as const, apply: true },
+    ])("tells a $mode listener apply_dsync_events=$apply", async ({ mode, apply }) => {
+      const env = await createEnv();
+      const directory = await seedDirectory(env.DB, { mode });
+
+      const res = await fetchStatus(env, statusRequest(directory, directory.id));
+
+      expect(await res.json()).toMatchObject({ mode, apply_dsync_events: apply });
+    });
+
+    it("still agrees with native_authoritative in every mode that exists today", async () => {
+      // The equivalence is the point: this change is safe to land before
+      // ENT-6767 precisely because no current mode separates the two. When a
+      // mode does, this test is the one that should be deleted — deliberately,
+      // with the divergence documented — not quietly adjusted.
+      for (const mode of ["passthrough", "dual-write", "workos-only"] as const) {
+        const env = await createEnv();
+        const directory = await seedDirectory(env.DB, { mode });
+
+        const res = await fetchStatus(env, statusRequest(directory, directory.id));
+        const body = (await res.json()) as {
+          native_authoritative: boolean;
+          apply_dsync_events: boolean;
+        };
+
+        expect(body.apply_dsync_events).toBe(!body.native_authoritative);
+      }
+    });
+
+    it("still revalidates on a mode flip that leaves the instruction unchanged", async () => {
+      // The existing ETag guards all flip dual-write → workos-only, which moves
+      // BOTH mode and the instruction — so the new `apply=` segment alone is
+      // enough to satisfy them, and dropping `mode` from the ETag stops turning
+      // them red. passthrough → dual-write is the flip that isolates the mode
+      // segment: the instruction stays false while the body's `mode` changes,
+      // and a listener that got a 304 here would sit on the wrong mode.
+      //
+      // updated_at is deliberately NOT bumped (setDirectoryMode would, at
+      // whole-second resolution) so this tests the mode segment and nothing else.
+      const env = await createEnv();
+      const directory = await seedDirectory(env.DB, { mode: "passthrough" });
+
+      const before = await fetchStatus(env, statusRequest(directory, directory.id));
+      const staleEtag = before.headers.get("ETag")!;
+      expect(await before.json()).toMatchObject({ apply_dsync_events: false });
+
+      await env.DB.prepare("UPDATE scim_directories SET mode = 'dual-write' WHERE id = ?")
+        .bind(directory.id)
+        .run();
+
+      const res = await fetchStatus(
+        env,
+        statusRequest(directory, directory.id, { headers: { "If-None-Match": staleEtag } }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("ETag")).not.toBe(staleEtag);
+      expect(await res.json()).toMatchObject({ mode: "dual-write", apply_dsync_events: false });
+    });
+
+    it("does not honor a validator minted before the instruction field existed", async () => {
+      // The deploy that added `apply_dsync_events` changes the representation
+      // without touching mode or updated_at. If the ETag were still composed of
+      // only those, a listener holding a pre-deploy validator would get a 304
+      // and go on using a cached body with no instruction in it — the endpoint's
+      // worst failure mode, arriving exactly once, silently, at rollout.
+      const env = await createEnv();
+      const directory = await seedDirectory(env.DB, {
+        mode: "workos-only",
+        workos_directory_id: "directory_01ABC",
+      });
+      const legacyEtag = `"${directory.mode}:${directory.workos_directory_id}:${directory.updated_at.replaceAll(
+        " ",
+        "T",
+      )}"`;
+
+      const res = await fetchStatus(
+        env,
+        statusRequest(directory, directory.id, { headers: { "If-None-Match": legacyEtag } }),
+      );
+
+      expect(res.headers.get("ETag")).not.toBe(legacyEtag);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ apply_dsync_events: true });
     });
   });
 

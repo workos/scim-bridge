@@ -165,6 +165,38 @@ describe("migrated-id dance", () => {
       ]);
     });
 
+    it("refuses to mirror a first-touch PUT when another directory fronts the native app", async () => {
+      // The native leg replaces any existing row and answers 2xx, so without this
+      // the tenant could name a neighbour's row and have the mirror mint a mapping
+      // claiming it — a claim that outlives cutover and steers a later reconcile.
+      const { env, directory, fake } = await setup();
+      await seedDirectory(env.DB, { name: "Org B" });
+      fake.route("native", "PUT", "/Users/victim-1", scimJson(200, { id: "victim-1" }));
+
+      const res = await send(env, directory, "PUT", "/scim/v2/Users/victim-1", {
+        userName: "attacker@evil.example",
+        active: false,
+      });
+
+      // The native app is authoritative in dual-write, so the IdP still sees its
+      // answer; only the claim on the id is refused.
+      expect(res.status).toBe(200);
+      expect(fake.callsTo("workos")).toHaveLength(0);
+      expect(await allMappings(env.DB, directory.id)).toEqual([]);
+    });
+
+    it("still mirrors a mapped PUT in a shared namespace", async () => {
+      const { env, directory, fake } = await setup();
+      await seedDirectory(env.DB, { name: "Org B" });
+      await seedMapping(env.DB, directory, "Users", "u1", "u1", "migrated-id");
+      fake.route("native", "PUT", "/Users/u1", scimJson(200, { id: "u1" }));
+      fake.route("workos", "PUT", "/Users/u1", scimJson(200, { id: "u1" }));
+
+      await send(env, directory, "PUT", "/scim/v2/Users/u1", { userName: "ada@example.com" });
+
+      expect(legs(fake.callsTo("workos"))).toEqual(["PUT /Users/u1"]);
+    });
+
     it("lost create race: POST 409s and the re-PUT resolves the winner's row", async () => {
       const { env, directory, fake } = await setup();
       fake.route("native", "PUT", "/Users/u1", scimJson(200, { id: "u1" }));
@@ -954,6 +986,45 @@ describe("migrated-id dance", () => {
         displayName: "Eng",
         members: [{ value: "n_u1" }],
       });
+    });
+
+    it("refuses a first-touch replace when another directory fronts the same native app", async () => {
+      // The path id is the tenant's own value and the mapping the self-heal would
+      // mint is this directory's claim on a native row, so in a shared namespace
+      // minting from it would let a tenant name a neighbour's row.
+      const { env, directory, fake } = await setup({ mode: "workos-only" });
+      await seedDirectory(env.DB, { name: "Org B" });
+
+      const res = await send(env, directory, "PUT", "/scim/v2/Users/victim-1", {
+        userName: "attacker@evil.example",
+        active: false,
+      });
+
+      expect(res.status).toBe(404);
+      const body = (await res.json()) as { detail: string };
+      // The tenant is not told a neighbour exists; that reason goes to the log.
+      expect(body.detail).toContain("is mapped for this directory, so it cannot be replaced");
+      expect(body.detail).not.toContain("another directory");
+      // Nothing was attempted upstream, and no claim was recorded.
+      expect(fake.callsTo("workos")).toHaveLength(0);
+      expect(await allMappings(env.DB, directory.id)).toEqual([]);
+    });
+
+    it("still replaces through an existing mapping in a shared namespace", async () => {
+      // The refusal is only about adopting a new id: a mapping the bridge itself
+      // minted stays addressable however many directories front the native app.
+      const { env, directory, fake } = await setup({ mode: "workos-only" });
+      await seedDirectory(env.DB, { name: "Org B" });
+      await seedMapping(env.DB, directory, "Users", "u1", "wos_9", "fallback-post");
+      fake.route("workos", "PUT", "/Users/wos_9", scimJson(200, { id: "wos_9" }));
+
+      const res = await send(env, directory, "PUT", "/scim/v2/Users/u1", {
+        userName: "ada@example.com",
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ id: "u1" });
+      expect(legs(fake.callsTo("workos"))).toEqual(["PUT /Users/wos_9"]);
     });
 
     it("a failed replace surfaces the upstream status and keeps the mapping", async () => {

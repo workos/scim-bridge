@@ -34,6 +34,12 @@ docker run -p 8080:8080 -v scim-bridge-data:/data \
   ghcr.io/workos/scim-bridge:latest
 ```
 
+The image is published for `linux/amd64` and `linux/arm64` under one manifest,
+so the same command works on an EC2 host, on Cloudflare Containers, and on an
+Apple Silicon laptop. **`:latest` is for trying it out** — for anything you
+depend on, pin a version or a digest: see
+[Releases and image tags](#releases-and-image-tags).
+
 ## Configuration (environment variables)
 
 Only process-wide settings are configured here. Per-directory settings are
@@ -106,21 +112,25 @@ migration loop with no real IdP or WorkOS account. Leave it off in production.
 
 ## Directory status for your DSync listener
 
-Your app's DSync event listener must **ignore** events while your app is still
-authoritative (before cutover) and **handle** them once WorkOS is
-(`workos-only`). The proxy exposes a per-directory status endpoint for exactly
-that decision:
+Your app's DSync event listener must **ignore** events while the proxy is still
+writing your app directly and **handle** them once it isn't. The proxy exposes a
+per-directory status endpoint that makes that call for you:
 
 ```
 GET {PUBLIC_URL}/status/directories/{directory_id}
 Authorization: Bearer {proxy_token}
-→ { directory_id, workos_directory_id, mode, native_authoritative, updated_at }
+→ { directory_id, workos_directory_id, mode, native_authoritative,
+    apply_dsync_events, updated_at }
 ```
 
 It accepts the WorkOS directory id (`directory_...`) DSync events carry — set
 it on the directory in the panel — or the bridge's own id, authenticated by the
 same per-directory proxy token as the `/scim/v2` data-plane. Responses are
-cache-friendly (`ETag`, `Cache-Control: max-age=5`). See
+cache-friendly (`ETag`, `Cache-Control: max-age=5`).
+
+Key your listener on **`apply_dsync_events`** — the instruction. Don't derive it
+from `mode` or from `native_authoritative`, which reports who owns the data and
+only *looks* equivalent today. See
 [`docs/listener-status.md`](./docs/listener-status.md) for the contract and a
 client snippet.
 
@@ -191,6 +201,30 @@ The datastore is a configured choice: a SQLite file (default) or Postgres, behin
 one narrow interface — see [docs/runbook.md#durable-storage](docs/runbook.md#durable-storage)
 for which to pick and why.
 
+## Releases and image tags
+
+Every release is a git tag `vX.Y.Z`, a [GitHub
+Release](https://github.com/workos/scim-bridge/releases) whose notes say what
+changes for an operator, and a matching set of image tags. What changed in each
+version is in [`CHANGELOG.md`](./CHANGELOG.md).
+
+| Reference | Moves? | Use it for |
+| --- | --- | --- |
+| `ghcr.io/workos/scim-bridge@sha256:…` | never | **Production.** The only reference that cannot change under you; each release's notes print it. |
+| `ghcr.io/workos/scim-bridge:0.3.0` | never in practice | Production, if you would rather read a version than a hash. A published version tag is never overwritten. |
+| `ghcr.io/workos/scim-bridge:0.3` | with each patch | Picking up fixes without a redeploy decision. |
+| `ghcr.io/workos/scim-bridge:latest` | with each release | Trying it out. An unattended `latest` will upgrade you across breaking changes. |
+
+Images carry build provenance and an SBOM, so your scanner can answer "are we
+exposed to CVE-x" without asking us:
+
+```bash
+docker buildx imagetools inspect ghcr.io/workos/scim-bridge:latest
+```
+
+Cutting a release, and the checks the pipeline runs before publishing anything,
+are documented in [`docs/releasing.md`](./docs/releasing.md).
+
 ## License
 
-See [`LICENSE`](./LICENSE).
+MIT — see [`LICENSE`](./LICENSE).
