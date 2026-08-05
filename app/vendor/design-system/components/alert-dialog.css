@@ -1,5 +1,0 @@
-.rt-AlertDialogContent:has(.AlertDialogHeader):has(.AlertDialogFooter) {
-  display: flex;
-  flex-direction: column;
-  gap: var(--dialog-content-padding);
-}

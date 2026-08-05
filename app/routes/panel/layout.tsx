@@ -2,12 +2,8 @@ import type { Route } from "./+types/layout";
 import type { MetaFunction } from "react-router";
 import { Link, Outlet, redirect, useLoaderData, useLocation } from "react-router";
 import { demoModeContext } from "../../context";
-import { Badge } from "../../vendor/design-system/components/badge";
-import { Box } from "../../vendor/design-system/components/box";
-import { Flex } from "../../vendor/design-system/components/flex";
-import { Heading } from "../../vendor/design-system/components/heading";
-import { TabNav } from "../../vendor/design-system/components/tab-nav";
-import { Text } from "../../vendor/design-system/components/text";
+import { Box, Flex, Heading, TabNav, Text } from "@radix-ui/themes";
+import { Badge } from "../../ui/badge";
 
 export const meta: MetaFunction = () => [
   { title: "SCIM migration panel" },

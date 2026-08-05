@@ -2,17 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useFetcher } from "react-router";
 import type { Directory, Mode } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
-import { Badge } from "../../vendor/design-system/components/badge";
-import { Button } from "../../vendor/design-system/components/button";
-import { Card } from "../../vendor/design-system/components/card";
-import { Checkbox } from "../../vendor/design-system/components/checkbox";
-import { Code } from "../../vendor/design-system/components/code";
-import * as EmptyState from "../../vendor/design-system/components/empty-state";
-import { Flex } from "../../vendor/design-system/components/flex";
-import * as Select from "../../vendor/design-system/components/select";
-import * as Table from "../../vendor/design-system/components/table";
-import { Text } from "../../vendor/design-system/components/text";
-import * as TextField from "../../vendor/design-system/components/text-field";
+import { Card, Checkbox, Code, Flex, Select, Table, Text, TextField } from "@radix-ui/themes";
+import * as EmptyState from "../../ui/empty-state";
+import { Badge } from "../../ui/badge";
+import { Button } from "../../ui/button";
 import { ModeBadge } from "./ui";
 
 type SortKey = "name" | "mode" | "created_at";
@@ -204,7 +197,7 @@ export function DirectoryTable({ directories }: { directories: Directory[] }) {
               </Select.Content>
             </Select.Root>
             <Button
-              color="purple"
+              variant="solid"
               disabled={!bulkMode}
               loading={fetcher.state !== "idle"}
               onClick={applyBulk}
@@ -229,84 +222,82 @@ export function DirectoryTable({ directories }: { directories: Directory[] }) {
         )}
 
         <Table.Root>
-          <Table.Content>
-            <Table.Header>
-              <Table.Row>
-                <Table.ColumnHeader>
+          <Table.Header>
+            <Table.Row>
+              <Table.ColumnHeaderCell>
+                <Checkbox
+                  aria-label="Select all filtered directories"
+                  checked={headerChecked}
+                  onCheckedChange={toggleAll}
+                />
+              </Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell>
+                <SortButton
+                  label="Name"
+                  indicator={arrow("name")}
+                  onClick={() => toggleSort("name")}
+                />
+              </Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell>Directory id</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell>
+                <SortButton
+                  label="Mode"
+                  indicator={arrow("mode")}
+                  onClick={() => toggleSort("mode")}
+                />
+              </Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell>
+                <SortButton
+                  label="Created"
+                  indicator={arrow("created_at")}
+                  onClick={() => toggleSort("created_at")}
+                />
+              </Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell>Logs</Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell />
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {pageRows.map((d) => (
+              <Table.Row key={d.id}>
+                <Table.Cell>
                   <Checkbox
-                    aria-label="Select all filtered directories"
-                    checked={headerChecked}
-                    onCheckedChange={toggleAll}
+                    aria-label={`Select ${d.name}`}
+                    checked={selected.has(d.id)}
+                    onCheckedChange={() => toggleOne(d.id)}
                   />
-                </Table.ColumnHeader>
-                <Table.ColumnHeader>
-                  <SortButton
-                    label="Name"
-                    indicator={arrow("name")}
-                    onClick={() => toggleSort("name")}
-                  />
-                </Table.ColumnHeader>
-                <Table.ColumnHeader>Directory id</Table.ColumnHeader>
-                <Table.ColumnHeader>
-                  <SortButton
-                    label="Mode"
-                    indicator={arrow("mode")}
-                    onClick={() => toggleSort("mode")}
-                  />
-                </Table.ColumnHeader>
-                <Table.ColumnHeader>
-                  <SortButton
-                    label="Created"
-                    indicator={arrow("created_at")}
-                    onClick={() => toggleSort("created_at")}
-                  />
-                </Table.ColumnHeader>
-                <Table.ColumnHeader>Logs</Table.ColumnHeader>
-                <Table.ColumnHeader />
+                </Table.Cell>
+                <Table.Cell>
+                  <Link to={`/panel/directories/${d.id}`}>{d.name}</Link>
+                </Table.Cell>
+                <Table.Cell>
+                  <Code size="1">{d.id}</Code>
+                </Table.Cell>
+                <Table.Cell>
+                  <ModeBadge mode={d.mode} />
+                </Table.Cell>
+                <Table.Cell>
+                  <Text color="gray" size="1" style={{ whiteSpace: "nowrap" }}>
+                    {d.created_at}
+                  </Text>
+                </Table.Cell>
+                <Table.Cell>
+                  {d.log_persistence ? (
+                    <Badge color="green">Monitored</Badge>
+                  ) : (
+                    <Badge color="gray" variant="soft">
+                      Off
+                    </Badge>
+                  )}
+                </Table.Cell>
+                <Table.Cell>
+                  <Button asChild size="1" type={null} variant="soft">
+                    <Link to={`/panel/directories/${d.id}`}>Open</Link>
+                  </Button>
+                </Table.Cell>
               </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {pageRows.map((d) => (
-                <Table.Row key={d.id}>
-                  <Table.Cell>
-                    <Checkbox
-                      aria-label={`Select ${d.name}`}
-                      checked={selected.has(d.id)}
-                      onCheckedChange={() => toggleOne(d.id)}
-                    />
-                  </Table.Cell>
-                  <Table.Cell>
-                    <Link to={`/panel/directories/${d.id}`}>{d.name}</Link>
-                  </Table.Cell>
-                  <Table.Cell>
-                    <Code size="1">{d.id}</Code>
-                  </Table.Cell>
-                  <Table.Cell>
-                    <ModeBadge mode={d.mode} />
-                  </Table.Cell>
-                  <Table.Cell>
-                    <Text color="gray" size="1" style={{ whiteSpace: "nowrap" }}>
-                      {d.created_at}
-                    </Text>
-                  </Table.Cell>
-                  <Table.Cell>
-                    {d.log_persistence ? (
-                      <Badge color="green">Monitored</Badge>
-                    ) : (
-                      <Badge color="gray" variant="soft">
-                        Off
-                      </Badge>
-                    )}
-                  </Table.Cell>
-                  <Table.Cell>
-                    <Button asChild size="1" type={null} variant="soft">
-                      <Link to={`/panel/directories/${d.id}`}>Open</Link>
-                    </Button>
-                  </Table.Cell>
-                </Table.Row>
-              ))}
-            </Table.Body>
-          </Table.Content>
+            ))}
+          </Table.Body>
         </Table.Root>
 
         {filtered.length === 0 && (

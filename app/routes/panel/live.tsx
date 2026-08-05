@@ -16,22 +16,24 @@ import { runBackfill } from "../../../workers/shared/backfill";
 import { callIdpSimulator } from "./idp-simulator";
 import { FlowRail } from "./flow-rail";
 import { FieldLabel, trimTrailingSlash } from "./ui";
-import * as AlertDialog from "../../vendor/design-system/components/alert-dialog";
-import { Badge } from "../../vendor/design-system/components/badge";
-import { Box } from "../../vendor/design-system/components/box";
-import { Button } from "../../vendor/design-system/components/button";
-import { Callout } from "../../vendor/design-system/components/callout";
-import { Card } from "../../vendor/design-system/components/card";
-import { Code } from "../../vendor/design-system/components/code";
-import * as Dialog from "../../vendor/design-system/components/dialog";
-import * as EmptyState from "../../vendor/design-system/components/empty-state";
-import { Flex } from "../../vendor/design-system/components/flex";
-import { Grid } from "../../vendor/design-system/components/grid";
-import { Heading } from "../../vendor/design-system/components/heading";
-import * as Select from "../../vendor/design-system/components/select";
-import * as Table from "../../vendor/design-system/components/table";
-import { Text } from "../../vendor/design-system/components/text";
-import * as TextField from "../../vendor/design-system/components/text-field";
+import {
+  Box,
+  Callout,
+  Card,
+  Code,
+  Flex,
+  Grid,
+  Heading,
+  Select,
+  Table,
+  Text,
+  TextField,
+} from "@radix-ui/themes";
+import * as AlertDialog from "../../ui/alert-dialog";
+import * as Dialog from "../../ui/dialog";
+import * as EmptyState from "../../ui/empty-state";
+import { Badge } from "../../ui/badge";
+import { Button } from "../../ui/button";
 
 const DEFAULT_INTERVAL_MS = 4000;
 
@@ -577,37 +579,33 @@ export default function PanelLive() {
             />
           ) : (
             <Table.Root>
-              <Table.Content>
-                <Table.Header>
-                  <Table.Row>
-                    <Table.ColumnHeader>User</Table.ColumnHeader>
-                    <Table.ColumnHeader>Native app</Table.ColumnHeader>
-                    <Table.ColumnHeader>WorkOS</Table.ColumnHeader>
-                    <Table.ColumnHeader>IdP</Table.ColumnHeader>
+              <Table.Header>
+                <Table.Row>
+                  <Table.ColumnHeaderCell>User</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Native app</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>WorkOS</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>IdP</Table.ColumnHeaderCell>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {userRows.map((row) => (
+                  <Table.Row
+                    key={row.name}
+                    style={showDiff && row.diverged ? { background: "var(--yellow-2)" } : undefined}
+                  >
+                    <Table.Cell>{row.name}</Table.Cell>
+                    <Table.Cell>
+                      <PresenceCell state={row.native} />
+                    </Table.Cell>
+                    <Table.Cell>
+                      <PresenceCell state={row.workos} />
+                    </Table.Cell>
+                    <Table.Cell>
+                      <PresenceCell state={row.idp} />
+                    </Table.Cell>
                   </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {userRows.map((row) => (
-                    <Table.Row
-                      key={row.name}
-                      style={
-                        showDiff && row.diverged ? { background: "var(--yellow-2)" } : undefined
-                      }
-                    >
-                      <Table.Cell>{row.name}</Table.Cell>
-                      <Table.Cell>
-                        <PresenceCell state={row.native} />
-                      </Table.Cell>
-                      <Table.Cell>
-                        <PresenceCell state={row.workos} />
-                      </Table.Cell>
-                      <Table.Cell>
-                        <PresenceCell state={row.idp} />
-                      </Table.Cell>
-                    </Table.Row>
-                  ))}
-                </Table.Body>
-              </Table.Content>
+                ))}
+              </Table.Body>
             </Table.Root>
           )}
         </Flex>
@@ -630,37 +628,33 @@ export default function PanelLive() {
             />
           ) : (
             <Table.Root>
-              <Table.Content>
-                <Table.Header>
-                  <Table.Row>
-                    <Table.ColumnHeader>Group</Table.ColumnHeader>
-                    <Table.ColumnHeader>Native app</Table.ColumnHeader>
-                    <Table.ColumnHeader>WorkOS</Table.ColumnHeader>
-                    <Table.ColumnHeader>IdP</Table.ColumnHeader>
+              <Table.Header>
+                <Table.Row>
+                  <Table.ColumnHeaderCell>Group</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Native app</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>WorkOS</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>IdP</Table.ColumnHeaderCell>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {groupRows.map((row) => (
+                  <Table.Row
+                    key={row.name}
+                    style={showDiff && row.diverged ? { background: "var(--yellow-2)" } : undefined}
+                  >
+                    <Table.Cell>{row.name}</Table.Cell>
+                    <Table.Cell>
+                      <CountCell value={row.native} />
+                    </Table.Cell>
+                    <Table.Cell>
+                      <CountCell value={row.workos} />
+                    </Table.Cell>
+                    <Table.Cell>
+                      <CountCell value={row.idp} />
+                    </Table.Cell>
                   </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {groupRows.map((row) => (
-                    <Table.Row
-                      key={row.name}
-                      style={
-                        showDiff && row.diverged ? { background: "var(--yellow-2)" } : undefined
-                      }
-                    >
-                      <Table.Cell>{row.name}</Table.Cell>
-                      <Table.Cell>
-                        <CountCell value={row.native} />
-                      </Table.Cell>
-                      <Table.Cell>
-                        <CountCell value={row.workos} />
-                      </Table.Cell>
-                      <Table.Cell>
-                        <CountCell value={row.idp} />
-                      </Table.Cell>
-                    </Table.Row>
-                  ))}
-                </Table.Body>
-              </Table.Content>
+                ))}
+              </Table.Body>
             </Table.Root>
           )}
         </Flex>
@@ -684,50 +678,48 @@ export default function PanelLive() {
             />
           ) : (
             <Table.Root>
-              <Table.Content>
-                <Table.Header>
-                  <Table.Row>
-                    <Table.ColumnHeader>Time</Table.ColumnHeader>
-                    <Table.ColumnHeader>Event</Table.ColumnHeader>
-                    <Table.ColumnHeader>IdP id</Table.ColumnHeader>
-                    <Table.ColumnHeader>Action</Table.ColumnHeader>
-                    <Table.ColumnHeader>Detail</Table.ColumnHeader>
-                  </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {events.map((event: ListenerEvent) => (
-                    <Table.Row key={event.id}>
-                      <Table.Cell>
-                        <Text color="gray" size="1" style={{ whiteSpace: "nowrap" }}>
-                          {event.ts}
+              <Table.Header>
+                <Table.Row>
+                  <Table.ColumnHeaderCell>Time</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Event</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>IdP id</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Action</Table.ColumnHeaderCell>
+                  <Table.ColumnHeaderCell>Detail</Table.ColumnHeaderCell>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {events.map((event: ListenerEvent) => (
+                  <Table.Row key={event.id}>
+                    <Table.Cell>
+                      <Text color="gray" size="1" style={{ whiteSpace: "nowrap" }}>
+                        {event.ts}
+                      </Text>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Code size="1">{event.event_type}</Code>
+                    </Table.Cell>
+                    <Table.Cell>
+                      {event.idp_id ? (
+                        <Code size="1">{event.idp_id}</Code>
+                      ) : (
+                        <Text color="gray" size="1">
+                          —
                         </Text>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Code size="1">{event.event_type}</Code>
-                      </Table.Cell>
-                      <Table.Cell>
-                        {event.idp_id ? (
-                          <Code size="1">{event.idp_id}</Code>
-                        ) : (
-                          <Text color="gray" size="1">
-                            —
-                          </Text>
-                        )}
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Badge color={ACTION_BADGE_COLORS[event.action]}>{event.action}</Badge>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Box maxWidth="320px">
-                          <Text color="gray" size="1">
-                            {event.detail ?? ""}
-                          </Text>
-                        </Box>
-                      </Table.Cell>
-                    </Table.Row>
-                  ))}
-                </Table.Body>
-              </Table.Content>
+                      )}
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Badge color={ACTION_BADGE_COLORS[event.action]}>{event.action}</Badge>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Box maxWidth="320px">
+                        <Text color="gray" size="1">
+                          {event.detail ?? ""}
+                        </Text>
+                      </Box>
+                    </Table.Cell>
+                  </Table.Row>
+                ))}
+              </Table.Body>
             </Table.Root>
           )}
         </Flex>
@@ -825,7 +817,7 @@ function SimulatorControls({
                     ))}
                   </Select.Content>
                 </Select.Root>
-                <Button color="purple" loading={pendingIntent === "idp-auto-start"} type="submit">
+                <Button variant="solid" loading={pendingIntent === "idp-auto-start"} type="submit">
                   Start auto-run
                 </Button>
               </Flex>
@@ -841,9 +833,7 @@ function SimulatorUserDialog({ directoryId, pending }: { directoryId: string; pe
   return (
     <Dialog.Root>
       <Dialog.Trigger>
-        <Button color="purple" variant="soft">
-          Add user
-        </Button>
+        <Button variant="soft">Add user</Button>
       </Dialog.Trigger>
       <Dialog.Content size="2">
         <Form method="post">
@@ -880,7 +870,7 @@ function SimulatorUserDialog({ directoryId, pending }: { directoryId: string; pe
               <Dialog.Close>
                 <Button>Cancel</Button>
               </Dialog.Close>
-              <Button color="purple" loading={pending} type="submit">
+              <Button variant="solid" loading={pending} type="submit">
                 Add user
               </Button>
             </Dialog.Footer>
@@ -921,7 +911,7 @@ function SimulatorGroupDialog({ directoryId, pending }: { directoryId: string; p
               <Dialog.Close>
                 <Button>Cancel</Button>
               </Dialog.Close>
-              <Button color="purple" loading={pending} type="submit">
+              <Button variant="solid" loading={pending} type="submit">
                 Create group
               </Button>
             </Dialog.Footer>

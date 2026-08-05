@@ -4,15 +4,10 @@ import { useLoaderData, useRevalidator } from "react-router";
 import { datastoreContext } from "../../context";
 import type { IdMapping } from "../../../workers/shared/types";
 import { getDirectoryById, withDatastoreRetry } from "../../../workers/shared/db";
-import { Badge } from "../../vendor/design-system/components/badge";
-import { Button } from "../../vendor/design-system/components/button";
-import { Callout } from "../../vendor/design-system/components/callout";
-import { Card } from "../../vendor/design-system/components/card";
-import { Code } from "../../vendor/design-system/components/code";
-import * as EmptyState from "../../vendor/design-system/components/empty-state";
-import { Flex } from "../../vendor/design-system/components/flex";
-import * as Table from "../../vendor/design-system/components/table";
-import { Text } from "../../vendor/design-system/components/text";
+import { Callout, Card, Code, Flex, Table, Text } from "@radix-ui/themes";
+import * as EmptyState from "../../ui/empty-state";
+import { Badge } from "../../ui/badge";
+import { Button } from "../../ui/button";
 import { CardHeader, trimTrailingSlash } from "./ui";
 
 interface ScimResource {
@@ -121,68 +116,66 @@ export default function DirectoryMappings() {
           />
         ) : (
           <Table.Root>
-            <Table.Content>
-              <Table.Header>
-                <Table.Row>
-                  <Table.ColumnHeader>Resource</Table.ColumnHeader>
-                  <Table.ColumnHeader>Native id</Table.ColumnHeader>
-                  <Table.ColumnHeader>WorkOS id</Table.ColumnHeader>
-                  <Table.ColumnHeader>External id in WorkOS</Table.ColumnHeader>
-                  <Table.ColumnHeader>Strategy</Table.ColumnHeader>
-                  <Table.ColumnHeader>Updated</Table.ColumnHeader>
-                </Table.Row>
-              </Table.Header>
-              <Table.Body>
-                {mappings.map((mapping: IdMapping) => {
-                  const inWorkos = workos.byId[mapping.workos_id];
-                  return (
-                    <Table.Row key={`${mapping.resource_type}:${mapping.native_id}`}>
-                      <Table.Cell>
-                        <Text size="2">{mapping.resource_type}</Text>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Code size="1">{mapping.native_id}</Code>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Code size="1">{mapping.workos_id}</Code>
-                      </Table.Cell>
-                      <Table.Cell>
-                        {!workos.reachable ? (
-                          <Text color="gray" size="1">
-                            —
-                          </Text>
-                        ) : !inWorkos ? (
-                          <Badge color="red" variant="soft">
-                            Not in WorkOS
-                          </Badge>
-                        ) : inWorkos.externalId ? (
-                          <Flex align="center" gap="2">
-                            <Badge color="green" variant="soft">
-                              Imported
-                            </Badge>
-                            <Code size="1">{inWorkos.externalId}</Code>
-                          </Flex>
-                        ) : (
-                          <Badge color="yellow" variant="soft">
-                            Not imported
-                          </Badge>
-                        )}
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Badge color={mapping.strategy === "migrated-id" ? "green" : "yellow"}>
-                          {mapping.strategy}
-                        </Badge>
-                      </Table.Cell>
-                      <Table.Cell>
-                        <Text color="gray" size="1" style={{ whiteSpace: "nowrap" }}>
-                          {mapping.updated_at}
+            <Table.Header>
+              <Table.Row>
+                <Table.ColumnHeaderCell>Resource</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell>Native id</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell>WorkOS id</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell>External id in WorkOS</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell>Strategy</Table.ColumnHeaderCell>
+                <Table.ColumnHeaderCell>Updated</Table.ColumnHeaderCell>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {mappings.map((mapping: IdMapping) => {
+                const inWorkos = workos.byId[mapping.workos_id];
+                return (
+                  <Table.Row key={`${mapping.resource_type}:${mapping.native_id}`}>
+                    <Table.Cell>
+                      <Text size="2">{mapping.resource_type}</Text>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Code size="1">{mapping.native_id}</Code>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Code size="1">{mapping.workos_id}</Code>
+                    </Table.Cell>
+                    <Table.Cell>
+                      {!workos.reachable ? (
+                        <Text color="gray" size="1">
+                          —
                         </Text>
-                      </Table.Cell>
-                    </Table.Row>
-                  );
-                })}
-              </Table.Body>
-            </Table.Content>
+                      ) : !inWorkos ? (
+                        <Badge color="red" variant="soft">
+                          Not in WorkOS
+                        </Badge>
+                      ) : inWorkos.externalId ? (
+                        <Flex align="center" gap="2">
+                          <Badge color="green" variant="soft">
+                            Imported
+                          </Badge>
+                          <Code size="1">{inWorkos.externalId}</Code>
+                        </Flex>
+                      ) : (
+                        <Badge color="yellow" variant="soft">
+                          Not imported
+                        </Badge>
+                      )}
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Badge color={mapping.strategy === "migrated-id" ? "green" : "yellow"}>
+                        {mapping.strategy}
+                      </Badge>
+                    </Table.Cell>
+                    <Table.Cell>
+                      <Text color="gray" size="1" style={{ whiteSpace: "nowrap" }}>
+                        {mapping.updated_at}
+                      </Text>
+                    </Table.Cell>
+                  </Table.Row>
+                );
+              })}
+            </Table.Body>
           </Table.Root>
         )}
 

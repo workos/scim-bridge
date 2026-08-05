@@ -3,10 +3,7 @@ import type { Route } from "./+types/directory";
 import { Link, Outlet, useLoaderData, useLocation } from "react-router";
 import { datastoreContext } from "../../context";
 import { getDirectoryById } from "../../../workers/shared/db";
-import { Flex } from "../../vendor/design-system/components/flex";
-import { Heading } from "../../vendor/design-system/components/heading";
-import { Link as DsLink } from "../../vendor/design-system/components/link";
-import { TabNav } from "../../vendor/design-system/components/tab-nav";
+import { Flex, Heading, Link as DsLink, TabNav } from "@radix-ui/themes";
 import { ModeBadge } from "./ui";
 
 export async function loader({ context, params }: Route.LoaderArgs) {

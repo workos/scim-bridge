@@ -1,0 +1,43 @@
+/*
+ * Radix Themes, plus the panel's fonts — loaded as its OWN stylesheet, separate
+ * from app.css, and containing no Tailwind directives.
+ *
+ * Why separate: app.css starts with `@import "tailwindcss"`, and importing the
+ * Radix Themes bundle through it makes @tailwindcss/vite process the whole
+ * stylesheet, which hangs `vite build` indefinitely. Keeping it out of the
+ * Tailwind pipeline lets the ordinary Vite CSS pipeline handle it. (This was
+ * true of the vendored bundle this replaces and is still true of the npm one.)
+ *
+ * Fonts are self-hosted from npm on purpose. The vendored design system declared
+ * @font-face rules pointing at https://cdn.workos.com/fonts/*, so loading the
+ * panel made three live requests to a WorkOS CDN — from inside the customer's
+ * own infrastructure, since they self-host this. Geist ships the woff2 files in
+ * the package, so they are served from the bridge's own /assets like every other
+ * static file, and the panel reaches nothing but the host it was served from.
+ */
+@import "@radix-ui/themes/styles.css";
+@import "@fontsource-variable/geist/index.css";
+@import "@fontsource-variable/geist-mono/index.css";
+
+/*
+ * Declared at both scopes on purpose. Radix's own stylesheet sets
+ * --default-font-family on `.radix-themes`, which outranks `:root`, so the
+ * override has to be repeated there or every Radix component keeps Radix's
+ * system stack. The `:root` copy is what app.css's Tailwind `--font-sans`
+ * resolves against, and what bare <body> text would use.
+ */
+:root {
+  --panel-font-family: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --panel-code-font-family: "Geist Mono Variable", ui-monospace, "SFMono-Regular", monospace;
+  --default-font-family: var(--panel-font-family);
+  --code-font-family: var(--panel-code-font-family);
+}
+
+.radix-themes {
+  --default-font-family: var(--panel-font-family);
+  --code-font-family: var(--panel-code-font-family);
+  /* Radix's default step 2 is 14px; the panel is a dense operator tool and was
+   * built against 13px. Kept so the migration is a component swap, not a
+   * silent re-typesetting of every table and form. */
+  --font-size-2: 13px;
+}
