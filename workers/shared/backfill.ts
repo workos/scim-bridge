@@ -233,6 +233,29 @@ async function mirrorResource(
     pushError(errors, `${kind}: snapshot resource is missing an id`);
     return;
   }
+  // Fail closed in a shared namespace, exactly as the proxy's PUT mirror and
+  // replace legs do (workers/proxy/index.ts): a row this directory does not
+  // already map cannot be attributed to it from an unscoped listing, so claiming
+  // it would let one tenant's backfill adopt a neighbour's row. Skip it and name
+  // it so the operator sees an un-migrated resource rather than a silent claim.
+  //
+  // Re-checked per row, not hoisted: an operator can point another directory at
+  // this native app while the backfill is mid-run, and a stale "not shared" would
+  // reopen the claim for every remaining row. The unmapped short-circuit keeps a
+  // re-run of a legitimately mapped row from paying for the shared-namespace scan.
+  if (
+    !(await getMapping(db, directory.id, kind, nativeId)) &&
+    (await nativeNamespaceIsShared(db, directory))
+  ) {
+    counts.failed += 1;
+    pushError(
+      errors,
+      `${kind}/${nativeId}: another directory fronts this native app, so this unscoped native ` +
+        "row cannot be attributed to this directory; backfill skipped it rather than claim a " +
+        "neighbour's row. Migrate this directory against a native namespace it has to itself.",
+    );
+    return;
+  }
   const result = await mirrorUpsert(db, directory, kind, nativeId, body, sink);
   try {
     if (shouldPersistLogs(directory))
