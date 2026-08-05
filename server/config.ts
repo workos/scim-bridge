@@ -408,12 +408,10 @@ export async function seedDemoDirectory(env: PocEnv, config: AppConfig): Promise
     await adoptSeededDemoDirectory(env, config, existing);
     return;
   }
-  const base = loopbackBase(config);
   const { id, proxy_token } = await insertDirectory(env.DB, {
     name: "Demo directory",
-    native_url: `${base}/__demo/native/scim/v2`,
+    ...bundledEndpoints(config),
     native_token: (await getConfig(env.DB, "native.scim_token")) ?? "",
-    workos_url: `${base}/__demo/native/mock-workos/scim/v2`,
     workos_token: (await getConfig(env.DB, "mock_workos.scim_token")) ?? "",
   });
   // The bundled IdP simulator drives this directory, so it needs the token the way
@@ -429,25 +427,41 @@ export async function seedDemoDirectory(env: PocEnv, config: AppConfig): Promise
   await setDirectoryLogPersistence(env.DB, id, true);
 }
 
+/** Both upstream legs of the seeded demo directory: this process's own fakes. */
+function bundledEndpoints(config: AppConfig): { native_url: string; workos_url: string } {
+  const base = loopbackBase(config);
+  return {
+    native_url: `${base}/__demo/native/scim/v2`,
+    workos_url: `${base}/__demo/native/mock-workos/scim/v2`,
+  };
+}
+
 /**
  * Name the demo directory in a database seeded before it was recorded.
  *
  * The seed above is a no-op once any directory exists, so a demo that has been
  * running since before `idp.demo_directory_id` would otherwise never get one and
  * the simulator — which now resolves that id and no other — would drive nothing.
- * Only the bundled directory qualifies: the one pointing at this process's own
- * `/__demo/native` mount. An imported directory points at the customer's app, so
- * it can never be adopted, and an ambiguous match adopts nothing.
+ *
+ * Adoption decides what an unauthenticated endpoint is allowed to drive, so it
+ * matches the seeded shape exactly: *both* upstream legs equal to this process's
+ * own mounts, and only when exactly one row qualifies. A prefix or single-leg
+ * match would be weaker than it looks — endpoints are operator-settable, so a
+ * directory could carry a loopback native leg and a real WorkOS leg, and
+ * adopting it would hand the simulator a real upstream after all. Requiring
+ * both legs means an adopted directory has nothing but in-process fakes behind
+ * it, whoever created it.
  */
 async function adoptSeededDemoDirectory(
   env: PocEnv,
   config: AppConfig,
-  existing: { id: string; native_url: string }[],
+  existing: { id: string; native_url: string; workos_url: string }[],
 ): Promise<void> {
   if (await getConfig(env.DB, DEMO_DIRECTORY_ID_KEY)) return;
-  const bundled = existing.filter((d) =>
-    d.native_url.startsWith(`${loopbackBase(config)}/__demo/native`),
+  const bundled = bundledEndpoints(config);
+  const candidates = existing.filter(
+    (d) => d.native_url === bundled.native_url && d.workos_url === bundled.workos_url,
   );
-  if (bundled.length !== 1) return;
-  await setConfig(env.DB, DEMO_DIRECTORY_ID_KEY, bundled[0].id);
+  if (candidates.length !== 1) return;
+  await setConfig(env.DB, DEMO_DIRECTORY_ID_KEY, candidates[0].id);
 }
