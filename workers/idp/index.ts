@@ -1,5 +1,6 @@
 import type { Directory, WorkerHandler } from "../shared/types";
-import { getDirectoryById, listDirectories, withDatastoreRetry } from "../shared/db";
+import { getDirectoryById, withDatastoreRetry } from "../shared/db";
+import { demoDirectoryId } from "../shared/client-tokens";
 import * as client from "./client";
 import type { ActionContext } from "./client";
 import { seedDirectory } from "./auto";
@@ -105,7 +106,15 @@ async function route(request: Request, env: IdpEnv): Promise<Response> {
       url.searchParams.get("directoryId") ||
       ""
     ).trim();
-    const directory = directoryId ? await getDirectoryById(env.DB, directoryId) : null;
+    // The simulator drives exactly one directory: the bundled demo one, seeded
+    // against the in-process fakes. It is mounted without panel credentials, so a
+    // caller-supplied id may never be resolved against the rest of the table — an
+    // operator's imported directory holds real upstream credentials and real
+    // users, and provisioning one from here would be an unauthenticated write to
+    // their production identity systems (VULN-3076).
+    const demoId = await demoDirectoryId(env.DB);
+    const directory =
+      directoryId && directoryId === demoId ? await getDirectoryById(env.DB, directoryId) : null;
     if (!directory) {
       // Two different mistakes, two different messages. The old single string said
       // "Unknown or missing" for both, so a valid id that failed to parse out of the
@@ -120,14 +129,14 @@ async function route(request: Request, env: IdpEnv): Promise<Response> {
           400,
         );
       }
-      const known = await listDirectories(env.DB);
+      // Only ever the demo directory. Listing what the caller may drive still turns
+      // a dead end into the next step, without telling an anonymous caller which
+      // directories this bridge migrates for real.
+      const demo = demoId ? await getDirectoryById(env.DB, demoId) : null;
       return json(
         {
-          error: `No directory has the id ${directoryId}.`,
-          // The simulator only ever runs against a handful of demo directories, so
-          // listing them turns a dead end into the next step. Ids and names only —
-          // the rest of a directory row is credentials.
-          known: known.map((d) => ({ id: d.id, name: d.name })),
+          error: `The IdP simulator only drives the bundled demo directory, not ${directoryId}.`,
+          known: demo ? [{ id: demo.id, name: demo.name }] : [],
         },
         400,
       );

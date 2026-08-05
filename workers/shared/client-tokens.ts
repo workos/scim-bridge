@@ -32,6 +32,14 @@
 import { getConfig, setConfig } from "./db";
 import type { Datastore } from "./datastore";
 
+/** Config key naming the one directory the bundled simulators are allowed to drive. */
+export const DEMO_DIRECTORY_ID_KEY = "idp.demo_directory_id";
+
+/** The bundled demo directory's id, or null when this deployment has none. */
+export async function demoDirectoryId(db: Datastore): Promise<string | null> {
+  return getConfig(db, DEMO_DIRECTORY_ID_KEY);
+}
+
 /** Tokens this process was started with (native-app mode's DIRECTORIES_JSON). */
 const remembered = new Map<string, string>();
 
@@ -78,6 +86,13 @@ export async function clientTokenFor(db: Datastore, directoryId: string): Promis
  *   every provisioning action 401s
  * - production *with* it: the plaintext is back in the database under a different
  *   name, and hashing the column bought nothing
+ *
+ * Which is why the decision is keyed on the *directory*, not on the process-wide
+ * demo flag. Only the bundled demo directory has a presenter inside this process;
+ * a directory an operator imported is driven by their real IdP, which holds its
+ * own copy. Keying on `demoMode` alone kept a usable plaintext credential for
+ * every real directory minted or rotated while the flag was on, and the simulator
+ * is reachable without panel credentials.
  */
 export async function publishMintedToken(
   db: Datastore,
@@ -86,5 +101,6 @@ export async function publishMintedToken(
   options: { demoMode: boolean },
 ): Promise<void> {
   if (!options.demoMode) return;
+  if (directoryId !== (await demoDirectoryId(db))) return;
   await storeClientToken(db, directoryId, token);
 }

@@ -169,6 +169,60 @@ describe("IdP simulator routes", () => {
     });
   });
 
+  /**
+   * The simulator is mounted without panel credentials (`panelAuthExempt`), so the
+   * only thing standing between an anonymous caller and a real directory's stored
+   * credentials is which ids it will resolve. It resolves one: the bundled demo
+   * directory. A second directory here stands in for an operator's own import
+   * (VULN-3076).
+   */
+  describe("the directories it refuses to drive", () => {
+    it("refuses an operator's imported directory and does not name it", async () => {
+      const env = await createEnv();
+      const demo = await seedDirectory(env.DB, { name: "Demo directory" });
+      const imported = await seedDirectory(env.DB, { name: "Acme Corp — Okta" });
+
+      const res = await call(env, "/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ directoryId: imported.id }),
+      });
+      const raw = await res.text();
+
+      expect(res.status).toBe(400);
+      // Enumeration is the first half of the attack: the anonymous caller learns
+      // which directories this bridge migrates before it picks one to write to.
+      // Echoing back the id it supplied tells it nothing; naming the row does.
+      expect(raw).not.toContain("Acme Corp");
+      expect(JSON.parse(raw).known).toEqual([{ id: demo.id, name: "Demo directory" }]);
+    });
+
+    it("refuses to provision into an imported directory", async () => {
+      const env = await createEnv();
+      await seedDirectory(env.DB, { name: "Demo directory" });
+      const imported = await seedDirectory(env.DB, { name: "Acme Corp — Okta" });
+      await setConfig(env.DB, "proxy.public_url", "https://native.test");
+      fake = installFakeUpstreams();
+      fake.route("native", "POST", "/Users", () => scimJson(201, { id: "usr_1" }));
+
+      const res = await call(env, "/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          directoryId: imported.id,
+          action: "create-user",
+          userName: "backdoor@victim-corp.com",
+          externalId: "attacker-chosen",
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      // Rejected before anything reached the proxy — no SCIM write was attempted
+      // with the imported directory's credentials.
+      expect(fake.calls).toHaveLength(0);
+    });
+  });
+
   describe("the route the bug was reported against", () => {
     it("seeds the directory from a form-encoded POST /seed", async () => {
       const env = await createEnv();

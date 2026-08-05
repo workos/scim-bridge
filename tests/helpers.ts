@@ -2,7 +2,8 @@ import Database from "better-sqlite3";
 import type { Pool } from "pg";
 import { openPostgres, PostgresDatastore, PostgresMigrator } from "../server/db/postgres";
 import { SqliteDatastore, SqliteMigrator } from "../server/db/sqlite";
-import { rememberClientToken } from "../workers/shared/client-tokens";
+import { DEMO_DIRECTORY_ID_KEY, rememberClientToken } from "../workers/shared/client-tokens";
+import { setConfigIfAbsent } from "../workers/shared/db";
 import { hashProxyToken, proxyTokenHint } from "../workers/shared/crypto";
 import { newDirectoryId } from "../workers/shared/ids";
 import { runMigrations, runMigrationsSync } from "../server/db/migrate";
@@ -226,6 +227,12 @@ export async function seedDirectory(
   // the native app's status client). Nothing else stands in for boot here, so a
   // seeded directory that skipped it would make those components silently inert.
   rememberClientToken(id, token);
+  // Boot also names the one directory the bundled simulators may drive, and only
+  // when there isn't one already (`seedDemoDirectory` is a no-op once any directory
+  // exists). Mirrored here so the first directory a test seeds is the simulator's,
+  // and a second one is a stand-in for an operator's real import — which the
+  // simulator must refuse (VULN-3076).
+  await setConfigIfAbsent(db, DEMO_DIRECTORY_ID_KEY, id);
   const row = await db
     .prepare("SELECT * FROM scim_directories WHERE id = ?")
     .bind(id)

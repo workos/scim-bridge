@@ -3,13 +3,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   decidePanelAuth,
   loadConfig,
+  loopbackBase,
   panelAuthExempt,
+  seedDemoDirectory,
   seedGeneratedTokens,
   seedNativeAppConfig,
   seedNativeAppDirectories,
   type AppConfig,
 } from "../server/config";
-import { getConfig, listDirectories } from "../workers/shared/db";
+import { getConfig, insertDirectory, listDirectories, setConfig } from "../workers/shared/db";
 import { hashProxyToken } from "../workers/shared/crypto";
 import nativeWorker from "../workers/native/index";
 import type { PocEnv } from "../workers/shared/types";
@@ -564,6 +566,112 @@ describe("what panel auth never challenges", () => {
     // With the simulators unmounted the path is a 404 either way; keeping the
     // exemption conditional means the gate never has a hole it is not using.
     expect(panelAuthExempt("/__demo/idp/seed", closed)).toBe(false);
+  });
+});
+
+/**
+ * `/__demo` is exempt from panel auth, and the simulator behind it drives only the
+ * directory named by `idp.demo_directory_id`. That config value is therefore an
+ * authorization decision, and `seedDemoDirectory` is where boot makes it — including
+ * for a demo database seeded before the key existed, where it has to recognise the
+ * bundled directory rather than record one it just created (VULN-3076).
+ */
+describe("naming the directory the unauthenticated simulator may drive", () => {
+  const demoConfig = (): AppConfig => loadConfig({ ...OPEN_PANEL, DEMO_MODE: "true" });
+
+  /** The seeded demo directory's shape: both upstream legs are this process's fakes. */
+  function bundled(config: AppConfig) {
+    const base = loopbackBase(config);
+    return {
+      native_url: `${base}/__demo/native/scim/v2`,
+      workos_url: `${base}/__demo/native/mock-workos/scim/v2`,
+    };
+  }
+
+  it("records the directory it seeds into an empty database", async () => {
+    const env = await createEnv();
+    const config = demoConfig();
+
+    await seedDemoDirectory(env, config);
+
+    const [directory] = await listDirectories(env.DB);
+    expect(await getConfig(env.DB, "idp.demo_directory_id")).toBe(directory.id);
+  });
+
+  it("adopts the bundled directory in a database seeded before the key existed", async () => {
+    const env = await createEnv();
+    const config = demoConfig();
+    const { id } = await insertDirectory(env.DB, { name: "Demo directory", ...bundled(config) });
+
+    await seedDemoDirectory(env, config);
+
+    // No second directory was seeded, and the existing one is now drivable.
+    expect(await listDirectories(env.DB)).toHaveLength(1);
+    expect(await getConfig(env.DB, "idp.demo_directory_id")).toBe(id);
+  });
+
+  it("does not adopt a directory whose WorkOS leg is real", async () => {
+    // The endpoints are operator-settable, so matching a prefix of the native leg
+    // would adopt this row: its native leg points at the bundled fake, but its
+    // WorkOS leg is a real directory the simulator would then provision into.
+    const env = await createEnv();
+    const config = demoConfig();
+    await insertDirectory(env.DB, {
+      name: "Half-bundled",
+      native_url: `${loopbackBase(config)}/__demo/native/scim/v2`,
+      workos_url: "https://api.workos.com/scim/v2.0/directory_01ABC",
+      workos_token: "workos-secret",
+    });
+
+    await seedDemoDirectory(env, config);
+
+    expect(await getConfig(env.DB, "idp.demo_directory_id")).toBeNull();
+  });
+
+  it("adopts nothing when an operator's own import is the only directory", async () => {
+    const env = await createEnv();
+    const config = demoConfig();
+    await insertDirectory(env.DB, {
+      name: "Acme Corp — Okta",
+      native_url: "https://acme.example.com/scim/v2",
+      workos_url: "https://api.workos.com/scim/v2.0/directory_01ABC",
+    });
+
+    await seedDemoDirectory(env, config);
+
+    expect(await getConfig(env.DB, "idp.demo_directory_id")).toBeNull();
+  });
+
+  it("adopts nothing when two directories share the bundled shape", async () => {
+    const env = await createEnv();
+    const config = demoConfig();
+    await insertDirectory(env.DB, { name: "Demo directory", ...bundled(config) });
+    await insertDirectory(env.DB, { name: "Demo directory copy", ...bundled(config) });
+
+    await seedDemoDirectory(env, config);
+
+    expect(await getConfig(env.DB, "idp.demo_directory_id")).toBeNull();
+  });
+
+  it("leaves an already-recorded id alone", async () => {
+    const env = await createEnv();
+    const config = demoConfig();
+    await setConfig(env.DB, "idp.demo_directory_id", "dir_already_chosen");
+    await insertDirectory(env.DB, { name: "Demo directory", ...bundled(config) });
+
+    await seedDemoDirectory(env, config);
+
+    expect(await getConfig(env.DB, "idp.demo_directory_id")).toBe("dir_already_chosen");
+  });
+
+  it("records nothing outside demo mode", async () => {
+    const env = await createEnv();
+    const config = loadConfig({ ...OPEN_PANEL });
+
+    await seedDemoDirectory(env, config);
+
+    expect(await listDirectories(env.DB)).toHaveLength(0);
+    expect(await getConfig(env.DB, "idp.demo_directory_id")).toBeNull();
   });
 });
 

@@ -312,9 +312,9 @@ describe("directory import", () => {
   /**
    * Where the import route leaves a readable copy of the token (ENT-6742). The
    * policy itself is `publishMintedToken`, unit-tested in proxy-token-hashing; what
-   * this pins is that the *route* asks it, and passes the real `demoMode` rather
-   * than a constant — the mistake that would put every production token back in the
-   * database in readable form.
+   * this pins is that the *route* asks it, and that an operator's own import is
+   * never the directory it answers yes for — the mistake that would put every
+   * production token back in the database in readable form.
    */
   describe("the plaintext copy an import leaves behind", () => {
     async function configValues(env: PocEnv): Promise<string[]> {
@@ -332,13 +332,18 @@ describe("directory import", () => {
       expect(await configValues(env)).not.toContain(IDP_TOKEN);
     });
 
-    it("keeps one for the bundled simulator in demo mode", async () => {
+    it("keeps none for an operator's own import, demo mode or not", async () => {
+      // The simulator drives the bundled demo directory and nothing else, so an
+      // imported directory has no presenter in this process and a readable copy of
+      // its token would only be a credential waiting to be used — which is what an
+      // unauthenticated /__demo turned it into (VULN-3076).
       const env = await createEnv();
 
       await submit(env, { intent: "create-directory", name: "Acme", proxy_token: IDP_TOKEN }, true);
 
       const row = await only(env);
-      expect(await clientTokenFor(env.DB, row.id)).toBe(IDP_TOKEN);
+      expect(await clientTokenFor(env.DB, row.id)).toBeNull();
+      expect(await configValues(env)).not.toContain(IDP_TOKEN);
     });
   });
 });
