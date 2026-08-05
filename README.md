@@ -19,8 +19,14 @@ id mappings.
 
 ```bash
 docker build -t scim-bridge .
-docker run -p 8080:8080 -e DEMO_MODE=true scim-bridge
+docker run -p 8080:8080 -e DEMO_MODE=true -e PANEL_AUTH_DISABLED=true scim-bridge
 ```
+
+`PANEL_AUTH_DISABLED=true` is what makes the panel open, and it is required
+rather than assumed: the bridge refuses to start with `/panel` unauthenticated
+unless you say you meant it. Fine on your laptop for ten minutes; see
+[Configuration](#configuration-environment-variables) before this is reachable
+by anyone else.
 
 Open `http://localhost:8080/panel`. `DEMO_MODE` mounts a simulated IdP and a
 simulated native app inside the container and points a directory at them, so you
@@ -34,13 +40,19 @@ No volume is mounted above, so the demo starts clean every run. Leave
 ## Quickstart (your own directories)
 
 ```bash
+cp .env.example .env    # set PANEL_AUTH_USER and PANEL_AUTH_PASSWORD, and PUBLIC_URL
 docker compose up --build
 ```
 
+The first step is not optional: the bridge refuses to start until the control
+panel has credentials, and says so. `/panel` holds every directory's SCIM tokens
+— see [Configuration](#configuration-environment-variables). Compose restarts
+the container, so a missing setting looks like a restart loop; `docker compose
+logs` has the one-line reason.
+
 The control panel is at `http://localhost:8080/panel` and the SCIM base URL your
 IdP points at is `http://localhost:8080/scim/v2`. The SQLite database persists in
-the `scim-bridge-data` volume. To set `PUBLIC_URL` and the rest, `cp .env.example
-.env` first — compose reads `.env` if it is there, and ignores it if it is not.
+the `scim-bridge-data` volume.
 
 ### Running a published image instead of building
 
@@ -54,6 +66,7 @@ the `scim-bridge-data` volume. To set `PUBLIC_URL` and the rest, `cp .env.exampl
 ```bash
 docker run -p 8080:8080 -v scim-bridge-data:/data \
   -e PUBLIC_URL=https://scim-bridge.acme.com \
+  -e PANEL_AUTH_USER=admin -e PANEL_AUTH_PASSWORD='a password you generated' \
   ghcr.io/workos/scim-bridge:latest
 ```
 

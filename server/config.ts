@@ -183,14 +183,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   // docker-compose publishes :8080 — so the documented path was the unsafe one.
   // Being explicit about it is one variable; leaving it implicit was a credential
   // leak that looked like a working deployment.
-  if (role === "bridge" && !panelAuthUser && !panelAuthPassword && !panelAuthDisabled) {
+  if (role === "bridge" && !panelAuthDisabled && (!panelAuthUser || !panelAuthPassword)) {
+    // Half a pair is a different mistake and needs a different sentence. It is
+    // not a leak — every request is denied, including the correct one — but the
+    // container starts, logs "control panel: …", and then rejects the operator's
+    // own password with nothing anywhere saying why. Found by copying the
+    // .env.example this change first shipped, which set a username and left the
+    // password blank.
+    const halfConfigured = Boolean(panelAuthUser) !== Boolean(panelAuthPassword);
     throw new Error(
-      "PANEL_AUTH_USER and PANEL_AUTH_PASSWORD are required: the control panel renders " +
-        "every directory's native and WorkOS bearer tokens in plaintext, so without them " +
-        "anyone who can reach this port can read the credentials this bridge writes with " +
-        "(APP_ENCRYPTION_KEY does not change that — the panel decrypts to render). " +
-        "Set both, or set PANEL_AUTH_DISABLED=true if something in front of the bridge " +
-        "already authenticates /panel.",
+      halfConfigured
+        ? `Panel auth is half-configured: ${panelAuthUser ? "PANEL_AUTH_USER" : "PANEL_AUTH_PASSWORD"} ` +
+            `is set and ${panelAuthUser ? "PANEL_AUTH_PASSWORD" : "PANEL_AUTH_USER"} is blank. ` +
+            "That combination denies every request, including yours, and says nothing about " +
+            "why. Set both, or set neither plus PANEL_AUTH_DISABLED=true."
+        : "PANEL_AUTH_USER and PANEL_AUTH_PASSWORD are required: the control panel renders " +
+            "every directory's native and WorkOS bearer tokens in plaintext, so without them " +
+            "anyone who can reach this port can read the credentials this bridge writes with " +
+            "(APP_ENCRYPTION_KEY does not change that — the panel decrypts to render). " +
+            "Set both, or set PANEL_AUTH_DISABLED=true if something in front of the bridge " +
+            "already authenticates /panel.",
     );
   }
 

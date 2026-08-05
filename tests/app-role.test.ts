@@ -443,20 +443,23 @@ describe("panel auth is required to boot", () => {
     expect(() => loadConfig({ PANEL_AUTH_USER: "", PANEL_AUTH_PASSWORD: "" })).toThrow(
       /are required/,
     );
-    // A whitespace username is not a credential — it trims away.
-    expect(() => loadConfig({ PANEL_AUTH_USER: "   " })).toThrow(/are required/);
+    // Neither set is the security case, and must not be reported as the
+    // half-configured one — they have different fixes.
+    expect(() => loadConfig({})).not.toThrow(/half-configured/);
   });
 
-  it("treats a whitespace-only password as set, and therefore boots", async () => {
+  it("keeps trimming the username and not the password", () => {
     // Asymmetric on purpose, and worth pinning: the username is trimmed, the
     // password is not, because trimming a password silently changes it. So
-    // PANEL_AUTH_PASSWORD="  " is a real (bad) password rather than an empty
-    // one, which makes this the half-configured case — it boots, and denies
-    // everything, rather than serving the panel open.
-    const config = loadConfig({ PANEL_AUTH_USER: "   ", PANEL_AUTH_PASSWORD: "  " });
-    expect(config.panelAuthUser).toBeNull();
-    expect(config.panelAuthPassword).toBe("  ");
-    expect(await decidePanelAuth(config, null)).toBe("denied");
+    // PANEL_AUTH_PASSWORD="  " is a real (bad) password while
+    // PANEL_AUTH_USER="   " is no username at all — which makes this the
+    // half-configured case, and now a refusal rather than a silent lockout.
+    expect(() => loadConfig({ PANEL_AUTH_USER: "   ", PANEL_AUTH_PASSWORD: "  " })).toThrow(
+      /PANEL_AUTH_USER is blank/,
+    );
+    expect(
+      loadConfig({ PANEL_AUTH_USER: "ada", PANEL_AUTH_PASSWORD: "  " }).panelAuthPassword,
+    ).toBe("  ");
   });
 
   it("starts when both credentials are set", () => {
@@ -466,12 +469,22 @@ describe("panel auth is required to boot", () => {
     expect(config.panelAuthDisabled).toBe(false);
   });
 
-  it("starts on a half-configured pair, which denies every request", async () => {
-    // Not a leak, so not a boot failure: decidePanelAuth answers "denied" to
-    // everything when only one half is set (#27). Refusing to boot here would
-    // turn a locked-out panel into a container that will not start.
-    const config = loadConfig({ PANEL_AUTH_USER: "ada" });
-    expect(await decidePanelAuth(config, null)).toBe("denied");
+  it("refuses half a pair, and says which half", async () => {
+    // Not a leak — decidePanelAuth denies everything when one half is missing
+    // (#27) — but a container that starts, logs "control panel: …" and then
+    // rejects the operator's own password with nothing in the logs is a worse
+    // outcome than one that will not start. Found by copying the .env.example
+    // this change first shipped, which set a username and left the password
+    // blank: /panel answered 401 to `-u admin:` and explained nothing.
+    expect(() => loadConfig({ PANEL_AUTH_USER: "ada" })).toThrow(/PANEL_AUTH_PASSWORD is blank/);
+    expect(() => loadConfig({ PANEL_AUTH_PASSWORD: "hunter2" })).toThrow(
+      /PANEL_AUTH_USER is blank/,
+    );
+    // The runtime half of the same rule stays, because config is not the only
+    // way to reach this state and denying is the safe answer either way.
+    expect(await decidePanelAuth({ panelAuthUser: "ada", panelAuthPassword: null }, null)).toBe(
+      "denied",
+    );
   });
 
   it("starts with the explicit opt-out, and records it", () => {
