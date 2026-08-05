@@ -300,6 +300,54 @@ describe("cross-cutting seams", () => {
     });
   });
 
+  describe("a tenant's workos-only writes cannot aim the reconcile at a neighbour", () => {
+    let env: PocEnv;
+    let fake: FakeUpstreams;
+    afterEach(() => fake.restore());
+    beforeEach(async () => {
+      env = await createEnv();
+      fake = installFakeUpstreams();
+    });
+
+    it("a refused first-touch replace keeps the neighbour's id out of WorkOS, so reconcile never writes it", async () => {
+      // Two directories front the same native app. Left unguarded, the replace
+      // leg let the tenant pick the id its resource lands under in WorkOS (and
+      // mint the matching mapping), and reconcile — which translates an unmapped
+      // WorkOS id to itself — would then PUT that resource over the neighbour's
+      // native row under the operator's own credentials.
+      const directory = await seedDirectory(env.DB, { name: "Org A", mode: "workos-only" });
+      await seedDirectory(env.DB, { name: "Org B" });
+      const workos = installWorkosScim(fake);
+
+      const ctx = createCtx();
+      const res = await proxyWorker.fetch(
+        proxyRequest(directory, "PUT", "/scim/v2/Users/victim-1", {
+          userName: "attacker@evil.example",
+          active: false,
+        }),
+        env,
+        ctx,
+      );
+      await ctx.drain();
+
+      expect(res.status).toBe(404);
+      expect(await mappingRows(env, directory.id)).toEqual([]);
+      // The id the tenant named never entered WorkOS, so there is nothing for the
+      // reconcile to translate back onto it.
+      expect([...workos]).toEqual([]);
+
+      fake.route("workos", "GET", "/Users", () => listPage([...workos].map((id) => ({ id }))));
+      fake.route("workos", "GET", "/Groups", listPage([]));
+      fake.route("native", "PUT", /^\/(Users|Groups)\//, (call) => scimJson(200, call.json()));
+
+      const summary = await runReconcileFromWorkos(env.DB, directory);
+
+      expect(fake.callsTo("native")).toEqual([]);
+      expect(summary.users).toEqual({ total: 0, mirrored: 0, failed: 0 });
+      expect(summary.errors).toEqual([]);
+    });
+  });
+
   describe("listener consuming the real status endpoint", () => {
     const LOOPBACK = "https://loopback.test";
 
@@ -446,6 +494,27 @@ describe("cross-cutting seams", () => {
       expect(rows[0].native_status).toBeNull();
       expect(rows[0].response_status).toBe(201);
       expect(rows[0].error).toBeNull();
+    });
+
+    it("logs a refused replace with the neighbour reason the tenant's 404 withholds", async () => {
+      const directory = await seedDirectory(env.DB, { mode: "workos-only", log_persistence: 1 });
+      await seedDirectory(env.DB, { name: "Org B" });
+      installWorkosScim(fake);
+
+      const ctx = createCtx();
+      const res = await proxyWorker.fetch(
+        proxyRequest(directory, "PUT", "/scim/v2/Users/victim-1", { userName: "ada" }),
+        env,
+        ctx,
+      );
+      await ctx.drain();
+
+      expect(res.status).toBe(404);
+      const rows = await proxyLogs(env);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].error).toContain("another directory fronts this native app");
+      expect(rows[0].response_status).toBe(404);
+      expect(rows[0].workos_request).toBeNull();
     });
 
     it("logs a self-healed replace with workos_status 201 but response_status 200", async () => {
