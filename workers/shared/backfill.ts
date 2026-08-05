@@ -59,6 +59,15 @@ export async function runBackfill(db: Datastore, directory: Directory): Promise<
   // and they keep their per-resource attribution.
   const sink: MappingSink = [];
 
+  // The native snapshot is an unscoped listing of the whole native app. Where a
+  // neighbour fronts the same native app it returns their rows too, and minting a
+  // migrated-id mapping for one is this directory's claim on it — the same claim
+  // the proxy's tenant-driven mint sites refuse in a shared namespace, because a
+  // claim on a foreign row outlives cutover, satisfies the mapped-write guards,
+  // and steers a later reconcile onto the neighbour's row. Computed once: the set
+  // of directories does not change under a backfill.
+  const shared = await nativeNamespaceIsShared(db, directory);
+
   const users = await snapshot(
     directory.native_url,
     directory.native_token,
@@ -75,6 +84,7 @@ export async function runBackfill(db: Datastore, directory: Directory): Promise<
       resource,
       summary.users,
       summary.errors,
+      shared,
       sink,
     );
     if (sink.length >= MAPPING_FLUSH_SIZE) await flushMappings(db, sink, summary.errors);
@@ -116,6 +126,7 @@ export async function runBackfill(db: Datastore, directory: Directory): Promise<
       body,
       summary.groups,
       summary.errors,
+      shared,
       sink,
     );
     if (sink.length >= MAPPING_FLUSH_SIZE) await flushMappings(db, sink, summary.errors);
@@ -224,6 +235,7 @@ async function mirrorResource(
   body: Record<string, unknown>,
   counts: ResourceCounts,
   errors: string[],
+  shared: boolean,
   sink?: MappingSink,
 ): Promise<void> {
   counts.total += 1;
@@ -231,6 +243,21 @@ async function mirrorResource(
   if (!nativeId) {
     counts.failed += 1;
     pushError(errors, `${kind}: snapshot resource is missing an id`);
+    return;
+  }
+  // Fail closed in a shared namespace, exactly as the proxy's PUT mirror and
+  // replace legs do (workers/proxy/index.ts): a row this directory does not
+  // already map cannot be attributed to it from an unscoped listing, so claiming
+  // it would let one tenant's backfill adopt a neighbour's row. Skip it and name
+  // it so the operator sees an un-migrated resource rather than a silent claim.
+  if (shared && !(await getMapping(db, directory.id, kind, nativeId))) {
+    counts.failed += 1;
+    pushError(
+      errors,
+      `${kind}/${nativeId}: another directory fronts this native app, so this unscoped native ` +
+        "row cannot be attributed to this directory; backfill skipped it rather than claim a " +
+        "neighbour's row. Migrate this directory against a native namespace it has to itself.",
+    );
     return;
   }
   const result = await mirrorUpsert(db, directory, kind, nativeId, body, sink);
