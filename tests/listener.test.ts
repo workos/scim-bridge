@@ -522,6 +522,132 @@ describe("dsync listener", () => {
     });
   });
 
+  /**
+   * ENT-6778. The cutover window: the proxy stops writing native the instant the
+   * mode flips, while a listener holding a cached status keeps refusing to apply
+   * for up to a TTL. Every event in that window is acknowledged with a 200 and
+   * never redelivered, so the change is lost — a live cutover lost two group
+   * memberships this way.
+   *
+   * The rule these pin: an `ignore` is confirmed against the origin first,
+   * because it is the only decision the listener cannot take back. An `apply` is
+   * idempotent and keeps using the cache.
+   */
+  describe("confirming an ignore against the origin", () => {
+    /** Serve the status endpoint from a body the test can swap mid-run, with an
+     *  ETag so a confirmation is a conditional request like the real one. */
+    function serveMutableStatus(
+      env: PocEnv,
+      first: { body: unknown; etag: string },
+    ): { set(next: { body: unknown; etag: string }): void } {
+      let current = first;
+      fake = installFakeUpstreams();
+      fake.route("native", "GET", "/status/directories/", () =>
+        Response.json(current.body, { headers: { ETag: current.etag } }),
+      );
+      return {
+        set(next) {
+          current = next;
+        },
+      };
+    }
+
+    const inertStatus = (directory: SeededDirectory) => ({
+      directory_id: directory.id,
+      workos_directory_id: null,
+      mode: "workos-primary",
+      native_authoritative: false,
+      apply_dsync_events: false,
+      updated_at: directory.updated_at,
+    });
+
+    const cutOverStatus = (directory: SeededDirectory) => ({
+      ...inertStatus(directory),
+      mode: "workos-only",
+      apply_dsync_events: true,
+    });
+
+    it("applies an event that arrives after a cutover the cached status predates", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      // The row says stay inert too, so nothing but the confirmed status can
+      // make this event apply.
+      const { env, directory } = await seedListenerEnv({ mode: "workos-primary" });
+      await setConfig(env.DB, "proxy.loopback_url", NATIVE_URL);
+      const status = serveMutableStatus(env, { body: inertStatus(directory), etag: '"v1"' });
+
+      // Pre-cutover event: inert, and it warms the cache.
+      await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
+      expect((await lastEvent(env.DB)).action).toBe("ignored");
+      expect(fake?.callsTo("native")).toHaveLength(1);
+
+      // The flip, and an event two seconds later — well inside the 5s TTL, so
+      // the cached "do not apply" is still fresh and still wrong.
+      status.set({ body: cutOverStatus(directory), etag: '"v2"' });
+      vi.setSystemTime(Date.now() + 2_000);
+      await deliver(env, envelope("dsync.group.created", engineering, { at: T2 }));
+
+      expect((await lastEvent(env.DB)).action).toBe("applied");
+      expect(await nativeGroups(env.DB)).toHaveLength(1);
+      // Exactly one extra request, and a conditional one.
+      const calls = fake?.callsTo("native") ?? [];
+      expect(calls).toHaveLength(2);
+      expect(calls[1].headers.get("If-None-Match")).toBe('"v1"');
+    });
+
+    it("makes no extra request on the apply path", async () => {
+      // The cost half of the contract: a stale *apply* is harmless — the event
+      // replays idempotently — so it must not pay a request per event.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const { env, directory } = await seedListenerEnv({ mode: "workos-primary" });
+      await setConfig(env.DB, "proxy.loopback_url", NATIVE_URL);
+      serveMutableStatus(env, { body: cutOverStatus(directory), etag: '"v1"' });
+
+      await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
+      vi.setSystemTime(Date.now() + 2_000);
+      await deliver(env, envelope("dsync.group.created", engineering, { at: T2 }));
+
+      expect((await listenerEvents(env.DB)).map((e) => e.action)).toEqual(["applied", "applied"]);
+      expect(fake?.callsTo("native")).toHaveLength(1);
+    });
+
+    it("ignores on the stale status it holds when the confirmation is unreachable", async () => {
+      // The endpoint going down must not turn a burst of events into a burst of
+      // fetch timeouts, so the confirmation falls back rather than insisting.
+      // The row's mode says "workos-only" — i.e. apply — so an event that stays
+      // ignored can only have come from the cached status, not from the row.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const { env, directory } = await seedListenerEnv({ mode: "workos-only" });
+      await setConfig(env.DB, "proxy.loopback_url", NATIVE_URL);
+      fake = installFakeUpstreams();
+      fake.route(
+        "native",
+        "GET",
+        "/status/directories/",
+        Response.json(inertStatus(directory), { headers: { ETag: '"v1"' } }),
+        { once: true },
+      );
+      fake.route("native", "GET", "/status/directories/", new Response(null, { status: 500 }));
+
+      await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
+      expect((await lastEvent(env.DB)).action).toBe("ignored");
+
+      vi.setSystemTime(Date.now() + 2_000);
+      await deliver(env, envelope("dsync.user.created", ada, { at: T2 }));
+      const failed = await lastEvent(env.DB);
+      expect(failed.action).toBe("ignored");
+      expect(failed.detail).toContain("workos-primary");
+      expect(await nativeUsers(env.DB)).toHaveLength(0);
+      expect(fake.callsTo("native")).toHaveLength(2);
+
+      // And the backoff holds: the next event reuses both answers rather than
+      // paying the timeout again.
+      vi.setSystemTime(Date.now() + 1_000);
+      await deliver(env, envelope("dsync.user.created", ada, { at: T3 }));
+      expect((await lastEvent(env.DB)).action).toBe("ignored");
+      expect(fake.callsTo("native")).toHaveLength(2);
+    });
+  });
+
   describe("status client", () => {
     const statusBody = (directory: Directory) => ({
       directory_id: directory.id,

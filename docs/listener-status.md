@@ -69,23 +69,96 @@ explicitly, so a `304` can never withhold a change to the instruction. Keep the
 cache short-lived anyway: a stale instruction delays your app noticing a cutover
 or rollback.
 
+## Revalidate before you ignore
+
+**A cache — any cache, of any length — must not be what decides to drop an
+event.** Ignoring is the one decision your listener cannot take back: you
+acknowledge the delivery with a `200`, so WorkOS never sends it again. Applying
+is recoverable by construction, because every DSync event is idempotent and a
+replay costs nothing.
+
+That asymmetry matters at exactly one moment, and it is the least reversible
+moment in the migration. A cutover to `workos-only` is instantaneous on the
+proxy side — it stops writing your app the same instant — and only as fast as
+your cache on the listener side. An event produced in that gap finds a proxy
+that has already stopped writing and a listener that still believes it must stay
+inert, so **nobody writes your app** and the divergence is permanent. A real
+cutover lost two group memberships this way.
+
+Shortening the TTL does not fix it; any window at all is a window. What fixes it
+is confirming the answer before acting on the irreversible half:
+
+- getting `apply === true` from cache → **apply it**, no request;
+- getting `apply === false` from cache → **ask the endpoint again before
+  ignoring**, ignoring the freshness of what you hold, and act on that answer.
+
+Send `If-None-Match` on that confirmation, so the common answer is a `304` and
+you pay one conditional request, not a payload. Anchor it to the event: an entry
+the endpoint confirmed at or after the event arrived already answers the
+question and needs no second request, which keeps a cold cache at one request
+rather than two.
+
+If the confirmation cannot be made at all — endpoint down, or you are backing
+off from a failure — do **not** hammer it once per event; a cutover arrives as a
+burst, and a burst of connection timeouts is its own outage. Fall back to the
+last answer you hold and ignore on that: it is the conservative direction, and
+the reconcile below repairs whatever it costs you.
+
+The reverse flip, `workos-only` → `workos-primary`, has the mirror-image window:
+your listener keeps applying for a cache's length after the proxy has resumed
+writing your app, so those changes land twice. That one is benign — the handlers
+are idempotent — and it does not need a second revalidation.
+
 ## Handle-vs-ignore in your listener
 
 ```ts
-const statusCache = new Map<string, { apply: boolean; expires: number }>();
+const TTL_MS = 5_000;
 
-/** True when this app should apply DSync events for the directory. */
-async function shouldApplyDsyncEvents(directoryId: string): Promise<boolean> {
+interface CachedStatus {
+  apply: boolean;
+  etag: string | null;
+  /** When the endpoint last confirmed this entry — a 200 or a 304. */
+  validatedAt: number;
+}
+
+const statusCache = new Map<string, CachedStatus>();
+
+/**
+ * True when this app should apply DSync events for the directory.
+ *
+ * `validatedSince` (epoch ms) refuses a cached answer the endpoint confirmed
+ * before that instant, however fresh the TTL still considers it. Pass it when
+ * the answer is about to be used to ignore an event; omit it otherwise.
+ */
+async function shouldApplyDsyncEvents(directoryId: string, validatedSince = 0): Promise<boolean> {
   const cached = statusCache.get(directoryId);
-  if (cached && cached.expires > Date.now()) return cached.apply;
+  if (cached && Date.now() - cached.validatedAt < TTL_MS && cached.validatedAt >= validatedSince) {
+    return cached.apply;
+  }
 
   // You already store the proxy token per directory to configure your IdP;
   // key it by the WorkOS directory id when you set that id in the panel.
   const response = await fetch(
     `${PROXY_PUBLIC_URL}/status/directories/${encodeURIComponent(directoryId)}`,
-    { headers: { Authorization: `Bearer ${proxyTokenFor(directoryId)}` } },
+    {
+      headers: {
+        Authorization: `Bearer ${proxyTokenFor(directoryId)}`,
+        ...(cached?.etag ? { "If-None-Match": cached.etag } : {}),
+      },
+    },
   );
-  if (!response.ok) throw new Error(`status endpoint answered ${response.status}`);
+  if (response.status === 304 && cached) {
+    // The endpoint just confirmed what we hold, which is what a confirmation
+    // asked for — so this counts as a validation, not a cache hit.
+    cached.validatedAt = Date.now();
+    return cached.apply;
+  }
+  if (!response.ok) {
+    // Unreachable. Prefer the last answer the endpoint gave over asking again
+    // per event; only with nothing at all do we fail the delivery.
+    if (cached) return cached.apply;
+    throw new Error(`status endpoint answered ${response.status}`);
+  }
   const status = (await response.json()) as {
     mode: string;
     apply_dsync_events?: boolean;
@@ -93,13 +166,25 @@ async function shouldApplyDsyncEvents(directoryId: string): Promise<boolean> {
   // Obey the instruction when it is there; an older bridge that doesn't send
   // one meant `workos-only`. Never re-derive it from `native_authoritative`.
   const apply = status.apply_dsync_events ?? status.mode === "workos-only";
-  statusCache.set(directoryId, { apply, expires: Date.now() + 5_000 });
+  statusCache.set(directoryId, {
+    apply,
+    etag: response.headers.get("ETag"),
+    validatedAt: Date.now(),
+  });
   return apply;
 }
 
 app.post("/webhooks/dsync", async (req, res) => {
   const event = req.body;
-  if (!(await shouldApplyDsyncEvents(event.data.directory_id))) {
+  const arrivedAt = Date.now();
+  const directoryId = event.data.directory_id;
+
+  // Applying is idempotent, so the cached answer is good enough for it.
+  // Ignoring is not: confirm it against a status no older than this event.
+  const apply =
+    (await shouldApplyDsyncEvents(directoryId)) ||
+    (await shouldApplyDsyncEvents(directoryId, arrivedAt));
+  if (!apply) {
     // The proxy is writing this app directly; applying the WorkOS echo would
     // fight it, or double-apply it. Acknowledge and drop.
     return res.json({ received: true });
@@ -109,12 +194,14 @@ app.post("/webhooks/dsync", async (req, res) => {
 });
 ```
 
-On an error from the endpoint, fail toward **not applying** the event and let
-the webhook retry — guessing "apply" while the proxy is still writing your app
-can clobber newer native state or duplicate a change.
+With no answer at all from the endpoint — nothing cached, and the request
+failed — fail toward **not applying** the event and let the webhook retry;
+guessing "apply" while the proxy is still writing your app can clobber newer
+native state or duplicate a change.
 
 The bundled reference listener (`workers/native/listener.ts`) consumes this
 endpoint the same way via `workers/native/status-client.ts` — it reads
-`apply_dsync_events` and never re-derives it — falling back to its shared
+`apply_dsync_events` and never re-derives it, and it confirms every `ignore`
+against the endpoint before committing to it — falling back to its shared
 database only when the endpoint isn't mounted (`npm run dev`), and to
 `mode === "workos-only"` when the bridge is old enough not to send the field.

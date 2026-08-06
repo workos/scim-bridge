@@ -23,13 +23,32 @@ export type ReceivedDirectoryStatus = Omit<DirectoryStatus, "apply_dsync_events"
 interface CacheEntry {
   status: ReceivedDirectoryStatus;
   etag: string | null;
-  freshUntil: number;
+  /** When the origin last confirmed this entry — a `200` or a `304` — in epoch
+   *  ms. The TTL runs from here, and `validatedSince` is compared against it. */
+  validatedAt: number;
 }
 
 const cache = new Map<string, CacheEntry>();
 // Failed lookups back off for a TTL too, so a burst of events doesn't pay the
 // fetch timeout once per event while the endpoint is unreachable.
 const failedUntil = new Map<string, number>();
+
+export interface StatusReadOptions {
+  /**
+   * Refuse a cached entry the origin last confirmed before this instant (epoch
+   * ms), however far inside the TTL it still is. ENT-6778: a caller about to
+   * make an *unrecoverable* decision from the answer — the listener's
+   * `ignored`, which acknowledges an event nothing will ever redeliver — passes
+   * the moment the event arrived, so the answer it acts on cannot predate the
+   * write that produced the event. A caller that omits it gets the ordinary
+   * TTL, which is what every recoverable decision should pay for.
+   *
+   * This is not "always refetch": an entry validated at or after the instant
+   * asked for already *is* a revalidation for this event, so a cold cache still
+   * costs one request rather than a read plus a confirmation.
+   */
+  validatedSince?: number;
+}
 
 /**
  * Read a directory's migration-mode status from the proxy's
@@ -45,24 +64,37 @@ const failedUntil = new Map<string, number>();
 export async function fetchDirectoryStatus(
   db: Datastore,
   directory: Directory,
+  options: StatusReadOptions = {},
 ): Promise<ReceivedDirectoryStatus | null> {
   const now = Date.now();
   const cached = cache.get(directory.id);
-  if (cached && cached.freshUntil > now) return cached.status;
-  if ((failedUntil.get(directory.id) ?? 0) > now) return null;
+  if (cached && isUsable(cached, now, options.validatedSince)) return cached.status;
+
+  // What a caller that demanded a fresher entry gets when we cannot produce one.
+  // The last answer the origin gave beats no answer at all: the alternative is
+  // null, which sends the listener to the directory row's own mode — a *worse*
+  // source than a status that was live a few seconds ago, and one that isn't
+  // even available to a real customer's listener. A plain (TTL) read keeps
+  // returning null, so its documented fallback is untouched.
+  const staleAnswer = options.validatedSince === undefined ? null : (cached?.status ?? null);
+  // The backoff is deliberately NOT bypassed for a demanding caller. It is what
+  // stops a burst of events from paying the fetch timeout once per event while
+  // the endpoint is down, and a burst is exactly the shape a cutover has. An
+  // unreachable endpoint cannot confirm anything however often it is asked.
+  if ((failedUntil.get(directory.id) ?? 0) > now) return staleAnswer;
 
   // The bundled listener runs in the proxy's own process, so loopback is the
   // reliable route; the public URL may only resolve outside the container.
   const base = (
     (await getConfig(db, "proxy.loopback_url")) ?? (await getConfig(db, "proxy.public_url"))
   )?.replace(/\/+$/, "");
-  if (!base) return null;
+  if (!base) return staleAnswer;
   // The directory row holds a digest (ENT-6742), so the token comes from the copy
   // this process was started with — `DIRECTORIES_JSON` in native-app mode. Without
   // one there is no credential to present, and the caller's own fallback (the row's
   // mode) is the documented inert behaviour.
   const token = await clientTokenFor(db, directory.id);
-  if (!token) return null;
+  if (!token) return staleAnswer;
   try {
     const response = await fetch(`${base}/status/directories/${encodeURIComponent(directory.id)}`, {
       headers: {
@@ -72,22 +104,33 @@ export async function fetchDirectoryStatus(
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (response.status === 304 && cached) {
-      cached.freshUntil = now + TTL_MS;
+      // A 304 is the origin confirming the entry we hold, so it counts as a
+      // validation — including for a `validatedSince` caller, whose question
+      // ("has anything changed since the event arrived?") the origin just
+      // answered with "no".
+      cached.validatedAt = now;
       return cached.status;
     }
     if (!response.ok) {
       failedUntil.set(directory.id, now + TTL_MS);
-      return null;
+      return staleAnswer;
     }
     const status = (await response.json()) as ReceivedDirectoryStatus;
     cache.set(directory.id, {
       status,
       etag: response.headers.get("ETag"),
-      freshUntil: now + TTL_MS,
+      validatedAt: now,
     });
     return status;
   } catch {
     failedUntil.set(directory.id, now + TTL_MS);
-    return null;
+    return staleAnswer;
   }
+}
+
+/** Whether a cached entry answers this read: inside the TTL, and — when the
+ *  caller named an instant — confirmed by the origin no earlier than it. */
+function isUsable(entry: CacheEntry, now: number, validatedSince: number | undefined): boolean {
+  if (entry.validatedAt + TTL_MS <= now) return false;
+  return validatedSince === undefined || entry.validatedAt >= validatedSince;
 }

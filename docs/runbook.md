@@ -302,6 +302,19 @@ Advance the directory's mode from its page, verifying convergence in the
    load-bearing for the first time. Take it only once the listener has been
    verified end to end: reachable, verifying signatures, and applying events.
 
+   **Run Reconcile from WorkOS immediately after the flip.** The cutover is
+   instantaneous on the proxy side — it stops writing the native app the same
+   instant — while a listener that caches the status answer needs a moment to
+   notice. An IdP write landing in that gap is written by nobody: the listener
+   ignores it, acknowledges it with a `200`, and WorkOS never redelivers. The
+   bundled listener closes the window by confirming every ignore against the
+   status endpoint before acting on it (ENT-6778), but a customer listener on an
+   older bridge — or one that caches without revalidating — still has it, and
+   the reconcile is the only remedy either way. It snapshots the live WorkOS
+   directory back into native and is idempotent, so it costs nothing when the
+   window was empty. Cutting over during a quiet period narrows the exposure but
+   does not remove it.
+
    The listener keys on that response's **`apply_dsync_events`** and on nothing
    else. The endpoint also reports `native_authoritative`, which describes who
    owns the data and is there for display; it is not the instruction. The two
