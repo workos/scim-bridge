@@ -7,8 +7,11 @@ import { Button } from "../../ui/button";
 export const MODE_BADGE_COLORS = {
   passthrough: "gray",
   "dual-write": "blue",
+  /** Amber sits between dual-write's blue and the green of a finished cutover:
+   *  WorkOS is authoritative, and the migration is not over. */
+  "workos-primary": "amber",
   "workos-only": "green",
-} as const satisfies Record<Mode, "gray" | "blue" | "green">;
+} as const satisfies Record<Mode, "gray" | "blue" | "green" | "amber">;
 
 export function ModeBadge({ mode }: { mode: Mode }) {
   return <Badge color={MODE_BADGE_COLORS[mode]}>{mode}</Badge>;

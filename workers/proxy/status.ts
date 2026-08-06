@@ -1,6 +1,6 @@
 import { getDirectoryByToken } from "../shared/db";
 import { authorizationToken } from "../shared/scim";
-import type { Directory, PocEnv } from "../shared/types";
+import { nativeIsAuthoritative, type Directory, type PocEnv } from "../shared/types";
 
 export const STATUS_PREFIX = "/status/directories";
 
@@ -24,13 +24,11 @@ export interface DirectoryStatus {
 /**
  * Whether a listener should apply DSync events for a directory in this mode.
  *
- * Today this is exactly `!native_authoritative`, because for all three current
- * modes "WorkOS owns the data" and "the listener should apply events" happen to
- * be the same question. They are not the same question. ENT-6767's WorkOS-primary
- * dual-write mode is the counterexample: WorkOS is authoritative, but the proxy
- * still writes the native app directly, so a listener that also applied the
- * events would process every change twice. That mode will return `false` here
- * while `native_authoritative` is `false` too.
+ * This is NOT `!native_authoritative`, and `workos-primary` (ENT-6767) is the mode
+ * that proves it: WorkOS answers the IdP, so native is not authoritative, and yet
+ * the proxy still writes native directly on every request — a listener that also
+ * applied the events would process every change twice. Both fields are `false`
+ * there, which is the shape no earlier mode could produce.
  *
  * Keep this the single place the instruction is decided, and keep it exported —
  * the ETag has to be computed from the same value the body carries.
@@ -42,10 +40,12 @@ export function appliesDsyncEvents(mode: Directory["mode"]): boolean {
 /**
  * GET /status/directories/{id} — the migration-mode status of one directory,
  * for the customer's native app's DSync event listener: `apply_dsync_events`
- * tells the listener whether to apply an event or stay inert. Before cutover the
- * proxy writes the native app directly, so applying a WorkOS echo would fight
- * that write path; once WorkOS is authoritative (`workos-only`) the listener is
- * how the native app learns about changes.
+ * tells the listener whether to apply an event or stay inert. In every mode but
+ * `workos-only` the proxy writes the native app directly, so applying a WorkOS
+ * echo would fight that write path; in `workos-only` the listener is how the
+ * native app learns about changes. Note that this is not the same line as
+ * "who is authoritative": on `workos-primary` WorkOS is, and the listener still
+ * stays inert.
  *
  * Authenticated by the directory's own proxy token — the same credential the
  * IdP presents to the /scim/v2 data-plane — so a token can only ever read the
@@ -94,7 +94,7 @@ export async function handleStatus(request: Request, env: PocEnv, url: URL): Pro
     directory_id: directory.id,
     workos_directory_id: directory.workos_directory_id,
     mode: directory.mode,
-    native_authoritative: directory.mode !== "workos-only",
+    native_authoritative: nativeIsAuthoritative(directory.mode),
     apply_dsync_events: applyDsyncEvents,
     updated_at: directory.updated_at,
   };

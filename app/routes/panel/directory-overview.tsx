@@ -15,6 +15,7 @@ import { runBackfill, runReconcileFromWorkos } from "../../../workers/shared/bac
 import {
   getConfig,
   getDirectoryById,
+  listNativeWriteFailures,
   setDirectoryLogPersistence,
   rotateProxyToken,
   setDirectoryMode,
@@ -24,7 +25,7 @@ import {
   withDatastoreRetry,
 } from "../../../workers/shared/db";
 import { publishMintedToken } from "../../../workers/shared/client-tokens";
-import type { BackfillSummary, Mode } from "../../../workers/shared/types";
+import type { BackfillSummary, Mode, NativeWriteFailure } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
 import { Callout, Card, Code, Flex, Grid, RadioCards, Text, TextField } from "@radix-ui/themes";
 import * as AlertDialog from "../../ui/alert-dialog";
@@ -74,6 +75,11 @@ const MODE_DETAILS: { value: Mode; description: string }[] = [
       "Write native first; only on a native 2xx, mirror the write into WorkOS via the migrated-id contract. Reads served from native.",
   },
   {
+    value: "workos-primary",
+    description:
+      "WorkOS answers the IdP and the proxy still writes native directly, concurrently; the request fails if either side does. Native never goes stale, so rolling back is only a mode change. Dwell here.",
+  },
+  {
     value: "workos-only",
     description:
       "Cutover. WorkOS is the only SCIM target and the proxy goes silent toward native. The DSync listener becomes the app's feed.",
@@ -94,6 +100,7 @@ export async function loader({ context, params }: Route.LoaderArgs) {
     directory,
     proxyPublicUrl: proxyPublicUrl ?? "",
     nativePublicUrl: nativePublicUrl ?? "",
+    nativeWriteFailures: await listNativeWriteFailures(db, directory.id),
   };
 }
 
@@ -164,9 +171,7 @@ export async function action({
   if (intent === "set-mode") {
     const mode = String(form.get("mode") ?? "");
     if (!MODES.includes(mode as Mode)) {
-      return {
-        error: "That mode is not one of passthrough, dual-write, or workos-only.",
-      };
+      return { error: `That mode is not one of ${MODES.join(", ")}.` };
     }
     await setDirectoryMode(db, directory.id, mode as Mode);
     return {};
@@ -228,10 +233,14 @@ export async function action({
   }
 
   if (intent === "run-backfill") {
-    if (directory.mode !== "dual-write") {
+    // Available on workos-primary too: the proxy is still writing native there, so
+    // a snapshot replay into WorkOS is as safe as it is on dual-write — and an
+    // operator who reaches rung 3 and finds WorkOS short a few resources should
+    // not have to drop back a rung to fix it.
+    if (directory.mode !== "dual-write" && directory.mode !== "workos-primary") {
       return {
         error:
-          "Backfill only runs in dual-write mode, so live writes keep flowing while the snapshot replays.",
+          "Backfill runs in dual-write or workos-primary mode, so live writes keep flowing while the snapshot replays.",
       };
     }
     const backfill = await runBackfill(db, directory);
@@ -239,10 +248,13 @@ export async function action({
   }
 
   if (intent === "reconcile-from-workos") {
-    if (directory.mode !== "workos-only") {
+    // On workos-only this repairs a lagging DSync listener before a rollback. On
+    // workos-primary it is the repair for a native write that failed while WorkOS
+    // kept the change: the resources below name exactly what it has to fix.
+    if (directory.mode !== "workos-only" && directory.mode !== "workos-primary") {
       return {
         error:
-          "Reconcile from WorkOS runs in workos-only mode, to bring the native app fully current before a rollback.",
+          "Reconcile from WorkOS runs in workos-primary or workos-only mode, to bring the native app fully current.",
       };
     }
     const reconcile = await runReconcileFromWorkos(db, directory);
@@ -274,6 +286,7 @@ export async function action({
       db.batch([
         db.prepare("DELETE FROM id_mappings WHERE directory_id = ?").bind(directory.id),
         db.prepare("DELETE FROM proxy_log WHERE directory_id = ?").bind(directory.id),
+        db.prepare("DELETE FROM native_write_failures WHERE directory_id = ?").bind(directory.id),
         db.prepare("DELETE FROM scim_directories WHERE id = ?").bind(directory.id),
       ]),
     );
@@ -312,8 +325,17 @@ function ModeCard({ currentMode, pending }: { currentMode: Mode; pending: boolea
   const submit = useSubmit();
   const [selected, setSelected] = useState<Mode>(currentMode);
   const dirty = selected !== currentMode;
+  // The two transitions worth a confirmation are the two that change who writes
+  // the native app: entering workos-only (the proxy goes silent toward native and
+  // its DSync listener takes over) and leaving it. Every other step on the ladder,
+  // including workos-primary in either direction, keeps native under direct proxy
+  // writes — that is the whole point of the rung, so it does not get a scary modal.
   const isCutover = dirty && selected === "workos-only";
   const isRollback = dirty && currentMode === "workos-only";
+  const cutoverDescription =
+    currentMode === "workos-primary"
+      ? "WorkOS is already answering the IdP, so authority does not move. What changes is who writes the native app: the proxy stops, and the customer's DSync event listener becomes the only feed. Confirm the listener is running and applying events — apply_dsync_events flips to true the moment this lands."
+      : "The proxy will stop sending SCIM traffic to the native endpoint entirely — WorkOS becomes the only target. Enable the customer's DSync event listener first, or the native directory will go stale. Consider workos-primary first: it moves authority to WorkOS while the proxy keeps writing native, so this step is only about the listener.";
   const applyMode = () => submit({ intent: "set-mode", mode: selected }, { method: "post" });
 
   return (
@@ -324,7 +346,7 @@ function ModeCard({ currentMode, pending }: { currentMode: Mode; pending: boolea
           description="The IdP never changes. The proxy's mode decides where each request goes and which side is the source of truth."
         />
         <RadioCards.Root
-          columns={{ initial: "1", sm: "3" }}
+          columns={{ initial: "1", sm: "2", md: "4" }}
           value={selected}
           onValueChange={(value) => setSelected(value as Mode)}
         >
@@ -355,8 +377,10 @@ function ModeCard({ currentMode, pending }: { currentMode: Mode; pending: boolea
                     title={isCutover ? "Cut over to WorkOS?" : "Roll back from workos-only?"}
                     description={
                       isCutover
-                        ? "The proxy will stop sending SCIM traffic to the native endpoint entirely — WorkOS becomes the only target. Enable the customer's DSync event listener first, or the native directory will go stale."
-                        : `The proxy will switch back to ${selected} and the untouched native SCIM handler resumes. Let in-flight DSync events drain first so the listener finishes applying everything WorkOS already accepted.`
+                        ? cutoverDescription
+                        : selected === "workos-primary"
+                          ? "The proxy resumes writing the native app directly and the listener goes inert, so native stops depending on webhook delivery. WorkOS keeps answering the IdP, so authority does not move. Let in-flight DSync events drain first so the listener finishes applying everything WorkOS already accepted."
+                          : `The proxy will switch back to ${selected} and the untouched native SCIM handler resumes. Let in-flight DSync events drain first so the listener finishes applying everything WorkOS already accepted.`
                     }
                   />
                   <AlertDialog.Footer>
@@ -378,6 +402,81 @@ function ModeCard({ currentMode, pending }: { currentMode: Mode; pending: boolea
             </Button>
           )}
         </Flex>
+      </Flex>
+    </Card>
+  );
+}
+
+/**
+ * The resources WorkOS holds a write for that native does not (ENT-6767).
+ *
+ * The mode's claim is that native is current, so a divergence has to be visible
+ * rather than inferred from a log a directory has to opt into. Repair is the
+ * operator's call, not a background retry: a native app rejecting writes is
+ * usually broken or misconfigured, and a queue draining into it unattended turns
+ * one bad deploy into a silent replay hours later. Nothing here retries by itself
+ * — rows also clear on their own when a later write to the same resource lands.
+ */
+function DivergenceCard({
+  failures,
+  mode,
+  pending,
+  reconcile,
+}: {
+  failures: NativeWriteFailure[];
+  mode: Mode;
+  pending: boolean;
+  reconcile?: BackfillSummary;
+}) {
+  if (failures.length === 0 && mode !== "workos-primary") return null;
+
+  return (
+    <Card size="3">
+      <Flex direction="column" gap="4">
+        <Flex align="center" gap="3" justify="between">
+          <CardHeader
+            title="Native writes WorkOS kept and native refused"
+            description="Resources WorkOS has a write for that the native app rejected or never received. The IdP was told the request failed, so it will usually retry and the row clears itself. Reconcile from WorkOS repairs the rest."
+          />
+          <Badge color={failures.length > 0 ? "red" : "green"}>
+            {failures.length > 0 ? `${failures.length} diverged` : "none"}
+          </Badge>
+        </Flex>
+        {failures.length > 0 && (
+          <Flex direction="column" gap="2">
+            {failures.map((failure) => (
+              <Flex
+                key={`${failure.resource_type}:${failure.resource_key}`}
+                align="center"
+                gap="2"
+                wrap="wrap"
+              >
+                <Badge color="white" lowContrast>
+                  {failure.resource_type}
+                </Badge>
+                <Code size="2" className="break-all">
+                  {failure.resource_key}
+                </Code>
+                <Badge color="red">
+                  {failure.method} {failure.native_status ?? "unreachable"}
+                </Badge>
+                {failure.attempts > 1 && <Badge color="gray">{failure.attempts} attempts</Badge>}
+                <Text color="gray" size="1">
+                  {failure.detail} — last seen {failure.last_seen_at}
+                </Text>
+              </Flex>
+            ))}
+            <Form method="post">
+              <input type="hidden" name="intent" value="reconcile-from-workos" />
+              <Flex justify="end">
+                <Button color="red" loading={pending} type="submit" variant="solid">
+                  Reconcile from WorkOS
+                </Button>
+              </Flex>
+            </Form>
+            {reconcile && <BackfillResult summary={reconcile} />}
+          </Flex>
+        )}
       </Flex>
     </Card>
   );
@@ -530,7 +629,8 @@ function LiveStateCard({ mode }: { mode: Mode }) {
 }
 
 export default function DirectoryOverview() {
-  const { directory, proxyPublicUrl, nativePublicUrl } = useLoaderData<typeof loader>();
+  const { directory, proxyPublicUrl, nativePublicUrl, nativeWriteFailures } =
+    useLoaderData<typeof loader>();
   const actionData = useActionData() as OverviewActionData | undefined;
   const navigation = useNavigation();
   const pendingIntent = navigation.formData?.get("intent");
@@ -618,6 +718,13 @@ export default function DirectoryOverview() {
 
       <LiveStateCard mode={directory.mode} />
 
+      <DivergenceCard
+        failures={nativeWriteFailures}
+        mode={directory.mode}
+        pending={pendingIntent === "reconcile-from-workos"}
+        reconcile={actionData?.reconcile}
+      />
+
       <EndpointCard
         title="Native SCIM endpoint"
         description="The customer's own SCIM server — authoritative until cutover. The proxy presents this bearer token."
@@ -687,11 +794,11 @@ export default function DirectoryOverview() {
             title="Backfill"
             description="Snapshot the native directory and replay every user and group into WorkOS as migrated-id upserts."
           />
-          {directory.mode !== "dual-write" ? (
+          {directory.mode !== "dual-write" && directory.mode !== "workos-primary" ? (
             <Flex align="center" gap="3" justify="between">
               <Text color="gray" size="2">
-                Backfill is only available in dual-write mode, so live dual-writes keep flowing
-                while the snapshot replays. Switch modes above to enable it.
+                Backfill is available in dual-write and workos-primary mode, so live writes keep
+                flowing while the snapshot replays. Switch modes above to enable it.
               </Text>
               <Button disabled>Run backfill</Button>
             </Flex>
@@ -715,12 +822,12 @@ export default function DirectoryOverview() {
             title="Backfill from WorkOS → native (rollback)"
             description="The reverse of the forward backfill: snapshot the live WorkOS directory and replay every user and group back into the native app as migrated-id upserts. Run it before rolling back, to bring the native app fully current in case its DSync listener lagged."
           />
-          {directory.mode !== "workos-only" ? (
+          {directory.mode !== "workos-only" && directory.mode !== "workos-primary" ? (
             <Flex align="center" gap="3" justify="between">
               <Text color="gray" size="2">
-                Available in workos-only mode — that's when WorkOS is authoritative and the native
-                app may be behind. Run it here to make native current, then roll back safely. Switch
-                modes above to enable it.
+                Available in workos-primary and workos-only mode — that's when WorkOS is
+                authoritative and the native app may be behind. Run it here to make native current,
+                then roll back safely. Switch modes above to enable it.
               </Text>
               <Button disabled>Backfill from WorkOS</Button>
             </Flex>

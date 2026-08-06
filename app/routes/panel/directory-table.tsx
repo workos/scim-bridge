@@ -17,7 +17,15 @@ const PAGE_SIZES = [25, 50, 100];
 /** Searchable, filterable, sortable, paged list of directories with multi-select
  *  bulk mode changes. Client-side — a few hundred rows fit in one loader payload,
  *  so filtering/selection happen in memory; only the bulk mode change POSTs. */
-export function DirectoryTable({ directories }: { directories: Directory[] }) {
+export function DirectoryTable({
+  directories,
+  diverged,
+}: {
+  directories: Directory[];
+  /** Resources WorkOS holds a write for that native does not, by directory id
+   *  (ENT-6767). Absent means none. */
+  diverged: Record<string, number>;
+}) {
   const fetcher = useFetcher<BulkResult>();
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"all" | Mode>("all");
@@ -253,6 +261,7 @@ export function DirectoryTable({ directories }: { directories: Directory[] }) {
                   onClick={() => toggleSort("created_at")}
                 />
               </Table.ColumnHeaderCell>
+              <Table.ColumnHeaderCell>Native</Table.ColumnHeaderCell>
               <Table.ColumnHeaderCell>Logs</Table.ColumnHeaderCell>
               <Table.ColumnHeaderCell />
             </Table.Row>
@@ -280,6 +289,17 @@ export function DirectoryTable({ directories }: { directories: Directory[] }) {
                   <Text color="gray" size="1" style={{ whiteSpace: "nowrap" }}>
                     {d.created_at}
                   </Text>
+                </Table.Cell>
+                <Table.Cell>
+                  {diverged[d.id] ? (
+                    <Link to={`/panel/directories/${d.id}`}>
+                      <Badge color="red">{diverged[d.id]} diverged</Badge>
+                    </Link>
+                  ) : (
+                    <Badge color="gray" variant="soft">
+                      current
+                    </Badge>
+                  )}
                 </Table.Cell>
                 <Table.Cell>
                   {d.log_persistence ? (

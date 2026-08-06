@@ -2,6 +2,7 @@ import type { Route } from "./+types/home";
 
 import { Form, redirect, useActionData, useLoaderData, useNavigation } from "react-router";
 import {
+  countNativeWriteFailures,
   type CreatedDirectory,
   getConfig,
   insertDirectory,
@@ -113,17 +114,21 @@ function directoryError(error: unknown): string {
 
 export async function loader({ context }: Route.LoaderArgs) {
   const db = context.get(datastoreContext);
-  const [directories, proxyPublicUrl, nativePublicUrl, nativeScimToken, mockWorkosToken] =
+  const [directories, proxyPublicUrl, nativePublicUrl, nativeScimToken, mockWorkosToken, diverged] =
     await Promise.all([
       listDirectories(db),
       getConfig(db, "proxy.public_url"),
       getConfig(db, "native.public_url"),
       getConfig(db, "native.scim_token"),
       getConfig(db, "mock_workos.scim_token"),
+      countNativeWriteFailures(db),
     ]);
 
   return {
     directories,
+    /** Per directory, how many resources WorkOS holds a write for that native does
+     *  not (ENT-6767). One query for the fleet rather than one per row. */
+    diverged,
     proxyPublicUrl: proxyPublicUrl ?? "",
     nativePublicUrl: nativePublicUrl ?? "",
     nativeScimToken: nativeScimToken ?? "",
@@ -303,8 +308,14 @@ function TokenRow({ label, value, hint }: { label: string; value: string; hint?:
 }
 
 export default function PanelHome() {
-  const { directories, proxyPublicUrl, nativePublicUrl, nativeScimToken, mockWorkosToken } =
-    useLoaderData<typeof loader>();
+  const {
+    directories,
+    diverged,
+    proxyPublicUrl,
+    nativePublicUrl,
+    nativeScimToken,
+    mockWorkosToken,
+  } = useLoaderData<typeof loader>();
   const actionData = useActionData() as HomeActionData | undefined;
   const navigation = useNavigation();
   const pendingIntent = navigation.formData?.get("intent");
@@ -429,7 +440,7 @@ export default function PanelHome() {
         </Callout.Root>
       )}
 
-      <DirectoryTable directories={directories} />
+      <DirectoryTable directories={directories} diverged={diverged} />
 
       <Card size="3">
         <Flex direction="column" gap="5">

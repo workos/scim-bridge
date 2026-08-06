@@ -11,7 +11,7 @@ final commit. A built-in **control panel** imports directories, holds their SCIM
 credentials, flips migration modes, runs backfill, and shows the request log and
 id mappings.
 
-> How the migration works (dual-write → backfill → invert → commit), the
+> How the migration works (dual-write → backfill → WorkOS-primary → commit), the
 > migrated-id contract, and the platform changes it depends on are documented in
 > [`docs/`](./docs) and the WorkOS internal migration guide.
 
@@ -30,9 +30,10 @@ by anyone else.
 
 Open `http://localhost:8080/panel`. `DEMO_MODE` mounts a simulated IdP and a
 simulated native app inside the container and points a directory at them, so you
-can drive the whole migration — passthrough → dual-write → backfill → cut over,
-and roll it back — against nothing but itself. Start on **Live state**: seed the
-directory, then change modes and watch the three columns converge.
+can drive the whole migration — passthrough → dual-write → backfill →
+workos-primary → cut over, and roll it back — against nothing but itself. Start
+on **Live state**: seed the directory, then change modes and watch the three
+columns converge.
 
 No volume is mounted above, so the demo starts clean every run. Leave
 `DEMO_MODE` off in production.
@@ -133,8 +134,12 @@ as a hash), but these two cannot be: the bridge has to present them upstream.
 4. Paste that token, and the **SCIM base URL** the page shows, into your IdP's
    SCIM configuration. The directory starts in `passthrough`, so repointing the
    IdP changes no behavior — every request still reaches your native app.
-5. Advance the mode: `passthrough → dual-write → backfill → cut over`, verifying
-   convergence in the Live/Mappings tabs. Roll back any time before commit.
+5. Advance the mode: `passthrough → dual-write → backfill → workos-primary → cut
+   over`, verifying convergence in the Live/Mappings tabs. Roll back any time
+   before commit. `workos-primary` is the one to dwell on: WorkOS answers your
+   IdP while the proxy still writes your app directly, so authority and
+   webhook-dependence stop being one leap — see
+   [`docs/runbook.md`](./docs/runbook.md#run-the-migration).
 
 > Rotating invalidates the previous token **immediately**, so a directory whose
 > IdP is already syncing will `401` until you paste the new one. On a live
@@ -160,7 +165,7 @@ miss. So a first-touch write runs the dance `PUT /{kind}/{id}` → `404` →
 | `PATCH /Users/{id}` (update) | `PATCH /Users/{id}` | Applied verbatim (no header). Any ids inside the body are translated to the WorkOS side first. |
 | `DELETE /Users/{id}` | `DELETE /Users/{id}` | Removes the resource; the proxy drops its id mapping. |
 | `POST/PUT/PATCH/DELETE /Groups...` | Same shape as Users | Group `members[].value` ids are translated between your ids and WorkOS's in both directions. |
-| `GET` (any) | Not sent to WorkOS | Reads are served from whichever side is authoritative for the current mode (your native app before cutover, WorkOS after). |
+| `GET` (any) | Not sent to WorkOS | Reads are served from whichever side is authoritative for the current mode (your native app in `passthrough`/`dual-write`, WorkOS from `workos-primary` on). |
 
 **Id strategy.** Every id the proxy sends WorkOS (path ids and group
 `members[].value`) is mapped through its `id_mappings` table, so the two systems

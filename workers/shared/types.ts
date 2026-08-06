@@ -1,5 +1,22 @@
-export const MODES = ["passthrough", "dual-write", "workos-only"] as const;
+/** The migration ladder, in the order a directory climbs it. `workos-primary`
+ *  (ENT-6767) sits between the two ends of the leap it splits: WorkOS answers the
+ *  IdP as in `workos-only`, while native keeps receiving direct proxy writes as in
+ *  `dual-write`, so rolling back is a mode change and nothing else. */
+export const MODES = ["passthrough", "dual-write", "workos-primary", "workos-only"] as const;
 export type Mode = (typeof MODES)[number];
+
+/**
+ * Whether the native app is the source of truth in this mode — descriptive, for
+ * display and reporting. A listener must key on `apply_dsync_events` from the
+ * status endpoint instead; see `appliesDsyncEvents`.
+ *
+ * Stated per mode rather than derived as `mode !== "workos-only"`, which is what
+ * it used to be: on `workos-primary` WorkOS answers the IdP, so that derivation
+ * would report native authoritative when it is not.
+ */
+export function nativeIsAuthoritative(mode: Mode): boolean {
+  return mode === "passthrough" || mode === "dual-write";
+}
 
 export const MIGRATED_ID_HEADER = "X-WorkOS-Migrated-Id";
 
@@ -37,6 +54,27 @@ export interface IdMapping {
   strategy: "migrated-id" | "fallback-post";
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * A resource WorkOS holds a write for that native does not (ENT-6767). One row
+ * per diverged resource, written unconditionally — unlike `proxy_log`, which is
+ * off unless a directory opts in — because the promise of `workos-primary` is
+ * that native is current, and an invisible divergence breaks that promise
+ * quietly. Cleared when a later write to the same resource reaches native.
+ */
+export interface NativeWriteFailure {
+  directory_id: string;
+  resource_type: ResourceType;
+  /** The resource's key in native-id space, or the request path when the write
+   *  never got far enough to name a resource. */
+  resource_key: string;
+  method: string;
+  native_status: number | null;
+  detail: string;
+  attempts: number;
+  first_seen_at: string;
+  last_seen_at: string;
 }
 
 export interface ProxyLogEntry {

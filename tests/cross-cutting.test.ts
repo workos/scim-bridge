@@ -455,6 +455,35 @@ describe("cross-cutting seams", () => {
         loopback.restore();
       }
     });
+
+    it("stays inert on workos-primary, where the real endpoint reports WorkOS authoritative", async () => {
+      // The listener suite pins the behaviour given the payload shape; this pins
+      // that the shape is what the endpoint actually serves in the mode, so the
+      // two halves of the ENT-6767 contract cannot drift apart.
+      const env = await createEnv();
+      await env.DB.prepare(
+        "DELETE FROM poc_config WHERE key IN ('proxy.public_url', 'proxy.loopback_url')",
+      ).run();
+      await setConfig(env.DB, "proxy.loopback_url", LOOPBACK);
+      await seedDirectory(env.DB, { mode: "workos-primary" });
+      const loopback = installLoopback(env);
+      try {
+        await deliver(env, {
+          id: "evt-1",
+          event: "dsync.user.created",
+          created_at: "2026-07-31T10:00:00.000Z",
+          data: { idp_id: "idp-user-1", email: "ada@example.com", state: "active" },
+        });
+
+        const event = (await listenerEvents(env)).at(-1);
+        expect(event?.action).toBe("ignored");
+        expect(event?.detail).toContain("workos-primary");
+        const { results: users } = await env.DB.prepare("SELECT * FROM native_users").all();
+        expect(users).toHaveLength(0);
+      } finally {
+        loopback.restore();
+      }
+    });
   });
 
   describe("proxy_log rows for the workos-only dance", () => {

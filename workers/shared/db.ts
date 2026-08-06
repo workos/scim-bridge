@@ -8,7 +8,14 @@ import {
 } from "./crypto";
 import { newDirectoryId, newProxyToken } from "./ids";
 import { TransientDatastoreError, type Datastore } from "./datastore";
-import type { Directory, IdMapping, Mode, ProxyLogEntry, ResourceType } from "./types";
+import type {
+  Directory,
+  IdMapping,
+  Mode,
+  NativeWriteFailure,
+  ProxyLogEntry,
+  ResourceType,
+} from "./types";
 
 /**
  * Retry a datastore operation when the failure was transient.
@@ -571,6 +578,102 @@ export async function deleteMapping(
       .bind(directoryId, resourceType, nativeId)
       .run(),
   );
+}
+
+export type NewNativeWriteFailure = Pick<
+  NativeWriteFailure,
+  "directory_id" | "resource_type" | "resource_key" | "method" | "native_status" | "detail"
+>;
+
+/**
+ * Record that WorkOS holds a write native does not (ENT-6767).
+ *
+ * Written unconditionally — `shouldPersistLogs` deliberately does not gate this.
+ * `proxy_log` is off by default, so a divergence recorded only there would
+ * disappear on an ordinary directory, and the whole value of `workos-primary` is
+ * the claim that native is current.
+ *
+ * Keyed on the resource rather than the attempt, so an IdP retrying every minute
+ * keeps one row (with a rising `attempts`) instead of burying the set of diverged
+ * resources under its own noise.
+ */
+export async function recordNativeWriteFailure(
+  db: Datastore,
+  failure: NewNativeWriteFailure,
+): Promise<void> {
+  await withDatastoreRetry(() =>
+    db
+      .prepare(
+        "INSERT INTO native_write_failures (directory_id, resource_type, resource_key, method, " +
+          "native_status, detail) VALUES (?, ?, ?, ?, ?, ?) " +
+          "ON CONFLICT (directory_id, resource_type, resource_key) DO UPDATE SET " +
+          "method = excluded.method, native_status = excluded.native_status, " +
+          "detail = excluded.detail, attempts = native_write_failures.attempts + 1, " +
+          "last_seen_at = datetime('now')",
+      )
+      .bind(
+        failure.directory_id,
+        failure.resource_type,
+        failure.resource_key,
+        failure.method,
+        failure.native_status,
+        failure.detail,
+      )
+      .run(),
+  );
+}
+
+/** Drop the divergence record for a resource, because a write to it has now
+ *  reached native. Self-healing is the common case — the IdP retries, or the next
+ *  change to the same resource lands — and a record that outlives the divergence
+ *  it describes trains the operator to ignore the surface. */
+export async function clearNativeWriteFailure(
+  db: Datastore,
+  directoryId: string,
+  resourceType: ResourceType,
+  resourceKey: string,
+): Promise<void> {
+  await withDatastoreRetry(() =>
+    db
+      .prepare(
+        "DELETE FROM native_write_failures WHERE directory_id = ? AND resource_type = ? " +
+          "AND resource_key = ?",
+      )
+      .bind(directoryId, resourceType, resourceKey)
+      .run(),
+  );
+}
+
+export async function listNativeWriteFailures(
+  db: Datastore,
+  directoryId: string,
+): Promise<NativeWriteFailure[]> {
+  const { results } = await withDatastoreRetry(() =>
+    db
+      .prepare(
+        "SELECT * FROM native_write_failures WHERE directory_id = ? ORDER BY last_seen_at DESC, " +
+          "resource_type, resource_key",
+      )
+      .bind(directoryId)
+      .all<NativeWriteFailure>(),
+  );
+  return results;
+}
+
+/** How many resources each directory has diverged, for the fleet table. Only
+ *  directories with at least one appear. */
+export async function countNativeWriteFailures(db: Datastore): Promise<Record<string, number>> {
+  const { results } = await withDatastoreRetry(() =>
+    db
+      .prepare(
+        "SELECT directory_id, COUNT(*) AS failures FROM native_write_failures " +
+          "GROUP BY directory_id",
+      )
+      .all<{ directory_id: string; failures: number }>(),
+  );
+  const counts: Record<string, number> = {};
+  for (const row of results) counts[row.directory_id] = Number(row.failures);
+  return counts;
 }
 
 /** Wipe the native app's directory and its DSync listener log — the customer

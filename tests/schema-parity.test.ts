@@ -4,6 +4,7 @@ import { runMigrations, runMigrationsSync } from "../server/db/migrate";
 import { openPostgres, PostgresDatastore, PostgresMigrator } from "../server/db/postgres";
 import { SqliteDatastore, SqliteMigrator } from "../server/db/sqlite";
 import type { Datastore } from "../workers/shared/datastore";
+import { MODES } from "../workers/shared/types";
 
 /**
  * The two migration sets describe one logical schema, and nothing stops a change
@@ -334,7 +335,11 @@ describe.skipIf(!POSTGRES_URL)("schema parity", () => {
           .run();
 
       await expect(insert("nonsense")).rejects.toThrow();
-      await expect(insert("workos-only")).resolves.toBeDefined();
+      // Every mode the code can set, so a mode added to MODES without widening
+      // both CHECKs fails here rather than at the first operator who selects it.
+      for (const mode of MODES) {
+        await expect(insert(mode), `mode ${mode}`).resolves.toBeDefined();
+      }
     }
   });
 });

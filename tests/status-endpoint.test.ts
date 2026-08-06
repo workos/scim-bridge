@@ -148,14 +148,15 @@ describe("status endpoint", () => {
   });
 
   // ENT-6768. `native_authoritative` says who owns the data; `apply_dsync_events`
-  // says what the listener should do. They coincide for every mode that exists
-  // today, which is what makes adding the second field a no-op change — and they
-  // stop coinciding at ENT-6767's WorkOS-primary dual-write, where WorkOS is
-  // authoritative but the listener must still stay inert.
+  // says what the listener should do. They coincided for the first three modes,
+  // which is what made adding the second field a no-op change — and ENT-6767's
+  // `workos-primary` is the mode that separates them: WorkOS is authoritative and
+  // the listener must still stay inert, because the proxy is writing native.
   describe("the listener instruction", () => {
     it.each([
       { mode: "passthrough" as const, apply: false },
       { mode: "dual-write" as const, apply: false },
+      { mode: "workos-primary" as const, apply: false },
       { mode: "workos-only" as const, apply: true },
     ])("tells a $mode listener apply_dsync_events=$apply", async ({ mode, apply }) => {
       const env = await createEnv();
@@ -163,14 +164,35 @@ describe("status endpoint", () => {
 
       const res = await fetchStatus(env, statusRequest(directory, directory.id));
 
-      expect(await res.json()).toMatchObject({ mode, apply_dsync_events: apply });
+      expect(await res.json()).toMatchObject({
+        mode,
+        apply_dsync_events: apply,
+      });
     });
 
-    it("still agrees with native_authoritative in every mode that exists today", async () => {
-      // The equivalence is the point: this change is safe to land before
-      // ENT-6767 precisely because no current mode separates the two. When a
-      // mode does, this test is the one that should be deleted — deliberately,
-      // with the divergence documented — not quietly adjusted.
+    // Replaces "still agrees with native_authoritative in every mode that exists
+    // today", deleted here deliberately rather than quietly adjusted: ENT-6767 is
+    // the mode that separates the two fields, which is the event that test named
+    // as its own reason to go. The equivalence must NOT hold any more, and a
+    // listener keying on `!native_authoritative` would double-apply every change.
+    it("reports WorkOS authoritative and the listener inert on workos-primary", async () => {
+      const env = await createEnv();
+      const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+
+      const res = await fetchStatus(env, statusRequest(directory, directory.id));
+      const body = (await res.json()) as {
+        native_authoritative: boolean;
+        apply_dsync_events: boolean;
+      };
+
+      expect(body).toMatchObject({
+        native_authoritative: false,
+        apply_dsync_events: false,
+      });
+      expect(body.apply_dsync_events).not.toBe(!body.native_authoritative);
+    });
+
+    it("agrees with native_authoritative on every mode except workos-primary", async () => {
       for (const mode of ["passthrough", "dual-write", "workos-only"] as const) {
         const env = await createEnv();
         const directory = await seedDirectory(env.DB, { mode });
@@ -181,7 +203,7 @@ describe("status endpoint", () => {
           apply_dsync_events: boolean;
         };
 
-        expect(body.apply_dsync_events).toBe(!body.native_authoritative);
+        expect(body.apply_dsync_events, mode).toBe(!body.native_authoritative);
       }
     });
 
