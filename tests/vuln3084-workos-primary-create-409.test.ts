@@ -51,9 +51,10 @@ function installFlatNative(fake: FakeUpstreams, seed: Record<string, Record<stri
     const match = /filter=([^&]*)/.exec(call.path);
     const filter = match ? decodeURIComponent(match[1]) : "";
     const wanted = /userName eq "(.*)"$/.exec(filter)?.[1];
-    const rows = wanted === undefined
-      ? [...users.values()]
-      : [...users.values()].filter((row) => row.userName === wanted);
+    const rows =
+      wanted === undefined
+        ? [...users.values()]
+        : [...users.values()].filter((row) => row.userName === wanted);
     return scimJson(200 as number, {
       schemas: ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
       totalResults: rows.length,
