@@ -474,7 +474,17 @@ async function pushToNative(
     pushError(errors, `${kind}: WorkOS resource is missing an id`);
     return;
   }
-  const nativeId = toNative(kind, workosId);
+  // The address and the attribution decision have to come from the SAME state.
+  // The translation maps are snapshotted once at the start of the run, so a
+  // mapping written after that — live proxy traffic keeps interleaving, and a
+  // create's WorkOS-side 409 recovery records one — used to satisfy an
+  // existence-only check here while the stale translator still resolved the row
+  // to its raw id, putting the refusal and the write on different rows
+  // (VULN-3100). Read the mapping now and address ITS native_id: a mapped row is
+  // written where this directory's own mapping says it lives, never at the
+  // identity fallback.
+  const mapping = await getMappingByWorkosId(db, directory.id, kind, workosId);
+  const nativeId = mapping?.native_id ?? toNative(kind, workosId);
   // An unmapped WorkOS id is replayed at its raw value (the translator's identity
   // fallback), so the id this PUT addresses is whatever minted the WorkOS row —
   // and on `workos-primary` a create mints it from the tenant's own `externalId`.
@@ -487,10 +497,7 @@ async function pushToNative(
   //
   // Checked only for unmapped rows, so a reconcile of a directory that mapped its
   // rows legitimately (every single-directory deployment) is unaffected.
-  if (
-    !(await getMappingByWorkosId(db, directory.id, kind, workosId)) &&
-    (await nativeNamespaceIsShared(db, directory))
-  ) {
+  if (!mapping && (await nativeNamespaceIsShared(db, directory))) {
     counts.failed += 1;
     pushError(
       errors,
