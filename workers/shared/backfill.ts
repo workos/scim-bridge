@@ -1,6 +1,8 @@
 import type { Datastore } from "./datastore";
 import type { BackfillSummary, Directory, ResourceType } from "./types";
 import {
+  clearNativeWriteFailure,
+  clearNativeWriteFailures,
   getMapping,
   insertProxyLog,
   listOtherMappingsByNativeId,
@@ -353,7 +355,40 @@ export async function runReconcileFromWorkos(
     );
   }
 
+  // The reconcile replayed every WorkOS resource into native without a failure,
+  // so native is not missing anything WorkOS holds and no divergence record can
+  // still be describing a real gap. Rows keyed on a create that never reached
+  // native are cleared here rather than per resource, because a create failure is
+  // keyed on what the IdP addressed it by and WorkOS's snapshot no longer knows
+  // that key. A partial reconcile clears nothing extra: the rows it did repair
+  // went one at a time above, and the rest are still true.
+  if (summary.users.failed === 0 && summary.groups.failed === 0) {
+    await clearNativeWriteFailures(db, directory.id);
+  }
+
   return summary;
+}
+
+/** A resource the reconcile just wrote into native is no longer missing from it,
+ *  whichever of its identifiers the divergence was recorded under: the mapped
+ *  native id, the WorkOS id a create never mapped, the drifted id a 409 repair
+ *  found, or the `externalId`/unique attribute a failed create was keyed on. */
+async function clearRepairedDivergences(
+  db: Datastore,
+  directory: Directory,
+  kind: ResourceType,
+  resource: Record<string, unknown>,
+  ids: (string | null)[],
+): Promise<void> {
+  const attribute = resource[kind === "Users" ? "userName" : "displayName"];
+  const keys = new Set(
+    [...ids, resource.externalId, attribute].filter(
+      (key): key is string => typeof key === "string" && key !== "",
+    ),
+  );
+  for (const key of keys) {
+    await clearNativeWriteFailure(db, directory.id, kind, key);
+  }
 }
 
 async function pushToNative(
@@ -419,6 +454,11 @@ async function pushToNative(
   }
   if (isSuccess(result.status)) {
     counts.mirrored += 1;
+    await clearRepairedDivergences(db, directory, kind, resource, [
+      nativeId,
+      workosId,
+      drift?.nativeId ?? null,
+    ]);
     if (drift) {
       pushError(
         errors,

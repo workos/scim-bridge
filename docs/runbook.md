@@ -242,7 +242,11 @@ Advance the directory's mode from its page, verifying convergence in the
    resources WorkOS accepted and native refused; every row is a resource native
    is behind on. **Reconcile from WorkOS** is the repair — nothing retries in
    the background, deliberately, so a repair happens when an operator has looked
-   at why native refused. An empty card is what "safe to cut over" looks like.
+   at why native refused. An empty card is what "safe to cut over" looks like,
+   and a row retires itself: a reconcile that replays cleanly clears the rows it
+   repaired, and so does any later write to the same resource that reaches native
+   — including after a rollback, where reconcile is no longer offered because
+   WorkOS is no longer authoritative.
 
    Backfill still runs here, so a directory that reaches this rung with WorkOS
    short a few resources does not have to drop back to fix it.

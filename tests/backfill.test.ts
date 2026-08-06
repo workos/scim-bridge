@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { runBackfill, runReconcileFromWorkos } from "../workers/shared/backfill";
-import { upsertMapping } from "../workers/shared/db";
+import {
+  listNativeWriteFailures,
+  recordNativeWriteFailure,
+  upsertMapping,
+} from "../workers/shared/db";
 import { MIGRATED_ID_HEADER, type PocEnv } from "../workers/shared/types";
 import {
   createEnv,
@@ -537,6 +541,94 @@ describe("runBackfill", () => {
 describe("runReconcileFromWorkos", () => {
   let fake: FakeUpstreams | undefined;
   afterEach(() => fake?.restore());
+
+  /**
+   * The panel and the runbook both present this as THE repair for the resources
+   * native is missing, so it has to retire those records — otherwise the count
+   * stays red after the divergence is gone and "the card is empty" can never
+   * become the signal that a cutover is safe.
+   */
+  it("retires the divergence records for what it repaired", async () => {
+    const env = await createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+    await upsertMapping(env.DB, {
+      directory_id: directory.id,
+      resource_type: "Users",
+      native_id: "u1",
+      workos_id: "wos_1",
+      strategy: "fallback-post",
+    });
+    // A PUT that native refused, keyed on the native id, and a create that never
+    // reached native, keyed on the externalId the IdP would retry with.
+    await recordNativeWriteFailure(env.DB, {
+      directory_id: directory.id,
+      resource_type: "Users",
+      resource_key: "u1",
+      method: "PUT",
+      native_status: 500,
+      detail: "WorkOS committed this write; native did not",
+    });
+    await recordNativeWriteFailure(env.DB, {
+      directory_id: directory.id,
+      resource_type: "Users",
+      resource_key: "ext-2",
+      method: "POST",
+      native_status: 503,
+      detail: "WorkOS created the resource; native did not",
+    });
+    fake = installFakeUpstreams();
+    fake.route(
+      "workos",
+      "GET",
+      "/Users",
+      listPage([
+        { id: "wos_1", userName: "one@x.test" },
+        { id: "wos_2", externalId: "ext-2", userName: "two@x.test" },
+      ]),
+    );
+    fake.route("workos", "GET", "/Groups", listPage([]));
+    fake.route("native", "PUT", /^\/Users\//, (call) => scimJson(200, call.json()));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    expect(summary.users).toEqual({ total: 2, mirrored: 2, failed: 0 });
+    expect(await listNativeWriteFailures(env.DB, directory.id)).toEqual([]);
+  });
+
+  it("keeps the records a partial reconcile did not repair", async () => {
+    const env = await createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+    for (const key of ["wos_1", "wos_2"]) {
+      await recordNativeWriteFailure(env.DB, {
+        directory_id: directory.id,
+        resource_type: "Users",
+        resource_key: key,
+        method: "PUT",
+        native_status: 500,
+        detail: "WorkOS committed this write; native did not",
+      });
+    }
+    fake = installFakeUpstreams();
+    fake.route(
+      "workos",
+      "GET",
+      "/Users",
+      listPage([
+        { id: "wos_1", userName: "one@x.test" },
+        { id: "wos_2", userName: "two@x.test" },
+      ]),
+    );
+    fake.route("workos", "GET", "/Groups", listPage([]));
+    fake.route("native", "PUT", "/Users/wos_1", scimJson(200, { id: "wos_1" }));
+    fake.route("native", "PUT", "/Users/wos_2", scimJson(500, { detail: "still down" }));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    expect(summary.users).toEqual({ total: 2, mirrored: 1, failed: 1 });
+    expect(
+      (await listNativeWriteFailures(env.DB, directory.id)).map((f) => f.resource_key),
+    ).toEqual(["wos_2"]);
+  });
 
   it("replays the WorkOS snapshot into native as migrated-id PUTs with ids translated back", async () => {
     const env = await createEnv();

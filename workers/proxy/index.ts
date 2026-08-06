@@ -136,6 +136,9 @@ async function handleScim(
     log.native_status = native.status;
     log.native_ms = native.ms;
     log.native_body = native.bodyText;
+    if (isWrite && isSuccess(native.status)) {
+      ctx.waitUntil(clearDivergenceForWrite(env.DB, directory, scimPath, method));
+    }
     return finish(
       upstreamResponse(native, {
         upstreamBase: directory.native_url,
@@ -193,6 +196,29 @@ async function handleScim(
   );
 }
 
+/**
+ * A native write that succeeded in a native-first mode answers the same question
+ * `native_write_failures` does — what is native missing — for the resource it just
+ * wrote. Rows outlive a rollback from `workos-primary`, where reconcile is not
+ * offered because WorkOS is no longer authoritative, so this is what retires them:
+ * a row that outlives the divergence it describes trains the operator to ignore
+ * the surface.
+ */
+async function clearDivergenceForWrite(
+  db: Datastore,
+  directory: Directory,
+  scimPath: ScimPath,
+  method: string,
+): Promise<void> {
+  if (scimPath.kind === null) return;
+  const resourceKey = scimPath.id ?? `${method} ${scimPath.rest}`;
+  try {
+    await clearNativeWriteFailure(db, directory.id, scimPath.kind, resourceKey);
+  } catch {
+    // Retiring a stale row must never fail the write that earned it.
+  }
+}
+
 async function dualWrite(
   env: PocEnv,
   ctx: ExecutionContext,
@@ -232,6 +258,7 @@ async function dualWrite(
   ctx.waitUntil(
     (async () => {
       if (isSuccess(native.status)) {
+        await clearDivergenceForWrite(env.DB, directory, scimPath, method);
         try {
           await mirrorDualWrite(env.DB, directory, scimPath, method, requestBody, native, log);
         } catch (error) {
@@ -394,6 +421,12 @@ async function workosPrimary(
     url,
   );
   const [workosResponse, native] = await Promise.all([workosLeg, nativeLeg]);
+
+  // Recorded whatever the outcome: on the rung that promises native is written on
+  // every request, an activity log with an empty native column cannot show it.
+  log.native_status = native.result?.status ?? null;
+  log.native_ms = native.result?.ms ?? null;
+  log.native_body = native.result?.bodyText ?? null;
 
   const workosCommitted = isSuccess(workosResponse.status);
   // A DELETE the WorkOS leg answered 404 is a delete that converged, not one
@@ -719,9 +752,6 @@ async function nativeLegFailed(
   workosCommitted: boolean,
   log: ProxyLogInsert,
 ): Promise<Response> {
-  log.native_status = native.result?.status ?? null;
-  log.native_ms = native.result?.ms ?? null;
-  log.native_body = native.result?.bodyText ?? null;
   if (workosCommitted) {
     const detail = nativeFailureDetail(native, "WorkOS committed this write; native did not");
     log.error = detail;
