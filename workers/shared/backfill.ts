@@ -5,6 +5,7 @@ import {
   clearReplayedDivergenceForResource,
   clearReplayedDivergences,
   getMapping,
+  getMappingByWorkosId,
   insertProxyLog,
   listOtherMappingsByNativeId,
   markDivergencesForSweep,
@@ -474,6 +475,32 @@ async function pushToNative(
     return;
   }
   const nativeId = toNative(kind, workosId);
+  // An unmapped WorkOS id is replayed at its raw value (the translator's identity
+  // fallback), so the id this PUT addresses is whatever minted the WorkOS row —
+  // and on `workos-primary` a create mints it from the tenant's own `externalId`.
+  // Fail closed in a shared namespace, exactly as the backfill claim, the replace
+  // legs and the drift repair do: a row native never echoed to this directory
+  // cannot be attributed to it, so replaying it at that id would write over
+  // whichever neighbour's row happens to hold it. The 409 branch below is no
+  // substitute — a shared flat app answers a PUT to an existing row with 200, so
+  // the overwrite never reaches an attribution check.
+  //
+  // Checked only for unmapped rows, so a reconcile of a directory that mapped its
+  // rows legitimately (every single-directory deployment) is unaffected.
+  if (
+    !(await getMappingByWorkosId(db, directory.id, kind, workosId)) &&
+    (await nativeNamespaceIsShared(db, directory))
+  ) {
+    counts.failed += 1;
+    pushError(
+      errors,
+      `${kind}/${nativeId}: unmapped, and another directory fronts this native app, so this id ` +
+        "cannot be attributed to this directory; the reconcile did not replay it rather than " +
+        "write over a neighbour's row. Migrate this directory against a native namespace it has " +
+        "to itself.",
+    );
+    return;
+  }
   let result: UpstreamResult;
   try {
     result = await putNative(directory, kind, nativeId, resource);

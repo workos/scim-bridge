@@ -941,14 +941,17 @@ describe("runReconcileFromWorkos", () => {
     const summary = await runReconcileFromWorkos(env.DB, directory);
 
     // The mapping wins even though the attacker minted an externalId matching the
-    // victim's native id: a row another directory maps is never written, and the
-    // 409 stays a failure.
+    // victim's native id: a row another directory maps is never written. The row
+    // is unmapped HERE and the namespace is shared, so the replay guard refuses it
+    // before the PUT (VULN-3099) and the drift repair is never reached.
     expect(fake.callsTo("native").some((c) => c.path.startsWith("/Users/victim-1"))).toBe(false);
+    expect(fake.callsTo("native").some((c) => c.path.startsWith("/Users/attacker-1"))).toBe(false);
     expect(summary.users).toEqual({ total: 1, mirrored: 0, failed: 1 });
     expect(summary.errors).toEqual([
-      `Users/attacker-1: userName "one@x.test" is native id victim-1, which is already mapped by ` +
-        `directory ${other.id}; drift left unrepaired`,
-      "Users/attacker-1: native returned 409 (userName/displayName exists under a different id; drift unresolved)",
+      "Users/attacker-1: unmapped, and another directory fronts this native app, so this id " +
+        "cannot be attributed to this directory; the reconcile did not replay it rather than " +
+        "write over a neighbour's row. Migrate this directory against a native namespace it has " +
+        "to itself.",
     ]);
     expect(await mappingRows(env, directory.id)).toEqual([]);
   });
@@ -1020,12 +1023,16 @@ describe("runReconcileFromWorkos", () => {
 
     const summary = await runReconcileFromWorkos(env.DB, directory);
 
+    // Refused one step earlier than the drift repair: the group is unmapped and
+    // the namespace is shared, so the replay never PUTs it at its raw id either
+    // (VULN-3099).
     expect(fake.callsTo("native").some((c) => c.path.startsWith("/Groups/victim-g1"))).toBe(false);
     expect(summary.groups).toEqual({ total: 1, mirrored: 0, failed: 1 });
     expect(summary.errors[0]).toBe(
-      'Groups/attacker-g1: displayName "Admins" is native id victim-g1, which is unmapped, and ' +
-        "another directory fronts this native app, so the tenant-supplied externalId cannot " +
-        "attribute it; drift left unrepaired",
+      "Groups/attacker-g1: unmapped, and another directory fronts this native app, so this id " +
+        "cannot be attributed to this directory; the reconcile did not replay it rather than " +
+        "write over a neighbour's row. Migrate this directory against a native namespace it has " +
+        "to itself.",
     );
     expect(await mappingRows(env, directory.id)).toEqual([]);
   });
@@ -1064,9 +1071,13 @@ describe("runReconcileFromWorkos", () => {
 
     expect(fake.callsTo("native").some((c) => c.path.startsWith("/Users/victim-1"))).toBe(false);
     expect(summary.users).toEqual({ total: 1, mirrored: 0, failed: 1 });
+    // The canonically-equal URL makes the namespace shared, so the unmapped row is
+    // refused by the replay guard before the drift repair sees it (VULN-3099).
     expect(summary.errors[0]).toBe(
-      `Users/attacker-1: userName "one@x.test" is native id victim-1, which is already mapped by ` +
-        `directory ${other.id}; drift left unrepaired`,
+      "Users/attacker-1: unmapped, and another directory fronts this native app, so this id " +
+        "cannot be attributed to this directory; the reconcile did not replay it rather than " +
+        "write over a neighbour's row. Migrate this directory against a native namespace it has " +
+        "to itself.",
     );
     expect(await mappingRows(env, directory.id)).toEqual([]);
   });
