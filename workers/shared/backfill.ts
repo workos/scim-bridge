@@ -1,12 +1,14 @@
 import type { Datastore } from "./datastore";
 import type { BackfillSummary, Directory, ResourceType } from "./types";
 import {
+  claimReconcileRun,
   clearReplayedDivergenceForResource,
   clearReplayedDivergences,
   getMapping,
   insertProxyLog,
   listOtherMappingsByNativeId,
   markDivergencesForSweep,
+  releaseReconcileRun,
   shouldPersistLogs,
   upsertMapping,
   upsertMappings,
@@ -307,10 +309,35 @@ async function mirrorResource(
  * a resource missing on the native side is restored under its shared id. (The
  * forward direction no longer relies on this: WorkOS creates only via POST.)
  */
+export class ReconcileInFlightError extends Error {
+  constructor(directoryId: string) {
+    super(`A reconcile is already running for directory ${directoryId}.`);
+    this.name = "ReconcileInFlightError";
+  }
+}
+
 export async function runReconcileFromWorkos(
   db: Datastore,
   directory: Directory,
 ): Promise<BackfillSummary> {
+  // One reconcile per directory at a time. The sweep stamp below is a single
+  // mutable column, so a second run re-stamps the NULL tokens this one leaves on
+  // rows live traffic records after its watermark — clearing a live gap while this
+  // run's older snapshot replays the pre-change state back into native
+  // (VULN-3092). The claim makes the protocol's assumption enforced rather than
+  // documented.
+  const runToken = crypto.randomUUID();
+  if (!(await claimReconcileRun(db, directory.id, runToken))) {
+    throw new ReconcileInFlightError(directory.id);
+  }
+  try {
+    return await reconcileFromWorkos(db, directory);
+  } finally {
+    await releaseReconcileRun(db, directory.id, runToken);
+  }
+}
+
+async function reconcileFromWorkos(db: Datastore, directory: Directory): Promise<BackfillSummary> {
   const summary: BackfillSummary = {
     users: { total: 0, mirrored: 0, failed: 0 },
     groups: { total: 0, mirrored: 0, failed: 0 },
