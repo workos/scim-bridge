@@ -1,0 +1,13 @@
+-- The post-reconcile sweep used to recognise the rows it was entitled to retire
+-- by their (directory_id, resource_type, resource_key, attempts) values. Those
+-- values are not a row identity: `native_write_failures` rows are deleted (by a
+-- per-resource repair, or by a live write that lands) and re-created by an INSERT
+-- that restarts `attempts` at the default of 1, so a divergence recorded after
+-- the reconcile's watermark can be indistinguishable from the one it replaced and
+-- gets swept — a real gap, silently retired (VULN-3086).
+--
+-- `sweep_token` makes the capture explicit instead of inferred: the reconcile
+-- stamps the rows it captured and deletes only rows still carrying its stamp. A
+-- re-created row is a new row with a NULL stamp, and an in-place upsert clears
+-- the stamp, so neither can be mistaken for a captured row.
+ALTER TABLE native_write_failures ADD COLUMN sweep_token TEXT;
