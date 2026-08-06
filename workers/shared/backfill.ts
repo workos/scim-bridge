@@ -1,7 +1,7 @@
 import type { Datastore } from "./datastore";
 import type { BackfillSummary, Directory, ResourceType } from "./types";
 import {
-  clearNativeWriteFailure,
+  clearReplayedDivergenceForResource,
   clearReplayedDivergences,
   getMapping,
   insertProxyLog,
@@ -344,6 +344,7 @@ export async function runReconcileFromWorkos(
       maps,
       summary.users,
       summary.errors,
+      sweepToken,
     );
   }
 
@@ -372,6 +373,7 @@ export async function runReconcileFromWorkos(
       maps,
       summary.groups,
       summary.errors,
+      sweepToken,
     );
   }
 
@@ -402,13 +404,18 @@ export async function runReconcileFromWorkos(
 /** A resource the reconcile just wrote into native is no longer missing from it,
  *  whichever of its identifiers the divergence was recorded under: the mapped
  *  native id, the WorkOS id a create never mapped, the drifted id a 409 repair
- *  found, or the `externalId`/unique attribute a failed create was keyed on. */
+ *  found, or the `externalId`/unique attribute a failed create was keyed on.
+ *
+ *  Bounded to this reconcile's stamped rows, and never a DELETE gap: the replay
+ *  pushed the snapshot's body, which is no answer to a divergence recorded after
+ *  the snapshot or to a resource WorkOS deleted. */
 async function clearRepairedDivergences(
   db: Datastore,
   directory: Directory,
   kind: ResourceType,
   resource: Record<string, unknown>,
   ids: (string | null)[],
+  sweepToken: string,
 ): Promise<void> {
   const attribute = resource[kind === "Users" ? "userName" : "displayName"];
   const keys = new Set(
@@ -417,7 +424,7 @@ async function clearRepairedDivergences(
     ),
   );
   for (const key of keys) {
-    await clearNativeWriteFailure(db, directory.id, kind, key);
+    await clearReplayedDivergenceForResource(db, directory.id, kind, key, sweepToken);
   }
 }
 
@@ -430,6 +437,7 @@ async function pushToNative(
   maps: IdTranslationMaps,
   counts: ResourceCounts,
   errors: string[],
+  sweepToken: string,
 ): Promise<void> {
   counts.total += 1;
   const workosId = typeof resource.id === "string" ? resource.id : null;
@@ -484,11 +492,14 @@ async function pushToNative(
   }
   if (isSuccess(result.status)) {
     counts.mirrored += 1;
-    await clearRepairedDivergences(db, directory, kind, resource, [
-      nativeId,
-      workosId,
-      drift?.nativeId ?? null,
-    ]);
+    await clearRepairedDivergences(
+      db,
+      directory,
+      kind,
+      resource,
+      [nativeId, workosId, drift?.nativeId ?? null],
+      sweepToken,
+    );
     if (drift) {
       pushError(
         errors,

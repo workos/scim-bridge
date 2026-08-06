@@ -644,6 +644,35 @@ export async function clearNativeWriteFailure(
   );
 }
 
+/** Retire the divergence record a reconcile's replay just repaired for one
+ *  resource, under the same two limits the end-of-run sweep answers to.
+ *
+ *  A replay PUT proves only that native now holds what the SNAPSHOT held. It is
+ *  not evidence about a row the ledger gained after that snapshot was taken: the
+ *  write it describes is newer than the body the replay pushed, so clearing it
+ *  hides a divergence the replay just widened rather than closed. Nor is it
+ *  evidence about a `method='DELETE'` row, which a PUT of a survivor can never
+ *  repair — the resource is still present on native, which is the gap. Both are
+ *  the same rules `clearReplayedDivergences` applies; keying the per-resource
+ *  clear on `resource_key` alone let a replay bypass them one row at a time. */
+export async function clearReplayedDivergenceForResource(
+  db: Datastore,
+  directoryId: string,
+  resourceType: ResourceType,
+  resourceKey: string,
+  sweepToken: string,
+): Promise<void> {
+  await withDatastoreRetry(() =>
+    db
+      .prepare(
+        "DELETE FROM native_write_failures WHERE directory_id = ? AND resource_type = ? " +
+          "AND resource_key = ? AND sweep_token = ? AND method != 'DELETE'",
+      )
+      .bind(directoryId, resourceType, resourceKey, sweepToken)
+      .run(),
+  );
+}
+
 /** Retire the divergence rows a clean, complete reconcile is actually entitled
  *  to clear: the non-DELETE rows that already existed when the reconcile began.
  *
@@ -660,7 +689,7 @@ export async function clearNativeWriteFailure(
  *  by live `workos-primary` traffic while the reconcile ran — a resource the replay
  *  never pushed — is left standing rather than swept on a `directory_id`-only
  *  match. Rows the replay genuinely rewrote are already cleared per-resource by
- *  `clearNativeWriteFailure`.
+ *  `clearReplayedDivergenceForResource`, under these same two limits.
  *
  *  Which rows those are is read from the `sweep_token` this reconcile stamped on
  *  them at its start (`markDivergencesForSweep`), not inferred from their column
