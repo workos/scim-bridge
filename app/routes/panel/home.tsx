@@ -13,6 +13,16 @@ import {
 } from "../../../workers/shared/db";
 import { datastoreContext, demoModeContext } from "../../context";
 import { publishMintedToken } from "../../../workers/shared/client-tokens";
+import {
+  checkNativeNamespace,
+  duplicateNativeNamespaces,
+  duplicateNativeNamespaceWarnings,
+  findNativeNamespaceConflict,
+  namespaceConflictMessage,
+  type NamespaceDirectory,
+  unparseableNativeUrlMessage,
+} from "../../../workers/shared/native-namespace";
+import { nativeNamespaceKey } from "../../../workers/shared/scim";
 import { MODES, type Mode } from "../../../workers/shared/types";
 import {
   Callout,
@@ -112,6 +122,51 @@ function directoryError(error: unknown): string {
   return message;
 }
 
+/**
+ * Refuse a whole CSV whose rows would put two directories on one native SCIM
+ * namespace — either against a stored directory, or against each other.
+ *
+ * Checked over the whole file before a single row is inserted, because a
+ * half-applied import is worse than a refused one: the operator is left holding
+ * a partly-migrated fleet and no record of which rows landed. Rows that already
+ * failed the name/token gate are not passed in — they will not be imported, so
+ * their URLs cannot collide with anything.
+ *
+ * Returns the refusals; empty means the import may proceed.
+ */
+function csvNamespaceRefusals(
+  candidates: { row: CsvRow; line: number }[],
+  existing: NamespaceDirectory[],
+): string[] {
+  const refusals: string[] = [];
+  // Rows accepted so far, so the second of two identical rows collides with the
+  // first rather than both being compared only against the database.
+  const accepted: (NamespaceDirectory & { line: number })[] = [];
+  for (const { row, line } of candidates) {
+    const url = row.native_url.trim();
+    if (url === "") continue;
+    if (nativeNamespaceKey(url) === null) {
+      refusals.push(`Row ${line} (${row.name}): ${unparseableNativeUrlMessage(url)}`);
+      continue;
+    }
+    const twin = findNativeNamespaceConflict(url, accepted);
+    if (twin) {
+      refusals.push(
+        `Row ${line} (${row.name}): ` +
+          namespaceConflictMessage(url, `row ${twin.line} ("${twin.name}") of this same import`),
+      );
+      continue;
+    }
+    const stored = checkNativeNamespace(url, existing);
+    if (stored) {
+      refusals.push(`Row ${line} (${row.name}): ${stored}`);
+      continue;
+    }
+    accepted.push({ id: `row ${line}`, name: row.name, native_url: url, line });
+  }
+  return refusals;
+}
+
 export async function loader({ context }: Route.LoaderArgs) {
   const db = context.get(datastoreContext);
   const [directories, proxyPublicUrl, nativePublicUrl, nativeScimToken, mockWorkosToken, diverged] =
@@ -129,6 +184,11 @@ export async function loader({ context }: Route.LoaderArgs) {
     /** Per directory, how many resources WorkOS holds a write for that native does
      *  not (ENT-6767). One query for the fleet rather than one per row. */
     diverged,
+    /** Directories already sharing a native SCIM namespace (ENT-6774). New ones are
+     *  refused, so this is only ever data written before the check existed — and the
+     *  panel is where an operator repairs it, which is why it is surfaced rather
+     *  than made fatal at boot. */
+    namespaceWarnings: duplicateNativeNamespaceWarnings(duplicateNativeNamespaces(directories)),
     proxyPublicUrl: proxyPublicUrl ?? "",
     nativePublicUrl: nativePublicUrl ?? "",
     nativeScimToken: nativeScimToken ?? "",
@@ -152,6 +212,12 @@ export async function action({ context, request }: Route.ActionArgs) {
     const tokenError = proxyTokenError(proxyToken);
     if (tokenError) {
       return { error: tokenError };
+    }
+    // One directory per native namespace (ENT-6774), checked here rather than
+    // defended at every write path downstream.
+    const namespaceError = checkNativeNamespace(field("native_url"), await listDirectories(db));
+    if (namespaceError) {
+      return { error: namespaceError };
     }
     let created: CreatedDirectory;
     try {
@@ -183,6 +249,7 @@ export async function action({ context, request }: Route.ActionArgs) {
     }
     let imported = 0;
     const importErrors: string[] = [];
+    const candidates: { row: CsvRow; line: number }[] = [];
     for (const [i, r] of rows.entries()) {
       if (!r.name) {
         importErrors.push(`Row ${i + 1}: missing a name in the first column.`);
@@ -193,12 +260,30 @@ export async function action({ context, request }: Route.ActionArgs) {
         importErrors.push(`Row ${i + 1} (${r.name}): ${tokenError}`);
         continue;
       }
+      candidates.push({ row: r, line: i + 1 });
+    }
+    // Whole-file gate, before any insert. A namespace collision is the one import
+    // failure that must not be partial: half an import leaves directories sharing
+    // an id space with no record of which rows landed (ENT-6774).
+    const refusals = csvNamespaceRefusals(candidates, await listDirectories(db));
+    if (refusals.length > 0) {
+      return {
+        error: [
+          "Nothing was imported. Two directories cannot share one native SCIM endpoint, and " +
+            "this CSV would create that — so the whole import was refused rather than applied " +
+            "in part.",
+          ...refusals,
+          ...importErrors,
+        ].join(" "),
+      };
+    }
+    for (const { row: r, line } of candidates) {
       try {
         const created = await insertDirectory(db, r);
         await publishMintedToken(db, created.id, created.proxy_token, { demoMode });
         imported++;
       } catch (error) {
-        importErrors.push(`Row ${i + 1} (${r.name}): ${directoryError(error)}`);
+        importErrors.push(`Row ${line} (${r.name}): ${directoryError(error)}`);
       }
     }
     return { imported, importErrors };
@@ -311,6 +396,7 @@ export default function PanelHome() {
   const {
     directories,
     diverged,
+    namespaceWarnings,
     proxyPublicUrl,
     nativePublicUrl,
     nativeScimToken,
@@ -427,6 +513,18 @@ export default function PanelHome() {
           </Dialog.Root>
         </Flex>
       </Flex>
+
+      {namespaceWarnings.length > 0 && (
+        <Callout.Root color="red" data-testid="namespace-conflicts">
+          <Callout.Text>
+            Resolve before migrating: more than one directory is pointed at the same native SCIM
+            endpoint.
+          </Callout.Text>
+          {namespaceWarnings.map((warning) => (
+            <Callout.Text key={warning}>{warning}</Callout.Text>
+          ))}
+        </Callout.Root>
+      )}
 
       {actionData?.imported !== undefined && (
         <Callout.Root color={actionData.importErrors?.length ? "yellow" : "green"}>

@@ -149,6 +149,44 @@ a set of live credentials. It is still a set of *upstream* ones: the native and
 WorkOS bearer tokens are only encrypted if `APP_ENCRYPTION_KEY` is set, and the id
 mappings are irreplaceable. Both are arguments for a volume you control.
 
+## Deployment requirement: one directory per native SCIM endpoint
+
+**Your SCIM service must give every directory its own base URL.** This is a
+requirement of the deployment, not a preference — check it before you import
+anything, because it may need a change on your side.
+
+Two bridge directories pointed at one native endpoint share a single set of SCIM
+user and group ids. The bridge cannot see how your service decides which tenant a
+request is for, so it cannot tell whose record a native id names — and a write
+meant for one directory can land on another's users. The bridge refuses the
+configuration rather than trying to survive it.
+
+The endpoints are compared canonically: scheme, host, port and path, with
+capitalisation, a default port written out (`:443`, `:80`) and a trailing slash
+normalised away. `https://app.example.com:443/scim/v2/` and
+`https://APP.example.com/scim/v2` are the same endpoint.
+
+**The path counts**, which is what makes one host workable. Route a path segment
+per tenant and the directories are distinct:
+
+```
+https://app.example.com/scim/acme/v2      → directory 1
+https://app.example.com/scim/globex/v2    → directory 2
+```
+
+If your SCIM service today serves every tenant from one flat URL and decides the
+tenant from the bearer token alone, add a path segment per directory before you
+migrate the second one. A token is not enough: the bridge has no way to verify
+that your service partitions rows by the presenting credential.
+
+A directory with an empty native base URL is fine — it addresses nothing yet.
+
+**Upgrading a deployment that already violates this.** The bridge still starts. It
+logs a `WARNING` at boot naming each set of directories that share an endpoint,
+and repeats it on the panel's directories page. Nothing is refused retroactively;
+only new saves are checked. Repair it by giving each directory its own path (edit
+**Native SCIM endpoint** on the directory page) and the warning clears.
+
 ## Import directories
 
 Open `/panel`.
@@ -161,7 +199,10 @@ Open `/panel`.
   `name,native_url,native_token,workos_url,workos_token,workos_directory_id,proxy_token`
   (header optional; only the name is required). `proxy_token` is the last column
   and optional, so six-column CSVs written before it existed import unchanged.
-  See [workos-directory-provisioning.md](./workos-directory-provisioning.md)
+  Two rows sharing a `native_url` — or a row taking an endpoint an existing
+  directory already has — refuses the **whole** file: nothing is imported, so
+  you never have to work out which half landed. See
+  [workos-directory-provisioning.md](./workos-directory-provisioning.md)
   for producing the WorkOS side in bulk.
 
 Then copy the directory's **SCIM base URL + proxy token** into your IdP's SCIM

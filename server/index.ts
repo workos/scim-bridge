@@ -14,6 +14,7 @@ import {
   decidePanelAuth,
   loadConfig,
   panelAuthExempt,
+  reportNativeNamespaceDuplicates,
   seedConfig,
   seedDemoDirectory,
   seedNativeAppConfig,
@@ -69,6 +70,18 @@ if (config.role === "native-app") {
 } else {
   await seedConfig(env, config);
   await seedDemoDirectory(env, config);
+}
+// One directory per native SCIM namespace is enforced when a directory is saved
+// (ENT-6774), but a database written before that could already violate it. Say so
+// loudly, naming the directories — and keep starting: the panel is where the
+// operator repairs the data, so refusing to boot would remove the only remedy.
+const namespaceDuplicates = await reportNativeNamespaceDuplicates(env);
+if (namespaceDuplicates) {
+  console.warn(
+    `WARNING: ${namespaceDuplicates} native SCIM endpoint(s) are shared by more than one ` +
+      "directory. Until each directory has its own endpoint, a write meant for one can land " +
+      "on another's users. The control panel lists them on the directories page.",
+  );
 }
 
 /** The configured driver, its migrator, and the migration set for its dialect. */
