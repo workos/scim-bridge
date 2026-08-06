@@ -296,6 +296,21 @@ shared id (e.g. an offboard-then-rehire re-created the row under `idp_id`). Run
   resource; reconcile refuses to write it. Line the ids up by hand only once
   you've confirmed which directory the row belongs to.
 
+**Multi-directory topology: one native token per directory.** Several directories
+can front one native app (the same `native_url`), and the bridge tells them apart
+by `native_token` — the credential the customer's own app issued and its IdP
+already presented. The guards above (drift repair, and the proxy's create/replace
+attribution) treat a namespace as *shared* only when both the URL **and** the
+token match; distinct tokens mean the customer's app scopes the callers apart, so
+their ids don't collide and each directory keeps its `externalId`-derived,
+id-preserving mapping. This rests on an assumption the bridge cannot enforce, so
+honour it on the customer side: **issue one native token per directory, and have
+the native app scope its rows by that token.** A customer who reuses a single
+token across every directory has a genuinely shared namespace, and the guards
+will (correctly) fire — refusing tenant-supplied ids to keep one directory from
+naming another's rows. An empty/unset native token is treated as shared for the
+same fail-closed reason.
+
 Reconcile never deletes a native row to fix an id: native is the customer's own
 app, where a `DELETE` deprovisions a real person (session revocation, data
 archival, downstream cascades). Hand-deleting a native row to force ids to line

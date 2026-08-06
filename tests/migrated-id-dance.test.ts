@@ -749,6 +749,57 @@ describe("migrated-id dance", () => {
       ]);
     });
 
+    it("mints from externalId when a neighbour shares the URL but a distinct native token", async () => {
+      // The native token is the tenant boundary: the other directory's app scopes
+      // its rows by a different credential, so this tenant's externalId cannot name
+      // one of them — the namespace is not shared and the id contract is preserved.
+      const { env, directory, fake } = await setup({
+        mode: "workos-only",
+        native_token: "org-a-secret",
+      });
+      await seedDirectory(env.DB, { name: "Org B", native_token: "org-b-secret" });
+      fake.route("workos", "PUT", "/Users/ext-1", scimJson(404, { detail: "nope" }), {
+        once: true,
+      });
+      fake.route("workos", "POST", "/Users", scimJson(201, { id: "ext-1", userName: "a@b.c" }));
+
+      const res = await send(env, directory, "POST", "/scim/v2/Users", {
+        externalId: "ext-1",
+        userName: "a@b.c",
+      });
+
+      expect(res.status).toBe(201);
+      expect(await res.json()).toEqual({ id: "ext-1", userName: "a@b.c" });
+      expect(migratedId(fake.callsTo("workos")[1])).toBe("ext-1");
+      expect(await allMappings(env.DB, directory.id)).toEqual([
+        { resource_type: "Users", native_id: "ext-1", workos_id: "ext-1", strategy: "migrated-id" },
+      ]);
+    });
+
+    it("mints a random id when a neighbour on the same URL has an empty native token", async () => {
+      // An unset token can't prove the callers are distinct, so it is treated as
+      // shared (fail-closed) exactly like a matching one.
+      const { env, directory, fake } = await setup({
+        mode: "workos-only",
+        native_token: "org-a-secret",
+      });
+      await seedDirectory(env.DB, { name: "Org B", native_token: "" });
+      fake.route("workos", "PUT", /^\/Users\//, scimJson(404, { detail: "nope" }), { once: true });
+      fake.route("workos", "POST", "/Users", (call) =>
+        scimJson(201, { id: call.headers.get(MIGRATED_ID_HEADER) }),
+      );
+
+      const res = await send(env, directory, "POST", "/scim/v2/Users", {
+        externalId: "victim-1",
+        userName: "a@b.c",
+      });
+
+      expect(res.status).toBe(201);
+      const created = (await res.json()) as { id: string };
+      expect(created.id).not.toBe("victim-1");
+      expect(created.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    });
+
     it("still mints from externalId when the only other directory has no native url", async () => {
       // A half-configured directory addresses no native app, so it holds no rows
       // the tenant's externalId could be aimed at.
@@ -1008,6 +1059,32 @@ describe("migrated-id dance", () => {
       // Nothing was attempted upstream, and no claim was recorded.
       expect(fake.callsTo("workos")).toHaveLength(0);
       expect(await allMappings(env.DB, directory.id)).toEqual([]);
+    });
+
+    it("allows a first-touch replace when a neighbour shares the URL but a distinct token", async () => {
+      // Distinct native tokens mean the neighbour's app scopes its rows by a
+      // different credential, so adopting this path id names only this tenant's
+      // row — the namespace is not shared and the self-heal is safe.
+      const { env, directory, fake } = await setup({
+        mode: "workos-only",
+        native_token: "org-a-secret",
+      });
+      await seedDirectory(env.DB, { name: "Org B", native_token: "org-b-secret" });
+      fake.route("workos", "PUT", "/Users/new-1", scimJson(404, { detail: "nope" }), {
+        once: true,
+      });
+      fake.route("workos", "POST", "/Users", scimJson(201, { id: "new-1", userName: "ada@x.com" }));
+
+      const res = await send(env, directory, "PUT", "/scim/v2/Users/new-1", {
+        userName: "ada@x.com",
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ id: "new-1" });
+      expect(legs(fake.callsTo("workos"))).toEqual(["PUT /Users/new-1", "POST /Users"]);
+      expect(await allMappings(env.DB, directory.id)).toEqual([
+        { resource_type: "Users", native_id: "new-1", workos_id: "new-1", strategy: "migrated-id" },
+      ]);
     });
 
     it("still replaces through an existing mapping in a shared namespace", async () => {

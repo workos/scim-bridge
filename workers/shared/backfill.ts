@@ -18,7 +18,7 @@ import {
   mirrorUpsert,
   nativeNamespaceIsShared,
   parseJson,
-  sharesNamespace,
+  sharesNativeNamespace,
   scimFetch,
   type IdTranslationMaps,
   type MappingSink,
@@ -555,9 +555,13 @@ async function unattributedReason(
   resource: Record<string, unknown>,
 ): Promise<string | null> {
   const others = await listOtherMappingsByNativeId(db, directory, kind, driftedId);
-  const foreign = others.find((mapping) =>
-    sharesNamespace(directory.native_url, mapping.native_url),
+  // A neighbour only maps the *same* native row when it fronts the same app under
+  // the same token; a different token means its mapping names a row in a namespace
+  // this directory can't address, so it isn't a collision.
+  const shared = await Promise.all(
+    others.map((mapping) => sharesNativeNamespace(directory, mapping)),
   );
+  const foreign = others.find((_mapping, index) => shared[index]);
   if (foreign) return `is already mapped by directory ${foreign.directory_id}`;
 
   const mine = await getMapping(db, directory.id, kind, driftedId);
