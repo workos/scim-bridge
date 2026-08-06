@@ -72,11 +72,32 @@ throughout until the deliberate cutover.
 2. **`dual-write`** — handle natively, respond to the IdP, then
    mirror the full resource to WorkOS. Native authoritative. **Backfill** runs in
    this mode: idempotently copy live native state into WorkOS via the same upsert.
-3. **`workos-only`** — write WorkOS first; the customer's app now provisions from
+3. **`workos-primary`** — WorkOS answers the IdP, and the native app keeps
+   receiving the same write directly, from the proxy. Both legs run concurrently
+   and the IdP is answered only once both finish; if either fails, the request
+   fails. WorkOS authoritative, listener still inert. **Backfill and reconcile
+   both run here.** The recommended place to dwell: WorkOS's authority is under
+   real traffic while native is still current by construction, so rolling back is
+   a mode change and nothing else.
+4. **`workos-only`** — write WorkOS first; the customer's app now provisions from
    WorkOS Directory Sync events. The point of no return.
 
 Rollback before cutover is lossless: drop back toward `passthrough` and keep
 serving from the native system, which stayed current.
+
+Rung 3 splits what used to be one leap. Going 2 → 4 changed authority, native's
+write path, and dependence on webhook delivery at the same moment; going
+2 → 3 → 4 changes authority first, then only the native write path and the
+webhook dependence — and only once WorkOS's answers have been trusted in
+production.
+
+A write on rung 3 is not atomic and cannot be: there is no transaction across two
+HTTP services. When native fails after WorkOS committed, the IdP is told the
+request failed and the resource is recorded in `native_write_failures` — its own
+table, not `proxy_log`, which a directory has to opt into. The panel lists those
+rows and **Reconcile from WorkOS** is the repair; nothing retries in the
+background. Failing the request is safe because of the migrated-id contract
+below: the IdP's retry converges on the same ids instead of duplicating.
 
 ## The migrated-id contract
 

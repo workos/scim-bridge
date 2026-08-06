@@ -1,12 +1,15 @@
 import type { Datastore } from "../shared/datastore";
 import type { Directory, PocEnv, ResourceType, WorkerHandler } from "../shared/types";
 import {
+  clearNativeWriteFailure,
   deleteMapping,
   getDirectoryByToken,
   getMapping,
   insertProxyLog,
   type ProxyLogInsert,
+  recordNativeWriteFailure,
   shouldPersistLogs,
+  upsertMapping,
 } from "../shared/db";
 import {
   SCIM_CONTENT_TYPE,
@@ -27,6 +30,7 @@ import {
   translateListResponse,
   translatePatchIds,
   translateResourceIds,
+  type MappingSink,
   type MirrorResult,
   type ScimPath,
   type UpstreamResult,
@@ -152,6 +156,26 @@ async function handleScim(
       conditional,
       url,
       log,
+    );
+  }
+
+  // workos-primary: WorkOS answers the IdP, and the native app keeps receiving
+  // the same write directly rather than learning of it from a DSync event. Reads
+  // fall through to the workos-only path below, because "WorkOS is authoritative"
+  // is the whole difference between this rung and dual-write.
+  if (directory.mode === "workos-primary" && isWrite) {
+    return workosPrimary(
+      env,
+      ctx,
+      directory,
+      scimPath,
+      method,
+      requestBody,
+      contentType,
+      conditional,
+      url,
+      log,
+      finish,
     );
   }
 
@@ -297,6 +321,419 @@ async function mirrorDualWrite(
       log.error = `mirror DELETE returned ${mirror.status}; id mapping kept for repair`;
     }
   }
+}
+
+/**
+ * `workos-primary` (ENT-6767): WorkOS answers the IdP, and the native app is kept
+ * current by the same direct write it received on `dual-write` — not by a DSync
+ * event. Rolling back to `dual-write` is therefore a mode change and nothing
+ * else: native never stopped being written, so there is nothing to reconcile.
+ *
+ * The two legs run CONCURRENTLY and the IdP is answered only once both have
+ * finished, so a request costs `max(native, workos)` rather than their sum:
+ *
+ *   both succeed        → WorkOS's response, in native-id space
+ *   either one fails    → the IdP is told the request failed
+ *
+ * It is not atomic and cannot be — there is no transaction across two HTTP
+ * services. When native fails after WorkOS committed, WorkOS holds a write nobody
+ * asked to keep and it cannot be reliably undone. What the design buys instead is
+ * that the IdP is told the truth, and that the side allowed to drift is WorkOS
+ * rather than native: for a mode whose whole promise is "native is current", that
+ * is the correct side. The divergence is recorded in `native_write_failures` (not
+ * `proxy_log`, which a directory has to opt into) and surfaced in the panel, where
+ * "Reconcile from WorkOS" is the repair.
+ *
+ * Failing back to the IdP is safe here specifically because of the migrated-id
+ * contract: a retry converges instead of duplicating. Ids are shared rather than
+ * minted per attempt, creates run PUT → 404 → POST-with-header, and a 409 is
+ * recovered by lookup on both sides. In a generic dual-write, "fail and let them
+ * retry" would manufacture duplicates. Do not weaken that property.
+ */
+async function workosPrimary(
+  env: PocEnv,
+  ctx: ExecutionContext,
+  directory: Directory,
+  scimPath: ScimPath,
+  method: string,
+  requestBody: string | null,
+  contentType: string | null,
+  conditional: Record<string, string>,
+  url: URL,
+  log: ProxyLogInsert,
+  finish: (response: Response) => Response,
+): Promise<Response> {
+  const kind = scimPath.kind as ResourceType;
+
+  if (method === "POST") {
+    return workosPrimaryCreate(env, directory, kind, requestBody, contentType, url, log, finish);
+  }
+
+  // Both legs are started before either is awaited — that is what makes the
+  // request cost max(native, workos) instead of the sum, and it is asserted in
+  // tests/workos-primary.test.ts rather than left to reading this comment.
+  const workosLeg = workosOnly(
+    env,
+    ctx,
+    directory,
+    scimPath,
+    method,
+    requestBody,
+    contentType,
+    url,
+    log,
+    identity,
+  );
+  const nativeLeg = nativeWrite(
+    directory,
+    scimPath,
+    method,
+    requestBody,
+    contentType,
+    conditional,
+    url,
+  );
+  const [workosResponse, native] = await Promise.all([workosLeg, nativeLeg]);
+
+  const workosOk = workosResponse.status < 400;
+  // The resource's key in native-id space: what the IdP addressed, and what a
+  // later successful write to the same resource will clear.
+  const resourceKey = scimPath.id ?? `${method} ${scimPath.rest}`;
+
+  if (native.result === null || !isSuccess(native.result.status)) {
+    return finish(
+      await nativeLegFailed(env, directory, kind, resourceKey, method, native, workosOk, log),
+    );
+  }
+  if (!workosOk) {
+    // Native has the write and WorkOS does not, so nothing goes in
+    // native_write_failures — that table answers "what is native missing". The
+    // IdP's retry re-runs both legs and the WorkOS leg resolves by id.
+    return finish(workosResponse);
+  }
+  await clearNativeWriteFailure(env.DB, directory.id, kind, resourceKey);
+  return finish(workosResponse);
+}
+
+/**
+ * A create on `workos-primary`.
+ *
+ * Split from the other verbs because a create is the one request whose id is not
+ * in the path, and full concurrency needs an id both sides can arrive at
+ * independently:
+ *
+ *   POST with an `externalId` → concurrent. WorkOS's row is minted from the
+ *     `externalId`, exactly as the workos-only create leg does; native mints its
+ *     own id and reports it. The two can differ, and the `id_mappings` row
+ *     (`fallback-post`) is what translates WorkOS's answer back into the id space
+ *     the IdP saw on rungs 1–2.
+ *   POST without one → native-first, adopting native's id, exactly as dual-write
+ *     does. Two concurrent sides would each mint an id the other never sees, and
+ *     the resource would exist twice under two unrelated ids — the id divergence
+ *     ENT-6752 and its five follow-ups were all about. A create is also the one
+ *     request the IdP has not yet been told an id for, so serializing it costs a
+ *     round trip on a request that happens once per resource.
+ *
+ * Unlike the workos-only create leg, this one does NOT refuse to derive the id
+ * from the `externalId` in a shared native namespace. There the minted id
+ * addresses a native row, so a tenant naming a neighbour's row would have a later
+ * reconcile write over it. Here the native id comes from native's own response to
+ * our own POST, so the mapping cannot claim a row this directory did not create.
+ */
+async function workosPrimaryCreate(
+  env: PocEnv,
+  directory: Directory,
+  kind: ResourceType,
+  requestBody: string | null,
+  contentType: string | null,
+  url: URL,
+  log: ProxyLogInsert,
+  finish: (response: Response) => Response,
+): Promise<Response> {
+  const parsed = parseJson(requestBody) ?? {};
+  const maps = await loadIdMaps(env.DB, directory.id);
+  const toWorkos = makeTranslator(maps.nativeToWorkos);
+  // Group members are addressed in WorkOS-id space on the WorkOS leg only; the
+  // native leg gets the IdP's bytes untouched.
+  const workosBody =
+    kind === "Groups" ? translateResourceIds(parsed, kind, toWorkos) : { ...parsed };
+  delete workosBody.id;
+  const externalId =
+    typeof parsed.externalId === "string" && parsed.externalId !== "" ? parsed.externalId : null;
+
+  const nativeCreatePromise = nativeCreate(directory, kind, requestBody, contentType, url);
+  // The mappings mirrorUpsert would write are collected instead of written: the
+  // row has to be keyed on the id NATIVE reports, which is not known until its
+  // leg finishes, and a mapping keyed on the minted id would claim a native row
+  // that does not exist.
+  const sink: MappingSink = [];
+  const mirrorPromise = externalId
+    ? mirrorUpsert(env.DB, directory, kind, externalId, workosBody, sink)
+    : nativeCreatePromise.then((native) =>
+        native.id === null
+          ? null
+          : mirrorUpsert(env.DB, directory, kind, native.id, workosBody, sink),
+      );
+  const [native, mirror] = await Promise.all([nativeCreatePromise, mirrorPromise]);
+
+  if (mirror) applyMirrorResult(log, mirror);
+  log.native_status = native.result?.status ?? null;
+  log.native_ms = native.result?.ms ?? null;
+  log.native_body = native.result?.bodyText ?? null;
+
+  const workosOk = mirror !== null && mirror.ok;
+  // Before native answers, the only handle on the resource is the id the IdP will
+  // retry with, so a create that never reached native is recorded under that.
+  const failureKey = externalId ?? uniqueAttributeValue(kind, parsed) ?? `POST /${kind}`;
+
+  if (native.id === null) {
+    if (workosOk) {
+      await recordNativeWriteFailure(env.DB, {
+        directory_id: directory.id,
+        resource_type: kind,
+        resource_key: failureKey,
+        method: "POST",
+        native_status: native.result?.status ?? null,
+        detail: nativeFailureDetail(native, "WorkOS created the resource; native did not"),
+      });
+    }
+    return finish(nativeFailureResponse(native));
+  }
+  if (!workosOk) {
+    return finish(
+      scimError(
+        mirror && mirror.status !== null && mirror.status >= 400 ? mirror.status : 502,
+        `The WorkOS endpoint rejected the create: ${mirror?.error ?? "unknown error"}. The ` +
+          "native app has the resource; retrying the create will converge.",
+      ),
+    );
+  }
+
+  const workosId = sink[0]?.workos_id ?? native.id;
+  await upsertMapping(env.DB, {
+    directory_id: directory.id,
+    resource_type: kind,
+    native_id: native.id,
+    workos_id: workosId,
+    // 'migrated-id' means the two sides address the resource by one id. A
+    // concurrent create only reaches that when native happened to adopt the
+    // externalId too; otherwise the ids diverge by construction and the mapping
+    // is what keeps them addressable — which is what 'fallback-post' means.
+    strategy: workosId === native.id ? "migrated-id" : "fallback-post",
+  });
+  await clearNativeWriteFailure(env.DB, directory.id, kind, failureKey);
+  await clearNativeWriteFailure(env.DB, directory.id, kind, native.id);
+
+  // WorkOS's representation, in the id space the IdP addresses: its own id for
+  // this resource, and native ids for any group members.
+  const toNative = makeTranslator((await loadIdMaps(env.DB, directory.id)).workosToNative);
+  const created = parseJson(mirror.body) ?? { ...workosBody };
+  const rewritten = translateResourceIds(created, kind, toNative);
+  rewritten.id = native.id;
+  return finish(
+    new Response(JSON.stringify(rewritten), {
+      status: 201,
+      headers: { "Content-Type": SCIM_CONTENT_TYPE },
+    }),
+  );
+}
+
+interface NativeLeg {
+  /** The upstream exchange, or null when native could not be reached at all. */
+  result: UpstreamResult | null;
+  error: string | null;
+}
+
+interface NativeCreateLeg extends NativeLeg {
+  /** The native id of the resource, whether this call created it or found it
+   *  already there. Null when the create did not land. */
+  id: string | null;
+}
+
+/** The native leg of a `workos-primary` write: the IdP's own request, verbatim,
+ *  to the native endpoint — including the preconditions it quoted, which only
+ *  native can evaluate because only native minted the ETag. */
+async function nativeWrite(
+  directory: Directory,
+  scimPath: ScimPath,
+  method: string,
+  requestBody: string | null,
+  contentType: string | null,
+  conditional: Record<string, string>,
+  url: URL,
+): Promise<NativeLeg> {
+  try {
+    const result = await scimFetch(joinScimUrl(directory.native_url, scimPath.rest) + url.search, {
+      method,
+      token: directory.native_token,
+      body: requestBody,
+      contentType,
+      requestHeaders: conditional,
+    });
+    return { result, error: null };
+  } catch (error) {
+    return { result: null, error: errorMessage(error) };
+  }
+}
+
+/**
+ * Create the resource in the native app and report the id it holds it under.
+ *
+ * A 409 is resolved rather than reported: it is what native answers when the
+ * resource is already there under its unique attribute, which is exactly the
+ * state a retry of a partially-failed request finds. Adopting the existing row's
+ * id is what makes the retry converge instead of the IdP being stuck failing
+ * forever against a resource it already created.
+ */
+async function nativeCreate(
+  directory: Directory,
+  kind: ResourceType,
+  requestBody: string | null,
+  contentType: string | null,
+  url: URL,
+): Promise<NativeCreateLeg> {
+  let result: UpstreamResult;
+  try {
+    result = await scimFetch(joinScimUrl(directory.native_url, `/${kind}`) + url.search, {
+      method: "POST",
+      token: directory.native_token,
+      body: requestBody,
+      contentType,
+    });
+  } catch (error) {
+    return {
+      result: null,
+      error: errorMessage(error),
+      id: null,
+    };
+  }
+
+  if (isSuccess(result.status)) {
+    const created = parseJson(result.bodyText);
+    const id = created && typeof created.id === "string" ? created.id : null;
+    return {
+      result,
+      error: id === null ? "the native create response carried no id" : null,
+      id,
+    };
+  }
+  if (result.status !== 409) return { result, error: null, id: null };
+
+  const existingId = await findNativeByUniqueAttribute(directory, kind, parseJson(requestBody));
+  if (existingId === null) {
+    return {
+      result,
+      error: "native returned 409 and the existing resource could not be resolved",
+      id: null,
+    };
+  }
+  return { result, error: null, id: existingId };
+}
+
+/** Resolve a resource native already holds by the attribute it is unique on, so a
+ *  409 can be converged rather than surfaced. */
+async function findNativeByUniqueAttribute(
+  directory: Directory,
+  kind: ResourceType,
+  resource: Record<string, unknown> | null,
+): Promise<string | null> {
+  const value = resource ? uniqueAttributeValue(kind, resource) : null;
+  if (value === null) return null;
+  const attribute = kind === "Users" ? "userName" : "displayName";
+  const filter = `${attribute} eq "${value.replaceAll('"', '\\"')}"`;
+  let lookup: UpstreamResult;
+  try {
+    lookup = await scimFetch(
+      `${joinScimUrl(directory.native_url, `/${kind}`)}?filter=${encodeURIComponent(filter)}`,
+      { method: "GET", token: directory.native_token },
+    );
+  } catch {
+    return null;
+  }
+  const listing = parseJson(lookup.bodyText);
+  const resources = listing && Array.isArray(listing.Resources) ? listing.Resources : [];
+  for (const entry of resources) {
+    if (entry && typeof entry === "object" && typeof (entry as { id?: unknown }).id === "string") {
+      return (entry as { id: string }).id;
+    }
+  }
+  return null;
+}
+
+function uniqueAttributeValue(
+  kind: ResourceType,
+  resource: Record<string, unknown>,
+): string | null {
+  const value = resource[kind === "Users" ? "userName" : "displayName"];
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
+/**
+ * Native failed. Record the divergence when WorkOS already committed, then tell
+ * the IdP the request failed.
+ *
+ * A native 4xx and a native 5xx are told differently on purpose. A 4xx is native
+ * rejecting the request on its merits — a retry reproduces it — so the IdP gets
+ * native's own status and body, which is the only response that lets an operator
+ * see *why* provisioning stopped. Unreachable or 5xx is transient, so the IdP
+ * gets a 502: retrying is the right move, and the migrated-id contract makes the
+ * retry converge on the write WorkOS already holds. Either way the divergence is
+ * recorded, because in both cases WorkOS has a write native does not.
+ */
+async function nativeLegFailed(
+  env: PocEnv,
+  directory: Directory,
+  kind: ResourceType,
+  resourceKey: string,
+  method: string,
+  native: NativeLeg,
+  workosCommitted: boolean,
+  log: ProxyLogInsert,
+): Promise<Response> {
+  log.native_status = native.result?.status ?? null;
+  log.native_ms = native.result?.ms ?? null;
+  log.native_body = native.result?.bodyText ?? null;
+  if (workosCommitted) {
+    const detail = nativeFailureDetail(native, "WorkOS committed this write; native did not");
+    log.error = detail;
+    await recordNativeWriteFailure(env.DB, {
+      directory_id: directory.id,
+      resource_type: kind,
+      resource_key: resourceKey,
+      method,
+      native_status: native.result?.status ?? null,
+      detail,
+    });
+  }
+  return nativeFailureResponse(native);
+}
+
+function nativeFailureResponse(native: NativeLeg): Response {
+  const status = native.result?.status ?? null;
+  if (status !== null && status >= 400 && status < 500) {
+    return new Response(native.result?.bodyText ?? null, {
+      status,
+      headers: {
+        "Content-Type": native.result?.contentType ?? SCIM_CONTENT_TYPE,
+      },
+    });
+  }
+  return scimError(
+    502,
+    "The native SCIM endpoint did not accept this write, so the request failed. WorkOS may " +
+      "already hold it — the directory page lists resources native is missing. Retrying is safe.",
+  );
+}
+
+function nativeFailureDetail(native: NativeLeg, prefix: string): string {
+  if (native.error !== null) return `${prefix}: ${native.error}`;
+  const status = native.result?.status ?? null;
+  return `${prefix}: native returned ${status ?? "no response"}`;
+}
+
+/** Hands a response straight back, for a leg whose logging the caller owns. */
+function identity(response: Response): Response {
+  return response;
 }
 
 async function workosOnly(

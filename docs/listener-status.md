@@ -41,22 +41,22 @@ data right now. It is useful for a status display or an operator report. Do not
 derive your handle-vs-ignore decision from it, and do not derive it from `mode`
 either.
 
-They look interchangeable today, and that is the trap. For all three current
-modes they are exact opposites:
+They look interchangeable, and that is the trap. On three of the four modes they
+are exact opposites — and on the fourth they are not:
 
 | `mode` | `native_authoritative` | `apply_dsync_events` |
 | --- | --- | --- |
 | `passthrough` | `true` | `false` |
 | `dual-write` | `true` | `false` |
+| `workos-primary` | `false` | `false` |
 | `workos-only` | `false` | `true` |
 
-They stop being opposites as soon as a mode exists where WorkOS owns the data
-but the proxy still writes your app directly — WorkOS is authoritative, yet your
-listener must stay inert, because applying the events *as well* would process
-every change twice. A listener that inferred "not authoritative ⇒ apply" would
-double-apply every change in exactly the mode meant to make a migration safer.
-`apply_dsync_events` is how we tell you, so you never have to track which modes
-mean what.
+`workos-primary` is the row that breaks the symmetry: WorkOS owns the data, and
+the proxy still writes your app directly, so your listener must stay inert —
+applying the events *as well* would process every change twice. A listener that
+inferred "not authoritative ⇒ apply" double-applies every change in exactly the
+mode meant to make a migration safer. `apply_dsync_events` is how we tell you, so
+you never have to track which modes mean what.
 
 **If the field is missing**, you are talking to a bridge older than this
 contract. Fall back to `mode === "workos-only"`, which is what those bridges

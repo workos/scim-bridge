@@ -230,29 +230,49 @@ Advance the directory's mode from its page, verifying convergence in the
 3. **Run backfill** → copies existing native state into WorkOS (idempotent;
    safe to re-run). Requires dual-write on.
 4. Verify parity (Mappings shows a WorkOS id per resource).
-5. **Cut over to workos-only** → confirm the AlertDialog. WorkOS is now
+5. **workos-primary** → WorkOS starts answering the IdP, while the proxy keeps
+   writing the native app directly. **Stay here.** Dwelling on this rung is the
+   point of it: WorkOS's authority is exercised by real IdP traffic, the native
+   app is still current on every request rather than via webhook delivery, and
+   going back to dual-write is a mode change with no reconcile and no backfill
+   behind it. Both legs run at once and the IdP is answered only once both
+   finish, so a request that returned `200` reached both sides.
+
+   Watch the directory page's native-writes card while you dwell. It lists the
+   resources WorkOS accepted and native refused; every row is a resource native
+   is behind on. **Reconcile from WorkOS** is the repair — nothing retries in
+   the background, deliberately, so a repair happens when an operator has looked
+   at why native refused. An empty card is what "safe to cut over" looks like.
+
+   Backfill still runs here, so a directory that reaches this rung with WorkOS
+   short a few resources does not have to drop back to fix it.
+6. **Cut over to workos-only** → confirm the AlertDialog. WorkOS is now
    authoritative; provision your app from WorkOS Directory Sync events (the
    listener in `workers/native/listener.ts` is a reference implementation).
    Wire your listener's handle-vs-ignore decision to the directory's status
    endpoint — `GET /status/directories/{id}`, shown on the directory page —
    see [listener-status.md](./listener-status.md).
 
+   This is the step that makes the listener — and therefore webhook delivery —
+   load-bearing for the first time. Take it only once the listener has been
+   verified end to end: reachable, verifying signatures, and applying events.
+
    The listener keys on that response's **`apply_dsync_events`** and on nothing
    else. The endpoint also reports `native_authoritative`, which describes who
    owns the data and is there for display; it is not the instruction. The two
-   are exact opposites in all three modes today, which is why it is easy to use
-   the wrong one and not notice — until a mode exists where WorkOS is
-   authoritative but the proxy still writes native directly (ENT-6767), where a
-   listener keyed on `native_authoritative` would apply every change a second
-   time. When the field is absent the listener falls back to
-   `mode === "workos-only"`, so an older bridge still behaves correctly.
+   are exact opposites on every mode except `workos-primary`, where WorkOS is
+   authoritative *and* the listener must stay inert because the proxy is still
+   writing native — a listener keyed on `native_authoritative` applies every
+   change a second time there. When the field is absent the listener falls back
+   to `mode === "workos-only"`, so an older bridge still behaves correctly.
 
-**Rollback:** before cutover, move the mode back toward passthrough — the native
-system stayed current, so no data is lost. After cutover (`workos-only`), native
-is kept current by the DSync listener; if you're unsure it stayed caught up, run
-**Reconcile from WorkOS** on the directory page first — it snapshots the live
-WorkOS directory and replays every resource back into native, guaranteeing parity
-before you flip the mode back.
+**Rollback:** on any mode before cutover — `workos-primary` included — move the
+mode back toward passthrough. The proxy wrote native on every request, so native
+is current and there is nothing to reconcile or backfill first. After cutover
+(`workos-only`), native is kept current by the DSync listener; if you're unsure
+it stayed caught up, run **Reconcile from WorkOS** on the directory page first —
+it snapshots the live WorkOS directory and replays every resource back into
+native, guaranteeing parity before you flip the mode back.
 
 Two properties make this safe:
 
@@ -376,7 +396,9 @@ directory and watch it converge.
 | Proxy returns 502 | The native (passthrough/dual-write) or WorkOS (workos-only) endpoint is unreachable — verify the URL/token with the directory page's test buttons. |
 | WorkOS answers 400 `invalidSyntax` on a mirror or backfill | An attribute the native app sent as `null` where WorkOS expects a string. The bridge drops null-valued keys from every WorkOS-bound resource body, so this should only appear on a `PATCH` (whose `Operations` are deliberately left alone — a null there can be a meaningful remove) or for a genuinely malformed value. |
 | Listener ignores events after cutover | `GET /status/directories/{id}` must answer `apply_dsync_events: true`. If it answers `false` with `mode: workos-only`, the row didn't flip; if the listener ignores a `true`, it is deriving the decision from `mode` or `native_authoritative` instead of reading the field. |
-| Listener applies each change twice | It is inferring "apply" from `native_authoritative` (or from "not passthrough/dual-write") rather than reading `apply_dsync_events`. Those agree in every mode today, so this only shows up once a mode separates them. |
+| Listener applies each change twice | It is inferring "apply" from `native_authoritative` (or from "not passthrough/dual-write") rather than reading `apply_dsync_events`. Those agree in every mode except `workos-primary`, so this shows up the moment a directory reaches that mode. |
+| Proxy returns 502 in workos-primary | Native rejected the write with a 5xx or could not be reached while WorkOS took it. Visible by design: the directory page's native-writes card names the resource. The IdP's retry is safe (ids are shared, so it converges); if native keeps refusing, **Reconcile from WorkOS** repairs it. |
+| Proxy returns a native 4xx in workos-primary | Native rejected the write on its merits, so its own status and body are returned rather than a 502 — a bare retry would only reproduce it. Fix the resource (or native's validation), then retry or reconcile. |
 | Mappings show `fallback-post` | The migrated-id contract wasn't active for that WorkOS directory (flag/`migrated`/`created_at` prerequisites) — ids aren't shared. |
 | Tokens look like `enc:v1:…` in the DB | Expected — they're encrypted at rest. Never change `APP_ENCRYPTION_KEY` after writing, or they become unreadable. |
 | Panel 500s after setting a key | The key changed since tokens were written; restore the original `APP_ENCRYPTION_KEY`. |

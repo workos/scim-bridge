@@ -259,16 +259,18 @@ export async function action({ context, request }: Route.ActionArgs) {
   if (intent === "set-mode") {
     const mode = String(form.get("mode") ?? "");
     if (!MODES.includes(mode as Mode)) {
-      return { error: "That mode is not one of passthrough, dual-write, or workos-only." };
+      return { error: `That mode is not one of ${MODES.join(", ")}.` };
     }
     await setDirectoryMode(db, directory.id, mode as Mode);
     return {};
   }
 
   if (intent === "run-backfill") {
-    if (directory.mode !== "dual-write") {
+    if (directory.mode !== "dual-write" && directory.mode !== "workos-primary") {
       return {
-        error: "Backfill only runs in dual-write, so live writes keep flowing while it replays.",
+        error:
+          "Backfill runs in dual-write or workos-primary, the modes where the proxy is still " +
+          "writing native, so live writes keep flowing while it replays.",
       };
     }
     const backfill = await runBackfill(db, directory as Directory);
@@ -391,11 +393,15 @@ function CountCell({ value }: { value: number | null }) {
 const MODE_LABEL: Record<Mode, string> = {
   passthrough: "Passthrough",
   "dual-write": "Dual-write",
+  "workos-primary": "WorkOS-primary",
   "workos-only": "WorkOS-only",
 };
-const MODE_COLOR: Record<Mode, "gray" | "blue" | "green"> = {
+const MODE_COLOR: Record<Mode, "gray" | "blue" | "green" | "amber"> = {
   passthrough: "gray",
   "dual-write": "blue",
+  // Amber, between dual-write's blue and the green of a finished cutover: WorkOS
+  // is authoritative but the migration is not over.
+  "workos-primary": "amber",
   "workos-only": "green",
 };
 
@@ -506,7 +512,7 @@ export default function PanelLive() {
               <input name="directoryId" type="hidden" value={directory.id} />
               <input name="intent" type="hidden" value="run-backfill" />
               <Button
-                disabled={mode !== "dual-write" || backfilling}
+                disabled={(mode !== "dual-write" && mode !== "workos-primary") || backfilling}
                 loading={backfilling}
                 type="submit"
                 variant="soft"
@@ -555,7 +561,8 @@ export default function PanelLive() {
           <Callout.Text>
             Native app and WorkOS differ on {userDiffs} {userDiffs === 1 ? "user" : "users"} and{" "}
             {groupDiffs} {groupDiffs === 1 ? "group" : "groups"}. That is expected mid-migration —
-            dual-write plus a backfill converges them; workos-only diverges them until the listener
+            dual-write plus a backfill converges them, and workos-primary keeps them converged
+            because the proxy writes both sides; workos-only diverges them until the listener
             catches native up.
           </Callout.Text>
         </Callout.Root>
