@@ -137,7 +137,9 @@ async function handleScim(
     log.native_ms = native.ms;
     log.native_body = native.bodyText;
     if (isWrite && isSuccess(native.status)) {
-      ctx.waitUntil(clearDivergenceForWrite(env.DB, directory, scimPath, method));
+      ctx.waitUntil(
+        clearDivergenceForWrite(env.DB, directory, scimPath, method, requestBody, native),
+      );
     }
     return finish(
       upstreamResponse(native, {
@@ -209,13 +211,32 @@ async function clearDivergenceForWrite(
   directory: Directory,
   scimPath: ScimPath,
   method: string,
+  requestBody: string | null,
+  native: UpstreamResult,
 ): Promise<void> {
-  if (scimPath.kind === null) return;
-  const resourceKey = scimPath.id ?? `${method} ${scimPath.rest}`;
-  try {
-    await clearNativeWriteFailure(db, directory.id, scimPath.kind, resourceKey);
-  } catch {
-    // Retiring a stale row must never fail the write that earned it.
+  const kind = scimPath.kind;
+  if (kind === null) return;
+  const sent = parseJson(requestBody);
+  const returned = parseJson(native.bodyText);
+  // Every key a row for this resource could carry. A create is not addressed by an
+  // id yet, so `workosPrimaryCreate` files it under the externalId or unique
+  // attribute the IdP will retry with — and the retry that repairs it, after a
+  // rollback, is a POST with no path id at all.
+  const keys = new Set(
+    [
+      scimPath.id,
+      scimPath.id === null ? `${method} ${scimPath.rest}` : null,
+      sent ? (typeof sent.externalId === "string" ? sent.externalId : null) : null,
+      sent ? uniqueAttributeValue(kind, sent) : null,
+      returned && typeof returned.id === "string" ? returned.id : null,
+    ].filter((key): key is string => typeof key === "string" && key !== ""),
+  );
+  for (const key of keys) {
+    try {
+      await clearNativeWriteFailure(db, directory.id, kind, key);
+    } catch {
+      // Retiring a stale row must never fail the write that earned it.
+    }
   }
 }
 
@@ -258,7 +279,7 @@ async function dualWrite(
   ctx.waitUntil(
     (async () => {
       if (isSuccess(native.status)) {
-        await clearDivergenceForWrite(env.DB, directory, scimPath, method);
+        await clearDivergenceForWrite(env.DB, directory, scimPath, method, requestBody, native);
         try {
           await mirrorDualWrite(env.DB, directory, scimPath, method, requestBody, native, log);
         } catch (error) {

@@ -595,6 +595,62 @@ describe("runReconcileFromWorkos", () => {
     expect(await listNativeWriteFailures(env.DB, directory.id)).toEqual([]);
   });
 
+  it("keeps every record when the WorkOS snapshot itself came up short", async () => {
+    // A snapshot that gave up replays nothing and fails nothing, so counting
+    // failures alone would read a WorkOS outage as proof of parity and delete the
+    // operator's only record of what native is missing.
+    const env = await createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+    await recordNativeWriteFailure(env.DB, {
+      directory_id: directory.id,
+      resource_type: "Users",
+      resource_key: "u1",
+      method: "PUT",
+      native_status: 500,
+      detail: "WorkOS committed this write; native did not",
+    });
+    fake = installFakeUpstreams();
+    fake.route("workos", "GET", "/Users", scimJson(500, { detail: "workos down" }));
+    fake.route("workos", "GET", "/Groups", listPage([]));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    expect(summary.users).toEqual({ total: 0, mirrored: 0, failed: 0 });
+    expect(summary.errors).toEqual(["Users snapshot: workos returned 500"]);
+    expect(
+      (await listNativeWriteFailures(env.DB, directory.id)).map((f) => f.resource_key),
+    ).toEqual(["u1"]);
+  });
+
+  it("keeps every record when pagination ends before the reported total", async () => {
+    const env = await createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+    await recordNativeWriteFailure(env.DB, {
+      directory_id: directory.id,
+      resource_type: "Users",
+      resource_key: "u1",
+      method: "PUT",
+      native_status: 500,
+      detail: "WorkOS committed this write; native did not",
+    });
+    fake = installFakeUpstreams();
+    // Claims two users, hands over one, then an empty page: native cannot be
+    // proven current against a listing WorkOS never finished handing over.
+    let page = 0;
+    fake.route("workos", "GET", "/Users", () =>
+      page++ === 0 ? listPage([{ id: "wos_1", userName: "one@x.test" }], 2) : listPage([], 2),
+    );
+    fake.route("workos", "GET", "/Groups", listPage([]));
+    fake.route("native", "PUT", /^\/Users\//, (call) => scimJson(200, call.json()));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    expect(summary.users).toEqual({ total: 1, mirrored: 1, failed: 0 });
+    expect(
+      (await listNativeWriteFailures(env.DB, directory.id)).map((f) => f.resource_key),
+    ).toEqual(["u1"]);
+  });
+
   it("keeps the records a partial reconcile did not repair", async () => {
     const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
