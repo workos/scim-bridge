@@ -39,6 +39,17 @@ const ERROR_CAP = 20;
 
 type UpstreamSide = "native" | "workos";
 
+/**
+ * A paged listing plus whether it was fully enumerated. `complete` is not
+ * cosmetic: an incomplete snapshot is indistinguishable from a small directory by
+ * the resource count alone, and a caller that acts on "everything the other side
+ * holds" — retiring divergence records, say — would act on a truncated listing.
+ */
+interface Snapshot {
+  resources: Record<string, unknown>[];
+  complete: boolean;
+}
+
 interface ResourceCounts {
   total: number;
   mirrored: number;
@@ -61,7 +72,7 @@ export async function runBackfill(db: Datastore, directory: Directory): Promise<
   // and they keep their per-resource attribution.
   const sink: MappingSink = [];
 
-  const users = await snapshot(
+  const { resources: users } = await snapshot(
     directory.native_url,
     directory.native_token,
     "Users",
@@ -82,7 +93,7 @@ export async function runBackfill(db: Datastore, directory: Directory): Promise<
     if (sink.length >= MAPPING_FLUSH_SIZE) await flushMappings(db, sink, summary.errors);
   }
 
-  const groups = await snapshot(
+  const { resources: groups } = await snapshot(
     directory.native_url,
     directory.native_token,
     "Groups",
@@ -169,7 +180,7 @@ async function snapshot(
   kind: ResourceType,
   side: UpstreamSide,
   errors: string[],
-): Promise<Record<string, unknown>[]> {
+): Promise<Snapshot> {
   const out: Record<string, unknown>[] = [];
   // Carried across pages: an upstream that reports the total once and omits it
   // from later pages must not look like it ran out of resources.
@@ -184,35 +195,35 @@ async function snapshot(
       );
     } catch (error) {
       pushError(errors, `${kind} snapshot: ${errorMessage(error)}`);
-      return out;
+      return { resources: out, complete: false };
     }
     if (!isSuccess(page.status)) {
       pushError(errors, `${kind} snapshot: ${side} returned ${page.status}`);
-      return out;
+      return { resources: out, complete: false };
     }
     const body = parseJson(page.bodyText);
     if (!body) {
       pushError(errors, `${kind} snapshot: ${side} returned a list response that is not JSON`);
-      return out;
+      return { resources: out, complete: false };
     }
     if (!Array.isArray(body.Resources)) {
       pushError(
         errors,
         `${kind} snapshot: ${side} returned a list response without a Resources array`,
       );
-      return out;
+      return { resources: out, complete: false };
     }
     const resources = body.Resources.filter(isRecord);
     out.push(...resources);
     if (typeof body.totalResults === "number") reportedTotal = body.totalResults;
     const total = reportedTotal ?? out.length;
-    if (out.length >= total) return out;
+    if (out.length >= total) return { resources: out, complete: true };
     if (resources.length === 0) {
       pushError(
         errors,
         `${kind} snapshot: ${side} returned an empty page at ${out.length} of ${total} resources`,
       );
-      return out;
+      return { resources: out, complete: false };
     }
     startIndex += resources.length;
   }
@@ -314,7 +325,7 @@ export async function runReconcileFromWorkos(
     "workos",
     summary.errors,
   );
-  for (const resource of users) {
+  for (const resource of users.resources) {
     await pushToNative(
       db,
       directory,
@@ -334,7 +345,7 @@ export async function runReconcileFromWorkos(
     "workos",
     summary.errors,
   );
-  for (const resource of groups) {
+  for (const resource of groups.resources) {
     const body = { ...resource };
     if (Array.isArray(body.members)) {
       body.members = body.members.map((member) =>
@@ -355,14 +366,20 @@ export async function runReconcileFromWorkos(
     );
   }
 
-  // The reconcile replayed every WorkOS resource into native without a failure,
-  // so native is not missing anything WorkOS holds and no divergence record can
-  // still be describing a real gap. Rows keyed on a create that never reached
-  // native are cleared here rather than per resource, because a create failure is
-  // keyed on what the IdP addressed it by and WorkOS's snapshot no longer knows
-  // that key. A partial reconcile clears nothing extra: the rows it did repair
-  // went one at a time above, and the rest are still true.
-  if (summary.users.failed === 0 && summary.groups.failed === 0) {
+  // The reconcile replayed every WorkOS resource into native without a failure, so
+  // native is not missing anything WorkOS holds and no divergence record can still
+  // be describing a real gap. Rows keyed on a create that never reached native are
+  // cleared here rather than per resource, because a create failure is keyed on
+  // what the IdP addressed it by and WorkOS's snapshot no longer knows that key.
+  //
+  // Both snapshots have to be COMPLETE, not merely free of replay failures. A
+  // snapshot that gave up — WorkOS down, a non-SCIM body, pagination ending short
+  // — replays nothing and fails nothing, so counting failures alone would read a
+  // WorkOS outage as proof of parity and wipe the operator's only record of what
+  // native is missing. A partial reconcile clears nothing extra: the rows it did
+  // repair went one at a time above, and the rest are still true.
+  const replayed = summary.users.failed === 0 && summary.groups.failed === 0;
+  if (replayed && users.complete && groups.complete) {
     await clearNativeWriteFailures(db, directory.id);
   }
 

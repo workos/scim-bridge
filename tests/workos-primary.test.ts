@@ -502,6 +502,35 @@ describe("workos-primary", () => {
       expect(await failures(directory.id)).toEqual([]);
     });
 
+    it("retires a create's record when the rolled-back retry is a POST", async () => {
+      // A create is filed under the externalId the IdP retries with, and that retry
+      // has no path id — so keying the clear on the path alone would leave the row
+      // standing forever in a mode where reconcile is not offered.
+      const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+      fake.route("native", "POST", "/Users", scimJson(503, { detail: "down" }), { once: true });
+      fake.route("workos", "POST", "/Users", scimJson(201, { id: "workos-9", ...ada }));
+      fake.route("workos", "PUT", /^\/Users\//, scimJson(404, { detail: "not found" }));
+      await proxyWorker.fetch(
+        proxyRequest(directory, "POST", "/scim/v2/Users", ada),
+        env,
+        createCtx(),
+      );
+      expect((await failures(directory.id)).map((f) => f.resource_key)).toEqual(["idp-1"]);
+
+      await setMode(directory, "dual-write");
+      fake.route("native", "POST", "/Users", scimJson(201, { id: "native-9", ...ada }));
+      const ctx = createCtx();
+      const res = await proxyWorker.fetch(
+        proxyRequest(directory, "POST", "/scim/v2/Users", ada),
+        env,
+        ctx,
+      );
+      await ctx.drain();
+
+      expect(res.status).toBe(201);
+      expect(await failures(directory.id)).toEqual([]);
+    });
+
     it("retires a divergence record left behind by a rollback", async () => {
       // Reconcile from WorkOS is not offered once native is authoritative again,
       // so the native write itself has to retire the record — otherwise the fleet
