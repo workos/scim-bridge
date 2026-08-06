@@ -395,23 +395,52 @@ async function workosPrimary(
   );
   const [workosResponse, native] = await Promise.all([workosLeg, nativeLeg]);
 
-  const workosOk = workosResponse.status < 400;
+  const workosCommitted = isSuccess(workosResponse.status);
+  // A DELETE the WorkOS leg answered 404 is a delete that converged, not one
+  // that failed: the WorkOS row is gone either way, which is the rule the id
+  // mapping prune already follows. It matters on the retry of a partially failed
+  // delete — the prune ran when WorkOS committed, so the retry sends the
+  // untranslated path id and WorkOS answers 404. Calling that a failure would
+  // leave the IdP retrying a delete that is done and a divergence row standing
+  // for a resource native no longer has.
+  const workosGone = method === "DELETE" && workosResponse.status === 404;
   // The resource's key in native-id space: what the IdP addressed, and what a
   // later successful write to the same resource will clear.
   const resourceKey = scimPath.id ?? `${method} ${scimPath.rest}`;
 
   if (native.result === null || !isSuccess(native.result.status)) {
+    // Only a WorkOS 2xx means WorkOS holds a write native is missing, so a
+    // delete both sides report absent records nothing.
     return finish(
-      await nativeLegFailed(env, directory, kind, resourceKey, method, native, workosOk, log),
+      await nativeLegFailed(
+        env,
+        directory,
+        kind,
+        resourceKey,
+        method,
+        native,
+        workosCommitted,
+        log,
+      ),
     );
   }
-  if (!workosOk) {
+  if (!workosCommitted && !workosGone) {
     // Native has the write and WorkOS does not, so nothing goes in
     // native_write_failures — that table answers "what is native missing". The
     // IdP's retry re-runs both legs and the WorkOS leg resolves by id.
     return finish(workosResponse);
   }
   await clearNativeWriteFailure(env.DB, directory.id, kind, resourceKey);
+  if (workosGone) {
+    // Native did the remaining work, so the IdP hears native's answer rather
+    // than a 404 for a delete that has now happened on both sides.
+    return finish(
+      new Response(native.result.bodyText || null, {
+        status: native.result.status,
+        headers: { "Content-Type": native.result.contentType ?? SCIM_CONTENT_TYPE },
+      }),
+    );
+  }
   return finish(workosResponse);
 }
 
