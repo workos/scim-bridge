@@ -70,6 +70,18 @@ export function isHashedToken(value: string): boolean {
   return value.startsWith(HASH_PREFIX);
 }
 
+/**
+ * Whether a value is still ciphertext — carries the `enc:v1:` prefix that
+ * `decryptSecret` strips. True after a read means the value could not be
+ * decrypted (no key configured for a row written encrypted), so callers that
+ * compare secrets cannot trust it: a randomized IV makes equal plaintexts
+ * unequal ciphertexts, so two such values must be treated as indistinguishable
+ * rather than as proven different.
+ */
+export function isEncryptedSecret(value: string): boolean {
+  return value.startsWith(PREFIX);
+}
+
 export async function hashProxyToken(token: string): Promise<string> {
   return HASH_PREFIX + (await sha256Hex(token));
 }

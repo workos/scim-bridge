@@ -20,6 +20,7 @@ import {
   parseScimPath,
   scimError,
   scimFetch,
+  sharesNativeNamespace,
   stripNulls,
   translateListResponse,
   translatePatchIds,
@@ -883,5 +884,61 @@ describe("secretsMatch", () => {
     // on length-mismatched inputs, and a wrong password is usually a wrong length.
     expect(await secretsMatch("a", "b".repeat(10_000))).toBe(false);
     expect(await secretsMatch("a".repeat(10_000), "a".repeat(10_000))).toBe(true);
+  });
+});
+
+describe("sharesNativeNamespace", () => {
+  const url = "https://native.test/scim/v2";
+
+  it("is shared for the same url and token, distinct for a different token", async () => {
+    expect(
+      await sharesNativeNamespace(
+        { native_url: url, native_token: "tok-a" },
+        { native_url: url, native_token: "tok-a" },
+      ),
+    ).toBe(true);
+    expect(
+      await sharesNativeNamespace(
+        { native_url: url, native_token: "tok-a" },
+        { native_url: url, native_token: "tok-b" },
+      ),
+    ).toBe(false);
+  });
+
+  it("is not shared when the urls differ, whatever the tokens", async () => {
+    expect(
+      await sharesNativeNamespace(
+        { native_url: url, native_token: "tok-a" },
+        { native_url: "https://other.test/scim/v2", native_token: "tok-a" },
+      ),
+    ).toBe(false);
+  });
+
+  it("fails closed on an empty token", async () => {
+    expect(
+      await sharesNativeNamespace(
+        { native_url: url, native_token: "" },
+        { native_url: url, native_token: "tok-a" },
+      ),
+    ).toBe(true);
+  });
+
+  it("fails closed when a token is still ciphertext (read with no key)", async () => {
+    // A row written encrypted then read back with APP_ENCRYPTION_KEY unset comes
+    // off decryptSecret still `enc:v1:`. A randomized IV means the *same* plaintext
+    // encrypts to different ciphertexts, so a plaintext compare would call two
+    // equal tokens "distinct" and flip the guard open — treat undecryptable as
+    // shared instead.
+    const db = { encryptionKey: "raw-key" };
+    const a = await encryptSecret(db, "same-token");
+    const b = await encryptSecret(db, "same-token");
+    expect(a).not.toBe(b); // random IV: equal plaintext, unequal ciphertext
+    expect(await decryptSecret(undefined, a)).toBe(a); // no key ⇒ surfaced as-is
+    expect(
+      await sharesNativeNamespace(
+        { native_url: url, native_token: a },
+        { native_url: url, native_token: b },
+      ),
+    ).toBe(true);
   });
 });

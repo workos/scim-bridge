@@ -1,6 +1,6 @@
 import type { Directory, IdMapping, ResourceType } from "./types";
 import { MIGRATED_ID_HEADER } from "./types";
-import { secretsMatch } from "./crypto";
+import { isEncryptedSecret, secretsMatch } from "./crypto";
 import { getMapping, listDirectories, upsertMapping, withDatastoreRetry } from "./db";
 import type { NewMapping } from "./db";
 import type { Datastore } from "./datastore";
@@ -128,12 +128,15 @@ export function sharesNamespace(ours: string, theirs: string): boolean {
  * tenant boundary: a customer's app scopes its rows by the credential it issued,
  * so two callers presenting different tokens address disjoint row sets even on
  * one URL. Compared in constant time on the *decrypted* values (both sides come
- * off `decryptDirectory`). Fails closed on an empty token — an unset credential
- * cannot prove the callers are distinct, so treat it as shared rather than as a
- * tenant of its own.
+ * off `decryptDirectory`). Fails closed whenever the callers can't be proven
+ * distinct: an empty token (an unset credential is not a tenant of its own), or
+ * a value that is still ciphertext — a row written encrypted but read back with
+ * no key configured, where a randomized IV makes equal plaintexts unequal
+ * ciphertexts, so comparing them would wrongly report "different tenants".
  */
 async function nativeTokensShared(ours: string, theirs: string): Promise<boolean> {
   if (ours === "" || theirs === "") return true;
+  if (isEncryptedSecret(ours) || isEncryptedSecret(theirs)) return true;
   return secretsMatch(ours, theirs);
 }
 
