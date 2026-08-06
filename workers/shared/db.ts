@@ -470,28 +470,37 @@ export async function getMappingByWorkosId(
 
 /**
  * Mappings of this native id held by *other* directories, each carrying that
- * directory's native base URL so the caller can tell which of them address the
- * same native app: ids only collide meaningfully within one native namespace, so
- * two directories pointed at different endpoints can mint the same id for
- * unrelated resources. URL comparison is the caller's job — it needs
- * canonicalisation, which SQL string equality can't do.
+ * directory's native base URL and native token so the caller can tell which of
+ * them address the same native namespace: ids only collide meaningfully within
+ * one native app scoped by one token, so two directories pointed at different
+ * endpoints — or at one endpoint under distinct tokens — can mint the same id
+ * for unrelated resources. Namespace comparison is the caller's job: the URL
+ * needs canonicalisation and the token a constant-time compare, neither of which
+ * SQL string equality can do. The token is decrypted here (the JOIN doesn't run
+ * through `decryptDirectory`) so the caller compares plaintext.
  */
 export async function listOtherMappingsByNativeId(
   db: Datastore,
   directory: Directory,
   resourceType: ResourceType,
   nativeId: string,
-): Promise<(IdMapping & { native_url: string })[]> {
+): Promise<(IdMapping & { native_url: string; native_token: string })[]> {
   const { results } = await withDatastoreRetry(() =>
     db
       .prepare(
-        "SELECT m.*, d.native_url FROM id_mappings m JOIN scim_directories d ON d.id = m.directory_id " +
+        "SELECT m.*, d.native_url, d.native_token FROM id_mappings m " +
+          "JOIN scim_directories d ON d.id = m.directory_id " +
           "WHERE m.resource_type = ? AND m.native_id = ? AND m.directory_id != ?",
       )
       .bind(resourceType, nativeId, directory.id)
-      .all<IdMapping & { native_url: string }>(),
+      .all<IdMapping & { native_url: string; native_token: string }>(),
   );
-  return results;
+  return Promise.all(
+    results.map(async (row) => ({
+      ...row,
+      native_token: await decryptSecret(db, row.native_token),
+    })),
+  );
 }
 
 /** The mapping fields a caller supplies; the rest of the row has defaults. */
