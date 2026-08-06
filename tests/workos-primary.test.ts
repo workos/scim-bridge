@@ -3,6 +3,7 @@ import proxyWorker from "../workers/proxy/index";
 import {
   getMapping,
   listNativeWriteFailures,
+  recordNativeWriteFailure,
   setDirectoryMode,
   upsertMapping,
 } from "../workers/shared/db";
@@ -95,6 +96,33 @@ describe("workos-primary", () => {
         "PUT /Users/workos-1",
       ]);
       expect(await failures(directory.id)).toEqual([]);
+    });
+
+    it("records both legs in the activity log, not just the WorkOS one", async () => {
+      // On the rung whose promise is "native is written on every request", a log
+      // with an empty native column cannot show that it was.
+      const directory = await seedDirectory(env.DB, {
+        mode: "workos-primary",
+        log_persistence: 1,
+      });
+      await upsertMapping(env.DB, {
+        directory_id: directory.id,
+        resource_type: "Users",
+        native_id: "native-1",
+        workos_id: "workos-1",
+        strategy: "migrated-id",
+      });
+      fake.route("native", "PUT", "/Users/native-1", scimJson(200, { id: "native-1", ...ada }));
+      fake.route("workos", "PUT", "/Users/workos-1", scimJson(200, { id: "workos-1", ...ada }));
+
+      expect((await put(directory)).status).toBe(200);
+
+      const { results } = await env.DB.prepare(
+        "SELECT native_status, native_body, workos_status FROM proxy_log ORDER BY id",
+      ).all<{ native_status: number | null; native_body: string | null; workos_status: number }>();
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({ native_status: 200, workos_status: 200 });
+      expect(results[0].native_body).toContain("native-1");
     });
 
     it("serves reads from WorkOS, because WorkOS is the authoritative side", async () => {
@@ -472,6 +500,42 @@ describe("workos-primary", () => {
 
       expect(res.status).toBe(200);
       expect(await failures(directory.id)).toEqual([]);
+    });
+
+    it("retires a divergence record left behind by a rollback", async () => {
+      // Reconcile from WorkOS is not offered once native is authoritative again,
+      // so the native write itself has to retire the record — otherwise the fleet
+      // table stays red for a resource native has.
+      const directory = await seedMapped();
+      fake.route("native", "PUT", "/Users/native-1", scimJson(500, { detail: "boom" }), {
+        once: true,
+      });
+      fake.route("workos", "PUT", "/Users/workos-1", scimJson(200, { id: "workos-1", ...ada }));
+      expect((await put(directory)).status).toBe(502);
+      expect(await failures(directory.id)).toHaveLength(1);
+
+      fake.route("native", "PUT", "/Users/native-1", scimJson(200, { id: "native-1", ...ada }));
+      for (const mode of ["dual-write", "passthrough"] as Mode[]) {
+        await recordNativeWriteFailure(env.DB, {
+          directory_id: directory.id,
+          resource_type: "Users",
+          resource_key: "native-1",
+          method: "PUT",
+          native_status: 500,
+          detail: "WorkOS committed this write; native did not",
+        });
+        await setMode(directory, mode);
+        const ctx = createCtx();
+        const res = await proxyWorker.fetch(
+          proxyRequest(directory, "PUT", "/scim/v2/Users/native-1", ada),
+          env,
+          ctx,
+        );
+        // The clear runs after the response, like the dual-write mirror it sits next to.
+        await ctx.drain();
+        expect(res.status, mode).toBe(200);
+        expect(await failures(directory.id), mode).toEqual([]);
+      }
     });
   });
 });

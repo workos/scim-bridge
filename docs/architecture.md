@@ -96,8 +96,11 @@ HTTP services. When native fails after WorkOS committed, the IdP is told the
 request failed and the resource is recorded in `native_write_failures` — its own
 table, not `proxy_log`, which a directory has to opt into. The panel lists those
 rows and **Reconcile from WorkOS** is the repair; nothing retries in the
-background. Failing the request is safe because of the migrated-id contract
-below: the IdP's retry converges on the same ids instead of duplicating.
+background. A row is retired by whatever actually closes the gap: a clean
+reconcile, or a later write to the same resource that reaches native — in any
+mode that writes native, so rows do not survive a rollback. Failing the request
+is safe because of the migrated-id contract below: the IdP's retry converges on
+the same ids instead of duplicating.
 
 ## The migrated-id contract
 

@@ -466,14 +466,26 @@ function DivergenceCard({
                 </Text>
               </Flex>
             ))}
-            <Form method="post">
-              <input type="hidden" name="intent" value="reconcile-from-workos" />
-              <Flex justify="end">
-                <Button color="red" loading={pending} type="submit" variant="solid">
-                  Reconcile from WorkOS
-                </Button>
-              </Flex>
-            </Form>
+            {mode === "workos-primary" || mode === "workos-only" ? (
+              <Form method="post">
+                <input type="hidden" name="intent" value="reconcile-from-workos" />
+                <Flex justify="end">
+                  <Button color="red" loading={pending} type="submit" variant="solid">
+                    Reconcile from WorkOS
+                  </Button>
+                </Flex>
+              </Form>
+            ) : (
+              // Rows can outlive a rollback, and offering the repair in a mode the
+              // action refuses is worse than saying where it lives: reconciling into
+              // native from a WorkOS that is not authoritative would push state the
+              // IdP never sent to the system currently answering it.
+              <Text color="gray" size="1">
+                Reconcile from WorkOS is the repair, and it runs on workos-primary or workos-only —
+                on {mode} the native app is authoritative, so a write to any of these resources
+                clears its row on its own.
+              </Text>
+            )}
             {reconcile && <BackfillResult summary={reconcile} />}
           </Flex>
         )}

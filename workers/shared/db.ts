@@ -644,6 +644,16 @@ export async function clearNativeWriteFailure(
   );
 }
 
+/** Drop every divergence record for a directory, for the one caller that can
+ *  honestly claim all of them: a reconcile that replayed the whole WorkOS
+ *  directory into native without a single failure. After that native holds
+ *  everything WorkOS holds, so a surviving row describes nothing. */
+export async function clearNativeWriteFailures(db: Datastore, directoryId: string): Promise<void> {
+  await withDatastoreRetry(() =>
+    db.prepare("DELETE FROM native_write_failures WHERE directory_id = ?").bind(directoryId).run(),
+  );
+}
+
 export async function listNativeWriteFailures(
   db: Datastore,
   directoryId: string,
