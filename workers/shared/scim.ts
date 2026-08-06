@@ -1,6 +1,5 @@
 import type { Directory, IdMapping, ResourceType } from "./types";
 import { MIGRATED_ID_HEADER } from "./types";
-import { isEncryptedSecret, secretsMatch } from "./crypto";
 import { getMapping, listDirectories, upsertMapping, withDatastoreRetry } from "./db";
 import type { NewMapping } from "./db";
 import type { Datastore } from "./datastore";
@@ -123,56 +122,37 @@ export function sharesNamespace(ours: string, theirs: string): boolean {
   return a === null || b === null ? true : a === b;
 }
 
-/**
- * Whether two native tokens name the same tenant. The native token is the
- * tenant boundary: a customer's app scopes its rows by the credential it issued,
- * so two callers presenting different tokens address disjoint row sets even on
- * one URL. Compared in constant time on the *decrypted* values (both sides come
- * off `decryptDirectory`). Fails closed whenever the callers can't be proven
- * distinct: an empty token (an unset credential is not a tenant of its own), or
- * a value that is still ciphertext — a row written encrypted but read back with
- * no key configured, where a randomized IV makes equal plaintexts unequal
- * ciphertexts, so comparing them would wrongly report "different tenants".
- */
-async function nativeTokensShared(ours: string, theirs: string): Promise<boolean> {
-  if (ours === "" || theirs === "") return true;
-  if (isEncryptedSecret(ours) || isEncryptedSecret(theirs)) return true;
-  return secretsMatch(ours, theirs);
-}
-
-/** The native-app coordinates two rows need to be compared for collision: the
- *  base URL and the decrypted token scoping it. A whole `Directory` satisfies it,
- *  but so does a mapping row that carries only these two (see
- *  `listOtherMappingsByNativeId`). */
-export type NativeEndpoint = Pick<Directory, "native_url" | "native_token">;
+/** The native-app coordinate two rows are compared on for collision: the base
+ *  URL of the native app. A whole `Directory` satisfies it, but so does a
+ *  mapping row that carries only this (see `listOtherMappingsByNativeId`). */
+export type NativeEndpoint = Pick<Directory, "native_url">;
 
 /**
- * Whether two directories share a native namespace — the same native app *and*
- * the same credential scoping it. A native id only collides when both the URL
- * and the token line up: same URL with different tokens addresses disjoint rows,
- * so it is not shared. Fails closed both ways — an unparseable URL (see
- * `sharesNamespace`) or an empty token (see `nativeTokensShared`) counts as
- * shared, which only ever refuses a write.
+ * Whether two directories share a native namespace — i.e. front the same native
+ * app. Two directories on one `native_url` share an id space: the bridge cannot
+ * verify that the customer's app partitions its rows by which bearer token
+ * authenticated a call, so a matching URL must be treated as shared regardless
+ * of the tokens. Fails closed on an unparseable URL too (see `sharesNamespace`),
+ * which only ever refuses a write.
  */
 export async function sharesNativeNamespace(
   a: NativeEndpoint,
   b: NativeEndpoint,
 ): Promise<boolean> {
-  if (!sharesNamespace(a.native_url, b.native_url)) return false;
-  return nativeTokensShared(a.native_token, b.native_token);
+  return sharesNamespace(a.native_url, b.native_url);
 }
 
 /**
- * Whether another directory addresses the same native app as this one, under the
- * same native token. In a shared namespace a native id names a row that may
- * belong to a different tenant, so no identifier this directory's own tenant
- * supplies (`externalId`, and the id derived from it) can be trusted to address
- * a row: the tenant would be choosing which of its neighbours' rows to write.
- * Callers fail closed on true.
+ * Whether another directory addresses the same native app as this one. In a
+ * shared namespace a native id names a row that may belong to a different
+ * tenant, so no identifier this directory's own tenant supplies (`externalId`,
+ * and the id derived from it) can be trusted to address a row: the tenant would
+ * be choosing which of its neighbours' rows to write. Callers fail closed on
+ * true.
  *
- * The token matters because it is the tenant boundary: two directories on one
- * `native_url` with distinct `native_token`s are scoped apart by the customer's
- * own app, so they do not actually share ids and the guards must not fire.
+ * A matching `native_url` is sufficient to be shared: distinct native tokens do
+ * NOT prove the callers address disjoint rows, because the bridge cannot verify
+ * that the customer's app scopes its rows by the presenting credential.
  */
 export async function nativeNamespaceIsShared(
   db: Datastore,

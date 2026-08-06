@@ -477,37 +477,32 @@ export async function getMappingByWorkosId(
 
 /**
  * Mappings of this native id held by *other* directories, each carrying that
- * directory's native base URL and native token so the caller can tell which of
- * them address the same native namespace: ids only collide meaningfully within
- * one native app scoped by one token, so two directories pointed at different
- * endpoints — or at one endpoint under distinct tokens — can mint the same id
- * for unrelated resources. Namespace comparison is the caller's job: the URL
- * needs canonicalisation and the token a constant-time compare, neither of which
- * SQL string equality can do. The token is decrypted here (the JOIN doesn't run
- * through `decryptDirectory`) so the caller compares plaintext.
+ * directory's native base URL so the caller can tell which of them address the
+ * same native namespace: ids only collide meaningfully within one native app, so
+ * two directories pointed at different endpoints can mint the same id for
+ * unrelated resources. Namespace comparison is the caller's job — the URL needs
+ * canonicalisation, which SQL string equality can't do (see
+ * `sharesNativeNamespace`). No credential is selected: the native token plays no
+ * part in the comparison, since the bridge cannot verify that a customer's app
+ * scopes its rows by the presenting credential.
  */
 export async function listOtherMappingsByNativeId(
   db: Datastore,
   directory: Directory,
   resourceType: ResourceType,
   nativeId: string,
-): Promise<(IdMapping & { native_url: string; native_token: string })[]> {
+): Promise<(IdMapping & { native_url: string })[]> {
   const { results } = await withDatastoreRetry(() =>
     db
       .prepare(
-        "SELECT m.*, d.native_url, d.native_token FROM id_mappings m " +
+        "SELECT m.*, d.native_url FROM id_mappings m " +
           "JOIN scim_directories d ON d.id = m.directory_id " +
           "WHERE m.resource_type = ? AND m.native_id = ? AND m.directory_id != ?",
       )
       .bind(resourceType, nativeId, directory.id)
-      .all<IdMapping & { native_url: string; native_token: string }>(),
+      .all<IdMapping & { native_url: string }>(),
   );
-  return Promise.all(
-    results.map(async (row) => ({
-      ...row,
-      native_token: await decryptSecret(db, row.native_token),
-    })),
-  );
+  return results;
 }
 
 /** The mapping fields a caller supplies; the rest of the row has defaults. */
@@ -609,7 +604,7 @@ export async function recordNativeWriteFailure(
           "ON CONFLICT (directory_id, resource_type, resource_key) DO UPDATE SET " +
           "method = excluded.method, native_status = excluded.native_status, " +
           "detail = excluded.detail, attempts = native_write_failures.attempts + 1, " +
-          "last_seen_at = datetime('now')",
+          "last_seen_at = datetime('now'), sweep_token = NULL",
       )
       .bind(
         failure.directory_id,
@@ -644,13 +639,153 @@ export async function clearNativeWriteFailure(
   );
 }
 
-/** Drop every divergence record for a directory, for the one caller that can
- *  honestly claim all of them: a reconcile that replayed the whole WorkOS
- *  directory into native without a single failure. After that native holds
- *  everything WorkOS holds, so a surviving row describes nothing. */
-export async function clearNativeWriteFailures(db: Datastore, directoryId: string): Promise<void> {
+/** Retire the divergence record a reconcile's replay just repaired for one
+ *  resource, under the same two limits the end-of-run sweep answers to.
+ *
+ *  A replay PUT proves only that native now holds what the SNAPSHOT held. It is
+ *  not evidence about a row the ledger gained after that snapshot was taken: the
+ *  write it describes is newer than the body the replay pushed, so clearing it
+ *  hides a divergence the replay just widened rather than closed. Nor is it
+ *  evidence about a `method='DELETE'` row, which a PUT of a survivor can never
+ *  repair — the resource is still present on native, which is the gap. Both are
+ *  the same rules `clearReplayedDivergences` applies; keying the per-resource
+ *  clear on `resource_key` alone let a replay bypass them one row at a time. */
+export async function clearReplayedDivergenceForResource(
+  db: Datastore,
+  directoryId: string,
+  resourceType: ResourceType,
+  resourceKey: string,
+  sweepToken: string,
+): Promise<void> {
   await withDatastoreRetry(() =>
-    db.prepare("DELETE FROM native_write_failures WHERE directory_id = ?").bind(directoryId).run(),
+    db
+      .prepare(
+        "DELETE FROM native_write_failures WHERE directory_id = ? AND resource_type = ? " +
+          "AND resource_key = ? AND sweep_token = ? AND method != 'DELETE'",
+      )
+      .bind(directoryId, resourceType, resourceKey, sweepToken)
+      .run(),
+  );
+}
+
+/** Retire the divergence rows a clean, complete reconcile is actually entitled
+ *  to clear: the non-DELETE rows that already existed when the reconcile began.
+ *
+ *  A `runReconcileFromWorkos` only ever PUTs the resources WorkOS still holds, so
+ *  a zero-failure run proves "native holds everything WorkOS holds" — an ADDITIVE
+ *  claim. It says nothing about SUBTRACTIVE gaps: a `method='DELETE'` row means
+ *  native still holds a resource WorkOS deleted, which a replay of survivors
+ *  never observes and the deliberately non-destructive reconcile never repairs.
+ *  Sweeping those rows would erase the record of a deprovisioning that never
+ *  reached native, leaving a terminated user active while the operator's cutover
+ *  gate flips green (VULN-3085) — so DELETE rows are excluded here.
+ *
+ *  Only the rows captured at reconcile start are touched, so a divergence recorded
+ *  by live `workos-primary` traffic while the reconcile ran — a resource the replay
+ *  never pushed — is left standing rather than swept on a `directory_id`-only
+ *  match. Rows the replay genuinely rewrote are already cleared per-resource by
+ *  `clearReplayedDivergenceForResource`, under these same two limits.
+ *
+ *  Which rows those are is read from the `sweep_token` this reconcile stamped on
+ *  them at its start (`markDivergencesForSweep`), not inferred from their column
+ *  values. A row's (key, `attempts`) pair is not an identity: `attempts` restarts
+ *  at the schema default whenever a row is deleted and re-created, which happens
+ *  routinely mid-reconcile — the per-resource repair clears the row, then a live
+ *  failure on the same key INSERTs a fresh one. Matching on those values let the
+ *  sweep delete a fresh, unresolved divergence in place of the retired one it
+ *  resembled (VULN-3086). A stamp cannot be resurrected that way: a re-created row
+ *  is stamp-less, and an in-place upsert clears the stamp. */
+export async function clearReplayedDivergences(
+  db: Datastore,
+  directoryId: string,
+  sweepToken: string,
+): Promise<void> {
+  await withDatastoreRetry(() =>
+    db
+      .prepare(
+        "DELETE FROM native_write_failures WHERE directory_id = ? AND sweep_token = ? " +
+          "AND method != 'DELETE'",
+      )
+      .bind(directoryId, sweepToken)
+      .run(),
+  );
+}
+
+/** Stamp a directory's current divergence rows so a reconcile that ends clean can
+ *  tell them apart from anything recorded while it ran. Called before the snapshot;
+ *  every later write to the ledger leaves the row stamp-less. */
+export async function markDivergencesForSweep(
+  db: Datastore,
+  directoryId: string,
+  sweepToken: string,
+): Promise<void> {
+  await withDatastoreRetry(() =>
+    db
+      .prepare("UPDATE native_write_failures SET sweep_token = ? WHERE directory_id = ?")
+      .bind(sweepToken, directoryId)
+      .run(),
+  );
+}
+
+/** How long a reconcile claim stays valid. A run that dies without releasing its
+ *  claim — a crashed worker, a killed container — must not lock the directory out
+ *  of reconciling forever, and a reconcile that is still legitimately running past
+ *  this window is longer than any snapshot-and-replay the panel triggers. */
+const RECONCILE_CLAIM_TTL_MS = 30 * 60 * 1000;
+
+/** The `datetime('now')` text format both engines store timestamps in. Sortable as
+ *  text, which is what lets the claim's staleness check be a plain comparison
+ *  rather than an engine-specific date expression (the Postgres driver implements
+ *  `datetime('now')` only, no modifiers). */
+function sqlTimestamp(at: Date): string {
+  return at.toISOString().replace("T", " ").slice(0, 19);
+}
+
+/** Take the directory's reconcile claim, or report that another run holds it.
+ *
+ *  The stamp protocol the sweep rests on (`markDivergencesForSweep`) only holds
+ *  while one reconcile per directory is in flight: the stamp is a single mutable
+ *  column, so a second run re-stamps the NULL tokens the first run left on rows
+ *  live traffic recorded after its watermark, making them clearable again while
+ *  the first run's older snapshot is still replaying (VULN-3092). The claim is
+ *  what enforces the assumption instead of documenting it.
+ *
+ *  Conditional UPDATE rather than read-then-write: two callers racing here both
+ *  read "free", and only the one whose UPDATE matched gets `changes`. */
+export async function claimReconcileRun(
+  db: Datastore,
+  directoryId: string,
+  token: string,
+): Promise<boolean> {
+  const staleBefore = sqlTimestamp(new Date(Date.now() - RECONCILE_CLAIM_TTL_MS));
+  const { meta } = await withDatastoreRetry(() =>
+    db
+      .prepare(
+        "UPDATE scim_directories SET reconcile_token = ?, reconcile_started_at = datetime('now'), " +
+          "updated_at = datetime('now') WHERE id = ? AND (reconcile_token IS NULL OR " +
+          "reconcile_started_at IS NULL OR reconcile_started_at <= ?)",
+      )
+      .bind(token, directoryId, staleBefore)
+      .run(),
+  );
+  return Boolean(meta.changes);
+}
+
+/** Release the claim, but only if it is still this run's. A run that overran the
+ *  TTL and was superseded must not clear the claim its successor now holds. */
+export async function releaseReconcileRun(
+  db: Datastore,
+  directoryId: string,
+  token: string,
+): Promise<void> {
+  await withDatastoreRetry(() =>
+    db
+      .prepare(
+        "UPDATE scim_directories SET reconcile_token = NULL, reconcile_started_at = NULL " +
+          "WHERE id = ? AND reconcile_token = ?",
+      )
+      .bind(directoryId, token)
+      .run(),
   );
 }
 

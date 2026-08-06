@@ -11,7 +11,11 @@ import {
   useSubmit,
 } from "react-router";
 import { datastoreContext, demoModeContext } from "../../context";
-import { runBackfill, runReconcileFromWorkos } from "../../../workers/shared/backfill";
+import {
+  ReconcileInFlightError,
+  runBackfill,
+  runReconcileFromWorkos,
+} from "../../../workers/shared/backfill";
 import {
   getConfig,
   getDirectoryById,
@@ -257,8 +261,17 @@ export async function action({
           "Reconcile from WorkOS runs in workos-primary or workos-only mode, to bring the native app fully current.",
       };
     }
-    const reconcile = await runReconcileFromWorkos(db, directory);
-    return { reconcile };
+    try {
+      const reconcile = await runReconcileFromWorkos(db, directory);
+      return { reconcile };
+    } catch (error) {
+      if (!(error instanceof ReconcileInFlightError)) throw error;
+      return {
+        error:
+          "A reconcile is already running for this directory — wait for it to finish. " +
+          "Two overlapping runs can retire a divergence the other is still responsible for.",
+      };
+    }
   }
 
   if (intent === "test-native") {

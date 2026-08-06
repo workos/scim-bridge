@@ -1,11 +1,14 @@
 import type { Datastore } from "./datastore";
 import type { BackfillSummary, Directory, ResourceType } from "./types";
 import {
-  clearNativeWriteFailure,
-  clearNativeWriteFailures,
+  claimReconcileRun,
+  clearReplayedDivergenceForResource,
+  clearReplayedDivergences,
   getMapping,
   insertProxyLog,
   listOtherMappingsByNativeId,
+  markDivergencesForSweep,
+  releaseReconcileRun,
   shouldPersistLogs,
   upsertMapping,
   upsertMappings,
@@ -306,10 +309,35 @@ async function mirrorResource(
  * a resource missing on the native side is restored under its shared id. (The
  * forward direction no longer relies on this: WorkOS creates only via POST.)
  */
+export class ReconcileInFlightError extends Error {
+  constructor(directoryId: string) {
+    super(`A reconcile is already running for directory ${directoryId}.`);
+    this.name = "ReconcileInFlightError";
+  }
+}
+
 export async function runReconcileFromWorkos(
   db: Datastore,
   directory: Directory,
 ): Promise<BackfillSummary> {
+  // One reconcile per directory at a time. The sweep stamp below is a single
+  // mutable column, so a second run re-stamps the NULL tokens this one leaves on
+  // rows live traffic records after its watermark — clearing a live gap while this
+  // run's older snapshot replays the pre-change state back into native
+  // (VULN-3092). The claim makes the protocol's assumption enforced rather than
+  // documented.
+  const runToken = crypto.randomUUID();
+  if (!(await claimReconcileRun(db, directory.id, runToken))) {
+    throw new ReconcileInFlightError(directory.id);
+  }
+  try {
+    return await reconcileFromWorkos(db, directory);
+  } finally {
+    await releaseReconcileRun(db, directory.id, runToken);
+  }
+}
+
+async function reconcileFromWorkos(db: Datastore, directory: Directory): Promise<BackfillSummary> {
   const summary: BackfillSummary = {
     users: { total: 0, mirrored: 0, failed: 0 },
     groups: { total: 0, mirrored: 0, failed: 0 },
@@ -317,6 +345,14 @@ export async function runReconcileFromWorkos(
   };
   const maps = await loadIdMaps(db, directory.id);
   const toNative = makeTranslator(maps.workosToNative);
+
+  // Stamped before the snapshot so the clear below can only ever retire rows that
+  // predate this reconcile. A divergence recorded by live workos-primary traffic
+  // while the reconcile runs is a resource the replay never pushed, so it must
+  // survive (VULN-3085 race variant) — including when it lands on a key the
+  // reconcile had already repaired and cleared (VULN-3086).
+  const sweepToken = crypto.randomUUID();
+  await markDivergencesForSweep(db, directory.id, sweepToken);
 
   const users = await snapshot(
     directory.workos_url,
@@ -335,6 +371,7 @@ export async function runReconcileFromWorkos(
       maps,
       summary.users,
       summary.errors,
+      sweepToken,
     );
   }
 
@@ -363,14 +400,19 @@ export async function runReconcileFromWorkos(
       maps,
       summary.groups,
       summary.errors,
+      sweepToken,
     );
   }
 
   // The reconcile replayed every WorkOS resource into native without a failure, so
-  // native is not missing anything WorkOS holds and no divergence record can still
-  // be describing a real gap. Rows keyed on a create that never reached native are
-  // cleared here rather than per resource, because a create failure is keyed on
-  // what the IdP addressed it by and WorkOS's snapshot no longer knows that key.
+  // native is not missing anything WorkOS still holds. Rows keyed on a create that
+  // never reached native are cleared here rather than per resource, because a
+  // create failure is keyed on what the IdP addressed it by and WorkOS's snapshot
+  // no longer knows that key. The clear is bounded to the rows that predate this
+  // reconcile and excludes DELETE gaps: a PUT-only replay proves native holds
+  // everything WorkOS holds (additive) but never that native dropped what WorkOS
+  // deleted (subtractive), so a DELETE row stands until a real native-side
+  // deprovision closes it — see clearReplayedDivergences (VULN-3085).
   //
   // Both snapshots have to be COMPLETE, not merely free of replay failures. A
   // snapshot that gave up — WorkOS down, a non-SCIM body, pagination ending short
@@ -380,7 +422,7 @@ export async function runReconcileFromWorkos(
   // repair went one at a time above, and the rest are still true.
   const replayed = summary.users.failed === 0 && summary.groups.failed === 0;
   if (replayed && users.complete && groups.complete) {
-    await clearNativeWriteFailures(db, directory.id);
+    await clearReplayedDivergences(db, directory.id, sweepToken);
   }
 
   return summary;
@@ -389,13 +431,18 @@ export async function runReconcileFromWorkos(
 /** A resource the reconcile just wrote into native is no longer missing from it,
  *  whichever of its identifiers the divergence was recorded under: the mapped
  *  native id, the WorkOS id a create never mapped, the drifted id a 409 repair
- *  found, or the `externalId`/unique attribute a failed create was keyed on. */
+ *  found, or the `externalId`/unique attribute a failed create was keyed on.
+ *
+ *  Bounded to this reconcile's stamped rows, and never a DELETE gap: the replay
+ *  pushed the snapshot's body, which is no answer to a divergence recorded after
+ *  the snapshot or to a resource WorkOS deleted. */
 async function clearRepairedDivergences(
   db: Datastore,
   directory: Directory,
   kind: ResourceType,
   resource: Record<string, unknown>,
   ids: (string | null)[],
+  sweepToken: string,
 ): Promise<void> {
   const attribute = resource[kind === "Users" ? "userName" : "displayName"];
   const keys = new Set(
@@ -404,7 +451,7 @@ async function clearRepairedDivergences(
     ),
   );
   for (const key of keys) {
-    await clearNativeWriteFailure(db, directory.id, kind, key);
+    await clearReplayedDivergenceForResource(db, directory.id, kind, key, sweepToken);
   }
 }
 
@@ -417,6 +464,7 @@ async function pushToNative(
   maps: IdTranslationMaps,
   counts: ResourceCounts,
   errors: string[],
+  sweepToken: string,
 ): Promise<void> {
   counts.total += 1;
   const workosId = typeof resource.id === "string" ? resource.id : null;
@@ -471,11 +519,14 @@ async function pushToNative(
   }
   if (isSuccess(result.status)) {
     counts.mirrored += 1;
-    await clearRepairedDivergences(db, directory, kind, resource, [
-      nativeId,
-      workosId,
-      drift?.nativeId ?? null,
-    ]);
+    await clearRepairedDivergences(
+      db,
+      directory,
+      kind,
+      resource,
+      [nativeId, workosId, drift?.nativeId ?? null],
+      sweepToken,
+    );
     if (drift) {
       pushError(
         errors,
@@ -612,9 +663,9 @@ async function unattributedReason(
   resource: Record<string, unknown>,
 ): Promise<string | null> {
   const others = await listOtherMappingsByNativeId(db, directory, kind, driftedId);
-  // A neighbour only maps the *same* native row when it fronts the same app under
-  // the same token; a different token means its mapping names a row in a namespace
-  // this directory can't address, so it isn't a collision.
+  // A neighbour maps the *same* native row when it fronts the same native app
+  // (same native_url). Distinct native tokens do not make it a different row: the
+  // bridge cannot verify the customer's app scopes rows by credential.
   const shared = await Promise.all(
     others.map((mapping) => sharesNativeNamespace(directory, mapping)),
   );
