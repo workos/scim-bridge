@@ -732,6 +732,68 @@ export async function markDivergencesForSweep(
   );
 }
 
+/** How long a reconcile claim stays valid. A run that dies without releasing its
+ *  claim — a crashed worker, a killed container — must not lock the directory out
+ *  of reconciling forever, and a reconcile that is still legitimately running past
+ *  this window is longer than any snapshot-and-replay the panel triggers. */
+const RECONCILE_CLAIM_TTL_MS = 30 * 60 * 1000;
+
+/** The `datetime('now')` text format both engines store timestamps in. Sortable as
+ *  text, which is what lets the claim's staleness check be a plain comparison
+ *  rather than an engine-specific date expression (the Postgres driver implements
+ *  `datetime('now')` only, no modifiers). */
+function sqlTimestamp(at: Date): string {
+  return at.toISOString().replace("T", " ").slice(0, 19);
+}
+
+/** Take the directory's reconcile claim, or report that another run holds it.
+ *
+ *  The stamp protocol the sweep rests on (`markDivergencesForSweep`) only holds
+ *  while one reconcile per directory is in flight: the stamp is a single mutable
+ *  column, so a second run re-stamps the NULL tokens the first run left on rows
+ *  live traffic recorded after its watermark, making them clearable again while
+ *  the first run's older snapshot is still replaying (VULN-3092). The claim is
+ *  what enforces the assumption instead of documenting it.
+ *
+ *  Conditional UPDATE rather than read-then-write: two callers racing here both
+ *  read "free", and only the one whose UPDATE matched gets `changes`. */
+export async function claimReconcileRun(
+  db: Datastore,
+  directoryId: string,
+  token: string,
+): Promise<boolean> {
+  const staleBefore = sqlTimestamp(new Date(Date.now() - RECONCILE_CLAIM_TTL_MS));
+  const { meta } = await withDatastoreRetry(() =>
+    db
+      .prepare(
+        "UPDATE scim_directories SET reconcile_token = ?, reconcile_started_at = datetime('now'), " +
+          "updated_at = datetime('now') WHERE id = ? AND (reconcile_token IS NULL OR " +
+          "reconcile_started_at IS NULL OR reconcile_started_at <= ?)",
+      )
+      .bind(token, directoryId, staleBefore)
+      .run(),
+  );
+  return Boolean(meta.changes);
+}
+
+/** Release the claim, but only if it is still this run's. A run that overran the
+ *  TTL and was superseded must not clear the claim its successor now holds. */
+export async function releaseReconcileRun(
+  db: Datastore,
+  directoryId: string,
+  token: string,
+): Promise<void> {
+  await withDatastoreRetry(() =>
+    db
+      .prepare(
+        "UPDATE scim_directories SET reconcile_token = NULL, reconcile_started_at = NULL " +
+          "WHERE id = ? AND reconcile_token = ?",
+      )
+      .bind(directoryId, token)
+      .run(),
+  );
+}
+
 export async function listNativeWriteFailures(
   db: Datastore,
   directoryId: string,
