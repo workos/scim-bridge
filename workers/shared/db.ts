@@ -644,14 +644,39 @@ export async function clearNativeWriteFailure(
   );
 }
 
-/** Drop every divergence record for a directory, for the one caller that can
- *  honestly claim all of them: a reconcile that replayed the whole WorkOS
- *  directory into native without a single failure. After that native holds
- *  everything WorkOS holds, so a surviving row describes nothing. */
-export async function clearNativeWriteFailures(db: Datastore, directoryId: string): Promise<void> {
-  await withDatastoreRetry(() =>
-    db.prepare("DELETE FROM native_write_failures WHERE directory_id = ?").bind(directoryId).run(),
-  );
+/** Retire the divergence rows a clean, complete reconcile is actually entitled
+ *  to clear: the non-DELETE rows that already existed when the reconcile began.
+ *
+ *  A `runReconcileFromWorkos` only ever PUTs the resources WorkOS still holds, so
+ *  a zero-failure run proves "native holds everything WorkOS holds" — an ADDITIVE
+ *  claim. It says nothing about SUBTRACTIVE gaps: a `method='DELETE'` row means
+ *  native still holds a resource WorkOS deleted, which a replay of survivors
+ *  never observes and the deliberately non-destructive reconcile never repairs.
+ *  Sweeping those rows would erase the record of a deprovisioning that never
+ *  reached native, leaving a terminated user active while the operator's cutover
+ *  gate flips green (VULN-3085) — so DELETE rows are excluded here.
+ *
+ *  Only the rows named in `priorKeys` (captured at reconcile start) are touched,
+ *  so a divergence recorded by live `workos-primary` traffic while the reconcile
+ *  ran — a resource the replay never pushed — is left standing rather than swept
+ *  on a `directory_id`-only match. Rows the replay genuinely rewrote are already
+ *  cleared per-resource by `clearNativeWriteFailure`. */
+export async function clearReplayedDivergences(
+  db: Datastore,
+  directoryId: string,
+  priorKeys: { resource_type: ResourceType; resource_key: string }[],
+): Promise<void> {
+  for (const { resource_type, resource_key } of priorKeys) {
+    await withDatastoreRetry(() =>
+      db
+        .prepare(
+          "DELETE FROM native_write_failures WHERE directory_id = ? AND resource_type = ? " +
+            "AND resource_key = ? AND method != 'DELETE'",
+        )
+        .bind(directoryId, resource_type, resource_key)
+        .run(),
+    );
+  }
 }
 
 export async function listNativeWriteFailures(
