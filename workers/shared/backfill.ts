@@ -2,9 +2,10 @@ import type { Datastore } from "./datastore";
 import type { BackfillSummary, Directory, ResourceType } from "./types";
 import {
   clearNativeWriteFailure,
-  clearNativeWriteFailures,
+  clearReplayedDivergences,
   getMapping,
   insertProxyLog,
+  listNativeWriteFailures,
   listOtherMappingsByNativeId,
   shouldPersistLogs,
   upsertMapping,
@@ -318,6 +319,12 @@ export async function runReconcileFromWorkos(
   const maps = await loadIdMaps(db, directory.id);
   const toNative = makeTranslator(maps.workosToNative);
 
+  // Captured before the snapshot so the directory-wide clear below can only ever
+  // retire rows that predate this reconcile. A divergence recorded by live
+  // workos-primary traffic while the reconcile runs is a resource the replay
+  // never pushed, so it must survive (VULN-3085 race variant).
+  const priorDivergences = await listNativeWriteFailures(db, directory.id);
+
   const users = await snapshot(
     directory.workos_url,
     directory.workos_token,
@@ -367,10 +374,14 @@ export async function runReconcileFromWorkos(
   }
 
   // The reconcile replayed every WorkOS resource into native without a failure, so
-  // native is not missing anything WorkOS holds and no divergence record can still
-  // be describing a real gap. Rows keyed on a create that never reached native are
-  // cleared here rather than per resource, because a create failure is keyed on
-  // what the IdP addressed it by and WorkOS's snapshot no longer knows that key.
+  // native is not missing anything WorkOS still holds. Rows keyed on a create that
+  // never reached native are cleared here rather than per resource, because a
+  // create failure is keyed on what the IdP addressed it by and WorkOS's snapshot
+  // no longer knows that key. The clear is bounded to the rows that predate this
+  // reconcile and excludes DELETE gaps: a PUT-only replay proves native holds
+  // everything WorkOS holds (additive) but never that native dropped what WorkOS
+  // deleted (subtractive), so a DELETE row stands until a real native-side
+  // deprovision closes it — see clearReplayedDivergences (VULN-3085).
   //
   // Both snapshots have to be COMPLETE, not merely free of replay failures. A
   // snapshot that gave up — WorkOS down, a non-SCIM body, pagination ending short
@@ -380,7 +391,7 @@ export async function runReconcileFromWorkos(
   // repair went one at a time above, and the rest are still true.
   const replayed = summary.users.failed === 0 && summary.groups.failed === 0;
   if (replayed && users.complete && groups.complete) {
-    await clearNativeWriteFailures(db, directory.id);
+    await clearReplayedDivergences(db, directory.id, priorDivergences);
   }
 
   return summary;
