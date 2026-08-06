@@ -1114,12 +1114,12 @@ describe("runReconcileFromWorkos", () => {
     ]);
   });
 
-  it("repairs an unmapped colliding row when a neighbour shares the URL but a distinct token", async () => {
+  it("refuses to repair an unmapped colliding row when a neighbour shares the URL under a distinct token (VULN-3083)", async () => {
     const env = await createEnv();
-    // A neighbour on the same native_url, but scoped by a *different* native
-    // token: the customer's app addresses the two directories' rows apart, so the
-    // namespace is not shared and this directory's externalId can attribute the
-    // unmapped row.
+    // A neighbour on the same native_url under a *different* native token. The
+    // bridge cannot verify the customer's app scopes rows by token, so the
+    // namespace is shared: this directory's externalId cannot attribute an
+    // unmapped native row, and the drift repair must fail closed.
     await seedDirectory(env.DB, { name: "Org B", native_token: "org-b-secret" });
     const directory = await seedDirectory(env.DB, {
       name: "Org A",
@@ -1142,22 +1142,19 @@ describe("runReconcileFromWorkos", () => {
 
     const summary = await runReconcileFromWorkos(env.DB, directory);
 
-    expect(summary.users).toEqual({ total: 1, mirrored: 1, failed: 0 });
-    expect(await mappingRows(env, directory.id)).toEqual([
-      {
-        resource_type: "Users",
-        native_id: "idp-1",
-        workos_id: "shared-1",
-        strategy: "fallback-post",
-      },
-    ]);
+    expect(summary.users).toEqual({ total: 1, mirrored: 0, failed: 1 });
+    expect(
+      fake.callsTo("native").some((c) => c.method === "PUT" && c.path === "/Users/idp-1"),
+    ).toBe(false);
+    expect(await mappingRows(env, directory.id)).toEqual([]);
   });
 
-  it("repairs a colliding row another directory maps under a distinct native token", async () => {
+  it("refuses to repair a colliding row another directory maps on the same URL under a distinct token (VULN-3083)", async () => {
     const env = await createEnv();
-    // The other directory maps victim-1, but on the same native_url under a
-    // different token — so its mapping names a row in a namespace this directory
-    // can't address. Not a collision: the repair proceeds.
+    // The other directory maps victim-1 on the same native_url under a different
+    // token. Distinct tokens do not prove disjoint row sets, so this is a shared
+    // namespace: Org A supplying externalId "victim-1" must not let it claim the
+    // neighbour's row.
     const other = await seedDirectory(env.DB, {
       name: "Org B",
       mode: "dual-write",
@@ -1191,15 +1188,11 @@ describe("runReconcileFromWorkos", () => {
 
     const summary = await runReconcileFromWorkos(env.DB, directory);
 
-    expect(summary.users).toEqual({ total: 1, mirrored: 1, failed: 0 });
-    expect(await mappingRows(env, directory.id)).toEqual([
-      {
-        resource_type: "Users",
-        native_id: "victim-1",
-        workos_id: "attacker-1",
-        strategy: "fallback-post",
-      },
-    ]);
+    expect(summary.users).toEqual({ total: 1, mirrored: 0, failed: 1 });
+    expect(
+      fake.callsTo("native").some((c) => c.method === "PUT" && c.path === "/Users/victim-1"),
+    ).toBe(false);
+    expect(await mappingRows(env, directory.id)).toEqual([]);
   });
 
   it("refuses to replace the membership of a colliding group another directory maps", async () => {

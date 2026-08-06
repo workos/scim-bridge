@@ -890,55 +890,27 @@ describe("secretsMatch", () => {
 describe("sharesNativeNamespace", () => {
   const url = "https://native.test/scim/v2";
 
-  it("is shared for the same url and token, distinct for a different token", async () => {
+  it("is shared for the same url regardless of the tokens (VULN-3083)", async () => {
+    // The bridge cannot verify a customer's app partitions its rows by the
+    // presenting credential, so a matching native_url is shared whether the
+    // tokens match or differ. Distinct tokens must not downgrade it to "not
+    // shared", which would open the cross-tenant write guards.
+    expect(await sharesNativeNamespace({ native_url: url }, { native_url: url })).toBe(true);
+    expect(await sharesNativeNamespace({ native_url: url }, { native_url: `${url}/` })).toBe(true);
+  });
+
+  it("is not shared when the urls differ", async () => {
     expect(
       await sharesNativeNamespace(
-        { native_url: url, native_token: "tok-a" },
-        { native_url: url, native_token: "tok-a" },
-      ),
-    ).toBe(true);
-    expect(
-      await sharesNativeNamespace(
-        { native_url: url, native_token: "tok-a" },
-        { native_url: url, native_token: "tok-b" },
+        { native_url: url },
+        { native_url: "https://other.test/scim/v2" },
       ),
     ).toBe(false);
   });
 
-  it("is not shared when the urls differ, whatever the tokens", async () => {
-    expect(
-      await sharesNativeNamespace(
-        { native_url: url, native_token: "tok-a" },
-        { native_url: "https://other.test/scim/v2", native_token: "tok-a" },
-      ),
-    ).toBe(false);
-  });
-
-  it("fails closed on an empty token", async () => {
-    expect(
-      await sharesNativeNamespace(
-        { native_url: url, native_token: "" },
-        { native_url: url, native_token: "tok-a" },
-      ),
-    ).toBe(true);
-  });
-
-  it("fails closed when a token is still ciphertext (read with no key)", async () => {
-    // A row written encrypted then read back with APP_ENCRYPTION_KEY unset comes
-    // off decryptSecret still `enc:v1:`. A randomized IV means the *same* plaintext
-    // encrypts to different ciphertexts, so a plaintext compare would call two
-    // equal tokens "distinct" and flip the guard open — treat undecryptable as
-    // shared instead.
-    const db = { encryptionKey: "raw-key" };
-    const a = await encryptSecret(db, "same-token");
-    const b = await encryptSecret(db, "same-token");
-    expect(a).not.toBe(b); // random IV: equal plaintext, unequal ciphertext
-    expect(await decryptSecret(undefined, a)).toBe(a); // no key ⇒ surfaced as-is
-    expect(
-      await sharesNativeNamespace(
-        { native_url: url, native_token: a },
-        { native_url: url, native_token: b },
-      ),
-    ).toBe(true);
+  it("fails closed on an unparseable url", async () => {
+    expect(await sharesNativeNamespace({ native_url: "not a url" }, { native_url: url })).toBe(
+      true,
+    );
   });
 });
