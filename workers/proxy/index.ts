@@ -517,13 +517,16 @@ async function workosPrimary(
  *     request the IdP has not yet been told an id for, so serializing it costs a
  *     round trip on a request that happens once per resource.
  *
- * Unlike the workos-only create leg, this one does NOT refuse to derive the id
- * from the `externalId` in a shared native namespace. There the minted id
- * addresses a native row, so a tenant naming a neighbour's row would have a later
- * reconcile write over it. Here the native id comes from native's own response to
- * our own POST, so the mapping cannot claim a row this directory did not create —
- * with the one exception of a native 409, where the id is resolved from an unscoped
- * listing rather than minted, and `nativeCreate` applies the shared-namespace guard.
+ * The `externalId` is only minted into the WorkOS row's id where this directory
+ * has the native namespace to itself, exactly as the workos-only create leg does.
+ * The mapping this create writes is keyed on native's own echoed id, so it cannot
+ * claim a row the directory did not create — but the WorkOS row id is itself a
+ * native address later on: an unmapped WorkOS row is what a reconcile replays at
+ * its raw id (VULN-3099), and a native leg that fails leaves exactly such a row.
+ * In a shared namespace the id is minted at random instead, so the row a failed
+ * create leaves behind names nothing in the native app. (The other unscoped id in
+ * this path — a native 409 resolved from an unscoped listing — is guarded in
+ * `nativeCreate`.)
  */
 async function workosPrimaryCreate(
   env: PocEnv,
@@ -545,6 +548,14 @@ async function workosPrimaryCreate(
   delete workosBody.id;
   const externalId =
     typeof parsed.externalId === "string" && parsed.externalId !== "" ? parsed.externalId : null;
+  // The tenant's own value names a native row in a shared namespace, so it only
+  // becomes the WorkOS row's id where this directory owns that namespace. A random
+  // id keeps the two legs concurrent (the mapping is what makes them addressable)
+  // without letting the tenant choose which native row the WorkOS row shadows.
+  const workosMintId =
+    externalId && (await nativeNamespaceIsShared(env.DB, directory))
+      ? crypto.randomUUID()
+      : externalId;
 
   const nativeCreatePromise = nativeCreate(env, directory, kind, requestBody, contentType, url);
   // The mappings mirrorUpsert would write are collected instead of written: the
@@ -552,8 +563,8 @@ async function workosPrimaryCreate(
   // leg finishes, and a mapping keyed on the minted id would claim a native row
   // that does not exist.
   const sink: MappingSink = [];
-  const mirrorPromise = externalId
-    ? mirrorUpsert(env.DB, directory, kind, externalId, workosBody, sink)
+  const mirrorPromise = workosMintId
+    ? mirrorUpsert(env.DB, directory, kind, workosMintId, workosBody, sink)
     : nativeCreatePromise.then((native) =>
         native.id === null
           ? null
