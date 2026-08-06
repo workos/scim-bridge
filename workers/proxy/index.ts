@@ -521,7 +521,9 @@ async function workosPrimary(
  * from the `externalId` in a shared native namespace. There the minted id
  * addresses a native row, so a tenant naming a neighbour's row would have a later
  * reconcile write over it. Here the native id comes from native's own response to
- * our own POST, so the mapping cannot claim a row this directory did not create.
+ * our own POST, so the mapping cannot claim a row this directory did not create —
+ * with the one exception of a native 409, where the id is resolved from an unscoped
+ * listing rather than minted, and `nativeCreate` applies the shared-namespace guard.
  */
 async function workosPrimaryCreate(
   env: PocEnv,
@@ -544,7 +546,7 @@ async function workosPrimaryCreate(
   const externalId =
     typeof parsed.externalId === "string" && parsed.externalId !== "" ? parsed.externalId : null;
 
-  const nativeCreatePromise = nativeCreate(directory, kind, requestBody, contentType, url);
+  const nativeCreatePromise = nativeCreate(env, directory, kind, requestBody, contentType, url);
   // The mappings mirrorUpsert would write are collected instead of written: the
   // row has to be keyed on the id NATIVE reports, which is not known until its
   // leg finishes, and a mapping keyed on the minted id would claim a native row
@@ -667,8 +669,18 @@ async function nativeWrite(
  * state a retry of a partially-failed request finds. Adopting the existing row's
  * id is what makes the retry converge instead of the IdP being stuck failing
  * forever against a resource it already created.
+ *
+ * The row the lookup finds is only this directory's when the native namespace is
+ * this directory's, or when this directory already maps it: the filter runs
+ * against an unscoped listing, and the value it filters on is one the tenant's
+ * own IdP supplied, so in a shared namespace a tenant can name a neighbour's row
+ * and have the 409 hand back its id. Fail closed there, exactly as the backfill
+ * and the replace legs do. The cost is that a retry of a create whose mapping
+ * never landed keeps seeing native's 409 in a shared namespace; the resource is
+ * addressable again once the directory has a native namespace to itself.
  */
 async function nativeCreate(
+  env: PocEnv,
   directory: Directory,
   kind: ResourceType,
   requestBody: string | null,
@@ -707,6 +719,22 @@ async function nativeCreate(
     return {
       result,
       error: "native returned 409 and the existing resource could not be resolved",
+      id: null,
+    };
+  }
+  // Checked in this order so the common case — a retry of a resource this
+  // directory already created — does not pay for the shared-namespace scan.
+  if (
+    !(await getMapping(env.DB, directory.id, kind, existingId)) &&
+    (await nativeNamespaceIsShared(env.DB, directory))
+  ) {
+    return {
+      result,
+      error:
+        "native returned 409 and another directory fronts this native app, so the row it " +
+        "resolves to cannot be attributed to this directory; the create was not adopted " +
+        "rather than claim a neighbour's row. Migrate this directory against a native " +
+        "namespace it has to itself.",
       id: null,
     };
   }
