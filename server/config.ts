@@ -14,6 +14,11 @@ import {
   storeClientToken,
 } from "../workers/shared/client-tokens";
 import { secretsMatch } from "../workers/shared/crypto";
+import {
+  checkNativeNamespace,
+  duplicateNativeNamespaces,
+  duplicateNativeNamespaceWarnings,
+} from "../workers/shared/native-namespace";
 import { newScimToken } from "../workers/shared/ids";
 import type { PocEnv } from "../workers/shared/types";
 
@@ -386,6 +391,12 @@ export async function seedNativeAppConfig(env: PocEnv, config: AppConfig): Promi
  * accepts for that token. Env is authoritative, as with the config keys: a
  * directory dropped from the var loses its row on the next boot, so it can no
  * longer resolve an event or hold on to a proxy token.
+ *
+ * `DIRECTORIES_JSON` carries no `native_url` and `reconcileDirectories` writes
+ * none, so this path cannot itself put two directories on one native namespace
+ * (ENT-6774) — a row it creates addresses no native app at all. Rows that
+ * carried a URL before this role took over the database still can, which is
+ * what `reportNativeNamespaceDuplicates` covers at boot.
  */
 export async function seedNativeAppDirectories(env: PocEnv, config: AppConfig): Promise<void> {
   await reconcileDirectories(env.DB, config.directories);
@@ -408,9 +419,19 @@ export async function seedDemoDirectory(env: PocEnv, config: AppConfig): Promise
     await adoptSeededDemoDirectory(env, config, existing);
     return;
   }
+  const endpoints = bundledEndpoints(config);
+  // Unreachable while the guard above returns on any existing directory — there is
+  // nothing to collide with. Kept for the same reason the six downstream guards
+  // are (ENT-6774): if that precondition is ever relaxed, seeding must not be the
+  // one path that can still mint a second directory on an occupied namespace.
+  const namespaceError = checkNativeNamespace(endpoints.native_url, existing);
+  if (namespaceError) {
+    console.warn(`WARNING: skipped seeding the demo directory. ${namespaceError}`);
+    return;
+  }
   const { id, proxy_token } = await insertDirectory(env.DB, {
     name: "Demo directory",
-    ...bundledEndpoints(config),
+    ...endpoints,
     native_token: (await getConfig(env.DB, "native.scim_token")) ?? "",
     workos_token: (await getConfig(env.DB, "mock_workos.scim_token")) ?? "",
   });
@@ -425,6 +446,29 @@ export async function seedDemoDirectory(env: PocEnv, config: AppConfig): Promise
   await setConfig(env.DB, DEMO_DIRECTORY_ID_KEY, id);
   // The demo runs one directory you actively watch, so persist its logs.
   await setDirectoryLogPersistence(env.DB, id, true);
+}
+
+/**
+ * Warn at boot about directories that already share a native SCIM namespace,
+ * and return how many groups were found.
+ *
+ * Deliberately not fatal. A database written before ENT-6774 may hold two
+ * directories on one endpoint, and the only place an operator can repair that
+ * is the panel this process serves — refusing to start would lock them out of
+ * the fix. This is the opposite call to the panel-auth refusal above, and for
+ * the opposite reason: there the unsafe state is *serving credentials*, which
+ * stops the moment the process does; here the unsafe state is data, which
+ * outlives the process and needs the panel to correct.
+ *
+ * The panel repeats these on the directory list, because nobody reads container
+ * logs from a month ago.
+ */
+export async function reportNativeNamespaceDuplicates(env: PocEnv): Promise<number> {
+  const duplicates = duplicateNativeNamespaces(await listDirectories(env.DB));
+  for (const warning of duplicateNativeNamespaceWarnings(duplicates)) {
+    console.warn(`WARNING: ${warning}`);
+  }
+  return duplicates.length;
 }
 
 /** Both upstream legs of the seeded demo directory: this process's own fakes. */

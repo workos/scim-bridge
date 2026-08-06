@@ -1,10 +1,16 @@
-import type { ActionFunctionArgs } from "react-router";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { RouterContextProvider } from "react-router";
 import { afterEach, describe, expect, it } from "vitest";
-import { action } from "../app/routes/panel/home";
+import { action, loader as homeLoader } from "../app/routes/panel/home";
+import { action as overviewAction } from "../app/routes/panel/directory-overview";
 import { datastoreContext, demoModeContext } from "../app/context";
 import proxyWorker from "../workers/proxy/index";
-import { getDirectoryByToken, insertDirectory, listDirectories } from "../workers/shared/db";
+import {
+  getDirectoryById,
+  getDirectoryByToken,
+  insertDirectory,
+  listDirectories,
+} from "../workers/shared/db";
 import { hashProxyToken } from "../workers/shared/crypto";
 import { clientTokenFor } from "../workers/shared/client-tokens";
 import type { Directory, PocEnv } from "../workers/shared/types";
@@ -14,6 +20,7 @@ import {
   createEnv,
   installFakeUpstreams,
   scimJson,
+  seedDirectory,
   type FakeUpstreams,
 } from "./helpers";
 
@@ -344,6 +351,296 @@ describe("directory import", () => {
       const row = await only(env);
       expect(await clientTokenFor(env.DB, row.id)).toBeNull();
       expect(await configValues(env)).not.toContain(IDP_TOKEN);
+    });
+  });
+});
+
+/**
+ * One directory per native SCIM namespace (ENT-6774) — the three panel paths.
+ *
+ * Two directories on one native endpoint share a single set of SCIM ids, so the
+ * bridge cannot tell whose record a native id names. Six downstream guards
+ * already defend the consequences (#32, #40, #49, #51, #57, #67); these three
+ * checks are what make the situation impossible to configure in the first place.
+ *
+ * They live in this file, rather than beside the rest of the namespace suite in
+ * native-namespace.test.ts, because it is the one test the type gate permits to
+ * import a panel route (scripts/check-type-gate.mjs).
+ */
+const NS_HOST = "https://app.example.com";
+const NS_ENDPOINT = `${NS_HOST}/scim/v2`;
+
+/** Post a directory page's form for a given directory id. */
+async function postOverview(
+  env: PocEnv,
+  id: string,
+  fields: Record<string, string>,
+): Promise<{ error?: string } | Response> {
+  const context = new RouterContextProvider();
+  context.set(datastoreContext, env.DB);
+  context.set(demoModeContext, false);
+  return (await overviewAction({
+    request: new Request(`https://bridge.test/panel/directories/${id}`, {
+      method: "POST",
+      body: new URLSearchParams(fields),
+    }),
+    context,
+    params: { id },
+  } as unknown as ActionFunctionArgs)) as { error?: string } | Response;
+}
+
+async function loadHome(env: PocEnv): Promise<{ namespaceWarnings: string[] }> {
+  const context = new RouterContextProvider();
+  context.set(datastoreContext, env.DB);
+  context.set(demoModeContext, false);
+  return (await homeLoader({
+    request: new Request("https://bridge.test/panel"),
+    context,
+    params: {},
+  } as unknown as LoaderFunctionArgs)) as { namespaceWarnings: string[] };
+}
+
+/** This file's `submit`, narrowed to what the namespace assertions read. */
+async function nsSubmit(
+  env: PocEnv,
+  fields: Record<string, string>,
+): Promise<ImportResult | Response> {
+  return submit(env, fields);
+}
+
+function createFields(overrides: Record<string, string> = {}): Record<string, string> {
+  return {
+    intent: "create-directory",
+    name: "Globex — Entra",
+    native_url: NS_ENDPOINT,
+    ...overrides,
+  };
+}
+
+/** The full CSV column order the import expects. */
+function csvRow(name: string, nativeUrl: string): string {
+  return `${name},${nativeUrl},tok_native,https://api.workos.com/scim/v2.0/x,tok_workos,,`;
+}
+
+describe("one directory per native SCIM namespace", () => {
+  describe("path 1 — the single-directory form", () => {
+    it("refuses a create on an endpoint another directory already uses", async () => {
+      const env = await createEnv();
+      const acme = await seedDirectory(env.DB, { name: "Acme — Okta", native_url: NS_ENDPOINT });
+
+      const result = (await nsSubmit(env, createFields())) as { error?: string };
+
+      expect(result.error).toContain("Acme — Okta");
+      expect(result.error).toContain(acme.id);
+      // Refused, not merely reported: the row must not exist.
+      await only(env);
+    });
+
+    it("refuses the trailing-slash spelling a string comparison would let through", async () => {
+      const env = await createEnv();
+      await seedDirectory(env.DB, { name: "Acme — Okta", native_url: NS_ENDPOINT });
+
+      const result = (await nsSubmit(env, createFields({ native_url: `${NS_ENDPOINT}/` }))) as {
+        error?: string;
+      };
+
+      expect(result.error).toMatch(/already in use by/);
+      await only(env);
+    });
+
+    it("creates a directory on its own path under the same host", async () => {
+      const env = await createEnv();
+      await seedDirectory(env.DB, { name: "Acme — Okta", native_url: `${NS_HOST}/scim/acme/v2` });
+
+      const result = await nsSubmit(env, createFields({ native_url: `${NS_HOST}/scim/globex/v2` }));
+
+      // A redirect to the new directory's page is the success path.
+      expect(result).toBeInstanceOf(Response);
+      expect(await listDirectories(env.DB)).toHaveLength(2);
+    });
+
+    it("still creates a directory with no native endpoint alongside one that has it", async () => {
+      const env = await createEnv();
+      await seedDirectory(env.DB, { name: "Acme — Okta", native_url: NS_ENDPOINT });
+
+      const result = await nsSubmit(env, createFields({ native_url: "" }));
+
+      expect(result).toBeInstanceOf(Response);
+      expect(await listDirectories(env.DB)).toHaveLength(2);
+    });
+  });
+
+  describe("path 2 — the bulk CSV import", () => {
+    it("refuses the whole file when two of its own rows share an endpoint", async () => {
+      const env = await createEnv();
+      const csv = [
+        csvRow("Acme", `${NS_HOST}/scim/acme/v2`),
+        csvRow("Globex", NS_ENDPOINT),
+        csvRow("Initech", `${NS_ENDPOINT}/`),
+      ].join("\n");
+
+      const result = (await nsSubmit(env, { intent: "bulk-import", csv })) as { error?: string };
+
+      // Atomic: row 1 was perfectly valid and must NOT have landed. A partly
+      // applied import leaves an operator with no record of which rows took.
+      expect(await listDirectories(env.DB)).toHaveLength(0);
+      expect(result.error).toContain("Nothing was imported");
+      // Names both sides of the collision by row, since CSV rows have no ids yet.
+      expect(result.error).toContain("Row 3 (Initech)");
+      expect(result.error).toContain('row 2 ("Globex") of this same import');
+    });
+
+    it("refuses the whole file when one row takes a stored directory's endpoint", async () => {
+      const env = await createEnv();
+      const acme = await seedDirectory(env.DB, { name: "Acme — Okta", native_url: NS_ENDPOINT });
+      const csv = [
+        csvRow("Globex", `${NS_HOST}/scim/globex/v2`),
+        csvRow("Initech", `${NS_HOST}/scim/v2/`),
+      ].join("\n");
+
+      const result = (await nsSubmit(env, { intent: "bulk-import", csv })) as { error?: string };
+
+      await only(env);
+      expect(result.error).toContain("Row 2 (Initech)");
+      expect(result.error).toContain(acme.id);
+    });
+
+    it("imports a file whose rows each have their own path", async () => {
+      const env = await createEnv();
+      const csv = [
+        csvRow("Acme", `${NS_HOST}/scim/acme/v2`),
+        csvRow("Globex", `${NS_HOST}/scim/globex/v2`),
+        // A row with no endpoint yet is not a duplicate of the other blank one.
+        csvRow("Initech", ""),
+        csvRow("Umbrella", ""),
+      ].join("\n");
+
+      const result = (await nsSubmit(env, { intent: "bulk-import", csv })) as {
+        imported?: number;
+        importErrors?: string[];
+      };
+
+      expect(result.importErrors).toEqual([]);
+      expect(result.imported).toBe(4);
+      expect(await listDirectories(env.DB)).toHaveLength(4);
+    });
+
+    it("ignores the endpoint of a row that would not be imported anyway", async () => {
+      const env = await createEnv();
+      // Row 1 has no name, so it is skipped before any insert. Its endpoint must
+      // not refuse row 2, which is the row that actually lands there.
+      const csv = [csvRow("", NS_ENDPOINT), csvRow("Globex", NS_ENDPOINT)].join("\n");
+
+      const result = (await nsSubmit(env, { intent: "bulk-import", csv })) as {
+        imported?: number;
+        importErrors?: string[];
+      };
+
+      expect(result.imported).toBe(1);
+      expect(result.importErrors).toEqual(["Row 1: missing a name in the first column."]);
+      expect((await only(env)).native_url).toBe(NS_ENDPOINT);
+    });
+
+    it("reports an unparseable endpoint per row and imports nothing", async () => {
+      const env = await createEnv();
+      const csv = [
+        csvRow("Acme", `${NS_HOST}/scim/acme/v2`),
+        csvRow("Globex", "app.example.com/scim/v2"),
+      ].join("\n");
+
+      const result = (await nsSubmit(env, { intent: "bulk-import", csv })) as { error?: string };
+
+      expect(result.error).toContain("Row 2 (Globex)");
+      expect(result.error).toMatch(/not a URL the bridge can parse/);
+      expect(await listDirectories(env.DB)).toHaveLength(0);
+    });
+  });
+
+  describe("path 3 — save-native, which can move a directory", () => {
+    it("refuses moving a directory onto another's endpoint", async () => {
+      const env = await createEnv();
+      const acme = await seedDirectory(env.DB, { name: "Acme — Okta", native_url: NS_ENDPOINT });
+      const globex = await seedDirectory(env.DB, {
+        name: "Globex",
+        native_url: `${NS_HOST}/scim/globex/v2`,
+      });
+
+      const result = (await postOverview(env, globex.id, {
+        intent: "save-native",
+        native_url: `${NS_ENDPOINT}/`,
+        native_token: "tok",
+      })) as { error?: string };
+
+      expect(result.error).toContain(acme.id);
+      // The move must not have happened — a refusal that still wrote the row
+      // would be the worst of both.
+      const after = await getDirectoryById(env.DB, globex.id);
+      expect(after?.native_url).toBe(`${NS_HOST}/scim/globex/v2`);
+    });
+
+    it("lets a directory re-save its own endpoint, including a respelling", async () => {
+      const env = await createEnv();
+      await seedDirectory(env.DB, { name: "Acme — Okta", native_url: `${NS_HOST}/scim/acme/v2` });
+      const globex = await seedDirectory(env.DB, { name: "Globex", native_url: NS_ENDPOINT });
+
+      const result = (await postOverview(env, globex.id, {
+        intent: "save-native",
+        native_url: `${NS_ENDPOINT}/`,
+        native_token: "rotated",
+      })) as { error?: string };
+
+      // Excluding self is what makes rotating the token on an unchanged URL work.
+      expect(result.error).toBeUndefined();
+      const after = await getDirectoryById(env.DB, globex.id);
+      expect(after?.native_url).toBe(`${NS_ENDPOINT}/`);
+      expect(after?.native_token).toBe("rotated");
+    });
+
+    it("lets a directory move to a free path, and clear its endpoint", async () => {
+      const env = await createEnv();
+      await seedDirectory(env.DB, { name: "Acme — Okta", native_url: NS_ENDPOINT });
+      const globex = await seedDirectory(env.DB, {
+        name: "Globex",
+        native_url: `${NS_HOST}/scim/globex/v2`,
+      });
+
+      expect(
+        await postOverview(env, globex.id, {
+          intent: "save-native",
+          native_url: `${NS_HOST}/scim/globex-2/v2`,
+          native_token: "tok",
+        }),
+      ).toEqual({});
+      expect(
+        await postOverview(env, globex.id, {
+          intent: "save-native",
+          native_url: "",
+          native_token: "",
+        }),
+      ).toEqual({});
+      expect((await getDirectoryById(env.DB, globex.id))?.native_url).toBe("");
+    });
+  });
+  describe("a deployment that already violates the rule", () => {
+    it("surfaces the conflict on the panel's directory list", async () => {
+      const env = await createEnv();
+      const acme = await seedDirectory(env.DB, { name: "Acme — Okta", native_url: NS_ENDPOINT });
+      const globex = await seedDirectory(env.DB, { name: "Globex", native_url: `${NS_ENDPOINT}/` });
+
+      const { namespaceWarnings } = await loadHome(env);
+
+      // Container logs from a month ago are not where this gets found.
+      expect(namespaceWarnings).toHaveLength(1);
+      expect(namespaceWarnings[0]).toContain(acme.id);
+      expect(namespaceWarnings[0]).toContain(globex.id);
+      expect(namespaceWarnings[0]).toContain(`${NS_HOST}/scim/<tenant>/v2`);
+    });
+
+    it("shows nothing on a healthy fleet", async () => {
+      const env = await createEnv();
+      await seedDirectory(env.DB, { name: "Acme", native_url: `${NS_HOST}/scim/acme/v2` });
+      await seedDirectory(env.DB, { name: "Globex", native_url: "" });
+      expect((await loadHome(env)).namespaceWarnings).toEqual([]);
     });
   });
 });

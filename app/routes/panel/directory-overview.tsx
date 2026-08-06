@@ -19,6 +19,7 @@ import {
 import {
   getConfig,
   getDirectoryById,
+  listDirectories,
   listNativeWriteFailures,
   setDirectoryLogPersistence,
   rotateProxyToken,
@@ -29,6 +30,7 @@ import {
   withDatastoreRetry,
 } from "../../../workers/shared/db";
 import { publishMintedToken } from "../../../workers/shared/client-tokens";
+import { checkNativeNamespace } from "../../../workers/shared/native-namespace";
 import type { BackfillSummary, Mode, NativeWriteFailure } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
 import { Callout, Card, Code, Flex, Grid, RadioCards, Text, TextField } from "@radix-ui/themes";
@@ -199,10 +201,20 @@ export async function action({
   }
 
   if (intent === "save-native") {
+    const nativeUrl = String(form.get("native_url") ?? "").trim();
+    // This intent can *move* a directory onto an endpoint another already uses,
+    // which is the same hazard as creating it there (ENT-6774). Every other
+    // directory is a candidate; this one is excluded, or re-saving an unchanged
+    // URL would collide with itself.
+    const others = (await listDirectories(db)).filter((other) => other.id !== directory.id);
+    const namespaceError = checkNativeNamespace(nativeUrl, others);
+    if (namespaceError) {
+      return { error: namespaceError };
+    }
     await setDirectoryNative(
       db,
       directory.id,
-      String(form.get("native_url") ?? "").trim(),
+      nativeUrl,
       String(form.get("native_token") ?? "").trim(),
     );
     return {};
