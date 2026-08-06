@@ -159,4 +159,48 @@ describe("VULN-3085 reconcile sweep erases un-repairable divergence rows", () =>
     const rows = await listNativeWriteFailures(env.DB, directory.id);
     expect(rows.some((r) => r.resource_key === "live-during-reconcile")).toBe(true);
   });
+
+  it("does not erase a fresh same-key failure that upserts a pre-existing divergence mid-reconcile", async () => {
+    const directory = await seedDwelling();
+
+    // A create-failure keyed on an IdP path id the WorkOS snapshot does not know,
+    // so the reconcile never replays or per-resource-clears it. It is present when
+    // the reconcile starts (captured attempts = 1).
+    await recordNativeWriteFailure(env.DB, {
+      directory_id: directory.id,
+      resource_type: "Users",
+      resource_key: "orphan-1",
+      method: "PUT",
+      native_status: 500,
+      detail: "WorkOS committed this write; native did not",
+    });
+
+    // While the reconcile runs, live workos-primary traffic records ANOTHER failure
+    // for the SAME key. Because native_write_failures is keyed by
+    // (directory_id, resource_type, resource_key), this upserts the existing row in
+    // place (attempts -> 2) rather than adding one, so a key-only sweep would delete
+    // this still-unresolved fresh failure.
+    fake.route("workos", "GET", "/Users", async () => {
+      await recordNativeWriteFailure(env.DB, {
+        directory_id: directory.id,
+        resource_type: "Users",
+        resource_key: "orphan-1",
+        method: "PUT",
+        native_status: 503,
+        detail: "WorkOS committed this write; native did not",
+      });
+      return listPage([{ id: "wos_2", userName: "two@x.test" }]);
+    });
+    fake.route("workos", "GET", "/Groups", listPage([]));
+    fake.route("native", "PUT", /^\/Users\//, (call) => scimJson(200, call.json()));
+
+    await runReconcileFromWorkos(env.DB, directory);
+
+    // The row changed since the reconcile's start watermark (attempts bumped), so it
+    // is a fresh divergence the reconcile never addressed and must survive.
+    const rows = await listNativeWriteFailures(env.DB, directory.id);
+    const orphan = rows.find((r) => r.resource_key === "orphan-1");
+    expect(orphan).toBeDefined();
+    expect(orphan?.attempts).toBe(2);
+  });
 });

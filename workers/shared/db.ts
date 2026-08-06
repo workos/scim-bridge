@@ -656,24 +656,34 @@ export async function clearNativeWriteFailure(
  *  reached native, leaving a terminated user active while the operator's cutover
  *  gate flips green (VULN-3085) — so DELETE rows are excluded here.
  *
- *  Only the rows named in `priorKeys` (captured at reconcile start) are touched,
+ *  Only the rows captured in `priorRows` (read at reconcile start) are touched,
  *  so a divergence recorded by live `workos-primary` traffic while the reconcile
  *  ran — a resource the replay never pushed — is left standing rather than swept
  *  on a `directory_id`-only match. Rows the replay genuinely rewrote are already
- *  cleared per-resource by `clearNativeWriteFailure`. */
+ *  cleared per-resource by `clearNativeWriteFailure`.
+ *
+ *  The delete is additionally gated on the captured `attempts`, which
+ *  `recordNativeWriteFailure` increments on every upsert. `native_write_failures`
+ *  is keyed by `(directory_id, resource_type, resource_key)`, so a live failure
+ *  for a key that was already divergent when the reconcile began updates that row
+ *  in place rather than adding one. Matching on the key alone would then delete
+ *  the fresh, still-unresolved failure; requiring the original `attempts` means a
+ *  row that changed since the watermark no longer matches and survives. `attempts`
+ *  is a monotonic row version, so this holds even for two upserts in the same
+ *  clock second (`last_seen_at` alone would not). */
 export async function clearReplayedDivergences(
   db: Datastore,
   directoryId: string,
-  priorKeys: { resource_type: ResourceType; resource_key: string }[],
+  priorRows: { resource_type: ResourceType; resource_key: string; attempts: number }[],
 ): Promise<void> {
-  for (const { resource_type, resource_key } of priorKeys) {
+  for (const { resource_type, resource_key, attempts } of priorRows) {
     await withDatastoreRetry(() =>
       db
         .prepare(
           "DELETE FROM native_write_failures WHERE directory_id = ? AND resource_type = ? " +
-            "AND resource_key = ? AND method != 'DELETE'",
+            "AND resource_key = ? AND attempts = ? AND method != 'DELETE'",
         )
-        .bind(directoryId, resource_type, resource_key)
+        .bind(directoryId, resource_type, resource_key, attempts)
         .run(),
     );
   }
