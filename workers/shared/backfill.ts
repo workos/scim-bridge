@@ -5,8 +5,8 @@ import {
   clearReplayedDivergences,
   getMapping,
   insertProxyLog,
-  listNativeWriteFailures,
   listOtherMappingsByNativeId,
+  markDivergencesForSweep,
   shouldPersistLogs,
   upsertMapping,
   upsertMappings,
@@ -319,11 +319,13 @@ export async function runReconcileFromWorkos(
   const maps = await loadIdMaps(db, directory.id);
   const toNative = makeTranslator(maps.workosToNative);
 
-  // Captured before the snapshot so the directory-wide clear below can only ever
-  // retire rows that predate this reconcile. A divergence recorded by live
-  // workos-primary traffic while the reconcile runs is a resource the replay
-  // never pushed, so it must survive (VULN-3085 race variant).
-  const priorDivergences = await listNativeWriteFailures(db, directory.id);
+  // Stamped before the snapshot so the clear below can only ever retire rows that
+  // predate this reconcile. A divergence recorded by live workos-primary traffic
+  // while the reconcile runs is a resource the replay never pushed, so it must
+  // survive (VULN-3085 race variant) — including when it lands on a key the
+  // reconcile had already repaired and cleared (VULN-3086).
+  const sweepToken = crypto.randomUUID();
+  await markDivergencesForSweep(db, directory.id, sweepToken);
 
   const users = await snapshot(
     directory.workos_url,
@@ -391,7 +393,7 @@ export async function runReconcileFromWorkos(
   // repair went one at a time above, and the rest are still true.
   const replayed = summary.users.failed === 0 && summary.groups.failed === 0;
   if (replayed && users.complete && groups.complete) {
-    await clearReplayedDivergences(db, directory.id, priorDivergences);
+    await clearReplayedDivergences(db, directory.id, sweepToken);
   }
 
   return summary;

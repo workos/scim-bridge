@@ -609,7 +609,7 @@ export async function recordNativeWriteFailure(
           "ON CONFLICT (directory_id, resource_type, resource_key) DO UPDATE SET " +
           "method = excluded.method, native_status = excluded.native_status, " +
           "detail = excluded.detail, attempts = native_write_failures.attempts + 1, " +
-          "last_seen_at = datetime('now')",
+          "last_seen_at = datetime('now'), sweep_token = NULL",
       )
       .bind(
         failure.directory_id,
@@ -656,37 +656,51 @@ export async function clearNativeWriteFailure(
  *  reached native, leaving a terminated user active while the operator's cutover
  *  gate flips green (VULN-3085) — so DELETE rows are excluded here.
  *
- *  Only the rows captured in `priorRows` (read at reconcile start) are touched,
- *  so a divergence recorded by live `workos-primary` traffic while the reconcile
- *  ran — a resource the replay never pushed — is left standing rather than swept
- *  on a `directory_id`-only match. Rows the replay genuinely rewrote are already
- *  cleared per-resource by `clearNativeWriteFailure`.
+ *  Only the rows captured at reconcile start are touched, so a divergence recorded
+ *  by live `workos-primary` traffic while the reconcile ran — a resource the replay
+ *  never pushed — is left standing rather than swept on a `directory_id`-only
+ *  match. Rows the replay genuinely rewrote are already cleared per-resource by
+ *  `clearNativeWriteFailure`.
  *
- *  The delete is additionally gated on the captured `attempts`, which
- *  `recordNativeWriteFailure` increments on every upsert. `native_write_failures`
- *  is keyed by `(directory_id, resource_type, resource_key)`, so a live failure
- *  for a key that was already divergent when the reconcile began updates that row
- *  in place rather than adding one. Matching on the key alone would then delete
- *  the fresh, still-unresolved failure; requiring the original `attempts` means a
- *  row that changed since the watermark no longer matches and survives. `attempts`
- *  is a monotonic row version, so this holds even for two upserts in the same
- *  clock second (`last_seen_at` alone would not). */
+ *  Which rows those are is read from the `sweep_token` this reconcile stamped on
+ *  them at its start (`markDivergencesForSweep`), not inferred from their column
+ *  values. A row's (key, `attempts`) pair is not an identity: `attempts` restarts
+ *  at the schema default whenever a row is deleted and re-created, which happens
+ *  routinely mid-reconcile — the per-resource repair clears the row, then a live
+ *  failure on the same key INSERTs a fresh one. Matching on those values let the
+ *  sweep delete a fresh, unresolved divergence in place of the retired one it
+ *  resembled (VULN-3086). A stamp cannot be resurrected that way: a re-created row
+ *  is stamp-less, and an in-place upsert clears the stamp. */
 export async function clearReplayedDivergences(
   db: Datastore,
   directoryId: string,
-  priorRows: { resource_type: ResourceType; resource_key: string; attempts: number }[],
+  sweepToken: string,
 ): Promise<void> {
-  for (const { resource_type, resource_key, attempts } of priorRows) {
-    await withDatastoreRetry(() =>
-      db
-        .prepare(
-          "DELETE FROM native_write_failures WHERE directory_id = ? AND resource_type = ? " +
-            "AND resource_key = ? AND attempts = ? AND method != 'DELETE'",
-        )
-        .bind(directoryId, resource_type, resource_key, attempts)
-        .run(),
-    );
-  }
+  await withDatastoreRetry(() =>
+    db
+      .prepare(
+        "DELETE FROM native_write_failures WHERE directory_id = ? AND sweep_token = ? " +
+          "AND method != 'DELETE'",
+      )
+      .bind(directoryId, sweepToken)
+      .run(),
+  );
+}
+
+/** Stamp a directory's current divergence rows so a reconcile that ends clean can
+ *  tell them apart from anything recorded while it ran. Called before the snapshot;
+ *  every later write to the ledger leaves the row stamp-less. */
+export async function markDivergencesForSweep(
+  db: Datastore,
+  directoryId: string,
+  sweepToken: string,
+): Promise<void> {
+  await withDatastoreRetry(() =>
+    db
+      .prepare("UPDATE native_write_failures SET sweep_token = ? WHERE directory_id = ?")
+      .bind(sweepToken, directoryId)
+      .run(),
+  );
 }
 
 export async function listNativeWriteFailures(
