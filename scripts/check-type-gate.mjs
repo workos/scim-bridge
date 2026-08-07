@@ -32,7 +32,7 @@ const PANEL_IMPORT_EXCEPTION = "directory-import.test.ts";
  * react-router plus workers/shared/datastore, nothing else. Anything added here
  * must be in tsconfig.check.json's include and stay clear of app/vendor.
  */
-const GATED_APP_MODULES = new Set(["../app/context"]);
+const GATED_APP_MODULES = new Set(["../app/context", "../app/routes/panel/reconcile"]);
 const APP_IMPORT = /from "(\.\.\/app\/[^"]*)"|import\("(\.\.\/app\/[^"]*)"\)/g;
 
 function runGate() {

@@ -17,6 +17,13 @@ import { callIdpSimulator } from "./idp-simulator";
 import { FlowRail } from "./flow-rail";
 import { FieldLabel, trimTrailingSlash } from "./ui";
 import {
+  reconcileGroups,
+  reconcileUsers,
+  type DirRow,
+  type GroupRow,
+  type Presence,
+} from "./reconcile";
+import {
   Box,
   Callout,
   Card,
@@ -49,15 +56,6 @@ const ACTION_BADGE_COLORS = {
   skipped: "gray",
   ignored: "yellow",
 } as const;
-
-interface DirRow {
-  name: string;
-  active: number;
-}
-interface GroupRow {
-  name: string;
-  member_count: number;
-}
 
 const REFRESH_MS = 3000;
 
@@ -291,71 +289,6 @@ export async function action({ context, request }: Route.ActionArgs) {
   return { error: "That action is not recognized." };
 }
 
-// --- reconciliation -------------------------------------------------------
-
-type Presence = "active" | "inactive" | "absent";
-
-interface UserReconRow {
-  name: string;
-  native: Presence;
-  workos: Presence;
-  idp: Presence;
-  diverged: boolean;
-}
-
-function presence(row: DirRow | undefined): Presence {
-  if (!row) return "absent";
-  return row.active === 1 ? "active" : "inactive";
-}
-
-function reconcileUsers(users: {
-  native: DirRow[];
-  workos: DirRow[];
-  idp: DirRow[];
-}): UserReconRow[] {
-  const byName = (rows: DirRow[]) => new Map(rows.map((r) => [r.name, r]));
-  const n = byName(users.native);
-  const w = byName(users.workos);
-  const i = byName(users.idp);
-  const names = [...new Set([...n.keys(), ...w.keys(), ...i.keys()])].sort();
-  return names.map((name) => {
-    const native = presence(n.get(name));
-    const workos = presence(w.get(name));
-    return { name, native, workos, idp: presence(i.get(name)), diverged: native !== workos };
-  });
-}
-
-interface GroupReconRow {
-  name: string;
-  native: number | null;
-  workos: number | null;
-  idp: number | null;
-  diverged: boolean;
-}
-
-function reconcileGroups(groups: {
-  native: GroupRow[];
-  workos: GroupRow[];
-  idp: GroupRow[];
-}): GroupReconRow[] {
-  const byName = (rows: GroupRow[]) => new Map(rows.map((r) => [r.name, r.member_count]));
-  const n = byName(groups.native);
-  const w = byName(groups.workos);
-  const i = byName(groups.idp);
-  const names = [...new Set([...n.keys(), ...w.keys(), ...i.keys()])].sort();
-  return names.map((name) => {
-    const native = n.has(name) ? n.get(name)! : null;
-    const workos = w.has(name) ? w.get(name)! : null;
-    return {
-      name,
-      native,
-      workos,
-      idp: i.has(name) ? i.get(name)! : null,
-      diverged: native !== workos,
-    };
-  });
-}
-
 // --- flow rail ------------------------------------------------------------
 
 // --- cells ----------------------------------------------------------------
@@ -437,6 +370,8 @@ export default function PanelLive() {
   const groupRows = reconcileGroups(groups);
   const userDiffs = userRows.filter((r) => r.diverged).length;
   const groupDiffs = groupRows.filter((r) => r.diverged).length;
+  const tombstones = userRows.filter((r) => r.tombstone).length;
+  const liveUsers = userRows.length - tombstones;
   const converged = userDiffs === 0 && groupDiffs === 0;
   const showDiff = workosConfigured && workosReachable;
   const settingMode = navigation.formData?.get("intent") === "set-mode";
@@ -551,19 +486,25 @@ export default function PanelLive() {
       ) : converged ? (
         <Callout.Root color="green">
           <Callout.Text>
-            Native app and WorkOS hold the same directory — {userRows.length}{" "}
-            {userRows.length === 1 ? "user" : "users"}, {groupRows.length}{" "}
+            Native app and WorkOS hold the same directory — {liveUsers}{" "}
+            {liveUsers === 1 ? "user" : "users"}, {groupRows.length}{" "}
             {groupRows.length === 1 ? "group" : "groups"}, fully converged.
+            {tombstones > 0
+              ? ` Not counted: ${tombstones} deleted ${tombstones === 1 ? "user" : "users"} WorkOS keeps as inactive SCIM ${tombstones === 1 ? "record" : "records"}, listed below.`
+              : ""}
           </Callout.Text>
         </Callout.Root>
       ) : (
         <Callout.Root color="yellow">
           <Callout.Text>
             Native app and WorkOS differ on {userDiffs} {userDiffs === 1 ? "user" : "users"} and{" "}
-            {groupDiffs} {groupDiffs === 1 ? "group" : "groups"}. That is expected mid-migration —
-            dual-write plus a backfill converges them, and workos-primary keeps them converged
-            because the proxy writes both sides; workos-only diverges them until the listener
-            catches native up.
+            {groupDiffs} {groupDiffs === 1 ? "group" : "groups"}
+            {tombstones > 0
+              ? `, excluding ${tombstones} deleted ${tombstones === 1 ? "user" : "users"} WorkOS keeps as inactive SCIM ${tombstones === 1 ? "record" : "records"} after the native app dropped ${tombstones === 1 ? "its" : "their"} row`
+              : ""}
+            . That is expected mid-migration — dual-write plus a backfill converges them, and
+            workos-primary keeps them converged because the proxy writes both sides; workos-only
+            diverges them until the listener catches native up.
           </Callout.Text>
         </Callout.Root>
       )}
@@ -576,7 +517,9 @@ export default function PanelLive() {
             </Heading>
             <Text color="gray" size="2">
               One row per email across all three directories. Highlighted rows differ between the
-              native app and WorkOS.
+              native app and WorkOS. A <Code>deleted</Code> row is one WorkOS retains as an inactive
+              SCIM record after the native app dropped its row — a difference in what a delete
+              leaves behind, not divergence, so it is shown but not counted.
             </Text>
           </Flex>
           {userRows.length === 0 ? (
@@ -598,9 +541,27 @@ export default function PanelLive() {
                 {userRows.map((row) => (
                   <Table.Row
                     key={row.name}
-                    style={showDiff && row.diverged ? { background: "var(--yellow-2)" } : undefined}
+                    style={
+                      showDiff && row.diverged
+                        ? { background: "var(--yellow-2)" }
+                        : // Quiet, not hidden: the record is still the answer to
+                          // "where did that user go", so it stays inspectable and
+                          // recedes rather than disappearing.
+                          row.tombstone
+                          ? { opacity: 0.6 }
+                          : undefined
+                    }
                   >
-                    <Table.Cell>{row.name}</Table.Cell>
+                    <Table.Cell>
+                      <Flex align="center" gap="2" wrap="wrap">
+                        <Text size="2">{row.name}</Text>
+                        {row.tombstone ? (
+                          <Badge color="white" lowContrast>
+                            deleted
+                          </Badge>
+                        ) : null}
+                      </Flex>
+                    </Table.Cell>
                     <Table.Cell>
                       <PresenceCell state={row.native} />
                     </Table.Cell>
