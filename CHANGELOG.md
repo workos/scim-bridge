@@ -41,6 +41,12 @@ credentials are stored, both of which are worth a minor bump.
 
 ### Fixed
 
+- **A `DELETE` the native app reports as already gone now still deletes from
+  WorkOS** in `dual-write`. Previously a native `404` cancelled the mirror, so
+  the user stayed live in WorkOS — and because the proxy returns native's `404`
+  and the IdP treats an idempotent delete as done, it was never retried and
+  nothing else removed the row. Only `DELETE` and only `404` behave this way;
+  a `404` on `POST`/`PUT`/`PATCH` still suppresses the mirror.
 - A `PUT` that replaces a resource no longer adopts the path id as a mapping
   when the body disagrees — the case that could cross-link two resources.
 - Native rows are never attributed by a tenant-supplied `externalId` alone.
