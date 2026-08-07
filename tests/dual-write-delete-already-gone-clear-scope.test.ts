@@ -83,6 +83,30 @@ describe("dual-write DELETE already-gone: scope of the divergence clear", () => 
     ).toEqual(["u9", "victim@acme.test"]);
   });
 
+  it("ignores an id in the 404 body, which is an error rather than a resource", async () => {
+    const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+    await seedDeprovisioningGaps(directory.id);
+    fake.route(
+      "native",
+      "DELETE",
+      "/Users/zzz-nonexistent",
+      scimJson(404, { id: "u9", detail: "no such user" }),
+    );
+    fake.route("workos", "DELETE", "/Users/zzz-nonexistent", scimJson(404, { detail: "gone" }));
+
+    const ctx = createCtx();
+    await proxyWorker.fetch(
+      proxyRequest(directory, "DELETE", "/scim/v2/Users/zzz-nonexistent"),
+      env,
+      ctx,
+    );
+    await ctx.drain();
+
+    expect(
+      (await listNativeWriteFailures(env.DB, directory.id)).map((row) => row.resource_key).sort(),
+    ).toEqual(["u9", "victim@acme.test"]);
+  });
+
   it("leaves rows standing for a DELETE that names no resource at all", async () => {
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });
     await seedDeprovisioningGaps(directory.id);

@@ -213,21 +213,21 @@ async function clearDivergenceForWrite(
   method: string,
   requestBody: string | null,
   native: UpstreamResult,
-  { keysFromRequestBody }: { keysFromRequestBody: boolean } = { keysFromRequestBody: true },
+  { pathKeysOnly }: { pathKeysOnly: boolean } = { pathKeysOnly: false },
 ): Promise<void> {
   const kind = scimPath.kind;
   if (kind === null) return;
-  const sent = keysFromRequestBody ? parseJson(requestBody) : null;
-  const returned = parseJson(native.bodyText);
+  const sent = pathKeysOnly ? null : parseJson(requestBody);
+  const returned = pathKeysOnly ? null : parseJson(native.bodyText);
   // Every key a row for this resource could carry. A create is not addressed by an
   // id yet, so `workosPrimaryCreate` files it under the externalId or unique
   // attribute the IdP will retry with — and the retry that repairs it, after a
   // rollback, is a POST with no path id at all.
   //
-  // The body-derived keys name whatever the caller chose to send rather than the
-  // resource an upstream spoke about, so they are only usable on behalf of a write
-  // an upstream confirmed it applied. Callers without that confirmation pass
-  // `keysFromRequestBody: false`.
+  // Only the path keys are the caller's request read back. The rest are the write
+  // itself — what was sent and what native echoed for it — so they are usable only
+  // on behalf of a write native says it applied. Callers without that pass
+  // `pathKeysOnly`.
   const keys = new Set(
     [
       scimPath.id,
@@ -324,20 +324,21 @@ async function dualWrite(
         // absent is not a write native is still missing — but on narrower terms
         // than a 2xx, in both what it may retire and when.
         //
-        // A 404 is native declining to speak about the path: it applied no write and
-        // echoed no body, so the id in the path is the only key it corroborates.
-        // Honouring the caller's `externalId`/`userName` on that evidence would let
-        // any holder of the directory's proxy token retire rows for resources the
-        // request never touched, by naming them in the body of a DELETE for an id
-        // that does not exist — silently, with `log_persistence` off, and a `DELETE`
-        // gap erased that way is a terminated user the panel stops reporting as live.
+        // A 404 is native declining to speak about the path: it applied no write, and
+        // its body is an error rather than a resource, so the id in the path is the
+        // only key it corroborates. Honouring the caller's `externalId`/`userName` on
+        // that evidence would let any holder of the directory's proxy token retire
+        // rows for resources the request never touched, by naming them in the body of
+        // a DELETE for an id that does not exist — silently, with `log_persistence`
+        // off, and a `DELETE` gap erased that way is a terminated user the panel
+        // stops reporting as live.
         //
         // Nor is the row stale until the mirror has run: on a 2xx native holds the
         // write whatever WorkOS does, but here nothing converges until WorkOS drops
         // the resource native already lacks.
         if (deleteAlreadyGone && mirrored) {
           await clearDivergenceForWrite(env.DB, directory, scimPath, method, requestBody, native, {
-            keysFromRequestBody: false,
+            pathKeysOnly: true,
           });
         }
       }
