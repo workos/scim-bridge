@@ -15,6 +15,39 @@ export const meta: MetaFunction = () => [
 
 const DEMO_PATHS = ["/panel/live", "/panel/native", "/panel/listener", "/panel/idp"];
 
+/**
+ * The wordmark: the name between two chevrons.
+ *
+ * The chevrons take the theme's accent rather than WorkOS's brand indigo,
+ * deliberately — see the note in app/root.tsx. A customer self-hosts this, so
+ * it should read as their tool, not as WorkOS's admin UI, and hardcoding the
+ * brand colour here would undo that one element at a time.
+ *
+ * They are set lighter than the name and spaced off it: at a nav's 17px a
+ * chevron at the same weight closes up against the S and reads as part of the
+ * letter. Tracking is tightened to match, because the guillemets add optical
+ * width the name does not.
+ */
+function Logotype() {
+  return (
+    <span style={{ letterSpacing: "-0.03em", whiteSpace: "nowrap" }}>
+      <span
+        aria-hidden="true"
+        style={{ color: "var(--accent-9)", fontWeight: 400, marginInlineEnd: "0.14em" }}
+      >
+        &#8249;
+      </span>
+      SCIM Bridge
+      <span
+        aria-hidden="true"
+        style={{ color: "var(--accent-9)", fontWeight: 400, marginInlineStart: "0.14em" }}
+      >
+        &#8250;
+      </span>
+    </span>
+  );
+}
+
 export function loader({ context, request }: Route.LoaderArgs) {
   const demoMode = context.get(demoModeContext);
   if (!demoMode) {
@@ -36,7 +69,7 @@ export default function PanelLayout() {
       <Flex direction="column" gap="5" maxWidth="1040px" mx="auto" px="6" py="7">
         <Flex direction="column" gap="1">
           <Heading as="h1" size="7">
-            SCIM Bridge
+            <Logotype />
           </Heading>
           <Text color="gray" size="2">
             Reversible cutover — proxy your directories through passthrough, dual-write, backfill,
