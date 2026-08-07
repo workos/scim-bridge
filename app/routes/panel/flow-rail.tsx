@@ -1,5 +1,6 @@
+import { useState } from "react";
 import type { Mode } from "../../../workers/shared/types";
-import { Badge, Box, Flex, Text } from "@radix-ui/themes";
+import { Badge, Box, Flex, SegmentedControl, Text } from "@radix-ui/themes";
 
 /**
  * The native app is drawn as three parts, not one box, because the migration is
@@ -109,6 +110,11 @@ function usersLabel(n: number | null | undefined): string {
  * omit it (as the per-directory view does, where there's no IdP simulator) and
  * the diagram starts at the proxy. Counts may be null when an endpoint hasn't
  * reported yet or is unreachable.
+ *
+ * A toggle swaps in the customer's pre-migration architecture — the IdP writing
+ * their SCIM endpoint and nothing else. It is the picture every conversation
+ * about this tool starts from, and drawing it in the same shapes as the live
+ * one makes the diff between them the explanation.
  */
 export function FlowRail({
   mode,
@@ -117,9 +123,20 @@ export function FlowRail({
   mode: Mode;
   counts: { idp?: number | null; native: number | null; workos: number | null };
 }) {
+  const [withBridge, setWithBridge] = useState(true);
   const flow = FLOW[mode];
   return (
     <Flex direction="column" gap="3">
+      <SegmentedControl.Root
+        size="1"
+        value={withBridge ? "bridge" : "before"}
+        onValueChange={(value) => setWithBridge(value === "bridge")}
+        className="self-start"
+      >
+        <SegmentedControl.Item value="before">Before</SegmentedControl.Item>
+        <SegmentedControl.Item value="bridge">With SCIM Bridge</SegmentedControl.Item>
+      </SegmentedControl.Root>
+
       {/* Horizontal scroll for narrow viewports. `overflow-x` computes
           `overflow-y: auto` too, so anything drawn above the row — the native
           app's border-straddling label — is clipped unless the row itself
@@ -127,49 +144,102 @@ export function FlowRail({
           the enclosure, which would drop it out of line with its own edges. */}
       <Box className="overflow-x-auto">
         <Flex align="center" gap="2" className="min-w-max pt-3 pb-1">
-          {counts.idp !== undefined && (
+          {/* In the "before" topology the IdP is always drawn, even on the
+              per-directory page that has no simulator to count: the whole point
+              of that picture is who writes the endpoint, and an edge arriving
+              from nowhere does not say it. Its count is simply unknown there. */}
+          {(counts.idp !== undefined || !withBridge) && (
             <>
               <Node label="IdP (source)" value={usersLabel(counts.idp)} tone="idp" />
-              <Leg state="live" label="SCIM" />
+              <Leg state="live" label="SCIM" grow={!withBridge} />
             </>
           )}
-          {/* Spans both rows: it is the fan-out point, so both branches have to
-              meet its edge rather than float off a box shorter than they are. */}
-          <Node label="Proxy" value={MODE_LABEL[mode]} tone="proxy" stretch />
 
-          {/* The two paths out of the proxy, on the same two-row geometry the
-              native app's writers use (ROW_H + gap-4), so the direct write
-              arrives level with the SCIM endpoint and the event path level with
-              the listener. Alignment is the whole point of the diagram: an edge
-              that lands between two boxes says nothing about which one it
-              feeds. */}
-          <Flex direction="column" gap="4">
-            <Flex align="center" className={`min-w-[200px] ${ROW_H}`}>
-              <Leg state={flow.toNativeScim} label="native" grow />
-            </Flex>
-            <Flex align="center" gap="2" className={ROW_H}>
-              <Leg state={flow.toWorkos} label={flow.toWorkos === "mirror" ? "mirror" : "workos"} />
-              <Node label="WorkOS" value={usersLabel(counts.workos)} tone="target" />
-              <Leg state={flow.workosToListener} label="dsync" />
-            </Flex>
-          </Flex>
+          {withBridge ? (
+            <>
+              {/* Spans both rows: it is the fan-out point, so both branches have
+                  to meet its edge rather than float off a box shorter than they
+                  are. */}
+              <Node label="Proxy" value={MODE_LABEL[mode]} tone="proxy" stretch />
 
-          <NativeApp flow={flow} databaseValue={usersLabel(counts.native)} />
+              {/* The two paths out of the proxy, on the same two-row geometry
+                  the native app's writers use (ROW_H + gap-4), so the direct
+                  write arrives level with the SCIM endpoint and the event path
+                  level with the listener. Alignment is the whole point of the
+                  diagram: an edge that lands between two boxes says nothing
+                  about which one it feeds. */}
+              <Flex direction="column" gap="4">
+                <Flex align="center" className={`min-w-[200px] ${ROW_H}`}>
+                  <Leg state={flow.toNativeScim} label="native" grow />
+                </Flex>
+                <Flex align="center" gap="2" className={ROW_H}>
+                  <Leg
+                    state={flow.toWorkos}
+                    label={flow.toWorkos === "mirror" ? "mirror" : "workos"}
+                  />
+                  <Node label="WorkOS" value={usersLabel(counts.workos)} tone="target" />
+                  <Leg state={flow.workosToListener} label="dsync" />
+                </Flex>
+              </Flex>
+            </>
+          ) : null}
+
+          <NativeApp
+            flow={withBridge ? flow : BEFORE_FLOW}
+            databaseValue={usersLabel(counts.native)}
+            showListener={withBridge}
+          />
         </Flex>
       </Box>
 
-      <Flex align="center" gap="2" wrap="wrap">
-        <Badge color={flow.answeredBy === "native" ? "gray" : "green"} variant="soft">
-          {ANSWERED_BY[flow.answeredBy]}
-        </Badge>
-      </Flex>
-
-      <Text color="gray" size="2">
-        {FLOW_CAPTION[mode]}
-      </Text>
+      {withBridge ? (
+        <>
+          <Flex align="center" gap="2" wrap="wrap">
+            <Badge color={flow.answeredBy === "native" ? "gray" : "green"} variant="soft">
+              {ANSWERED_BY[flow.answeredBy]}
+            </Badge>
+          </Flex>
+          <Text color="gray" size="2">
+            {FLOW_CAPTION[mode]}
+          </Text>
+        </>
+      ) : (
+        <>
+          <Flex align="center" gap="2" wrap="wrap">
+            <Badge color="gray" variant="soft">
+              IdP is answered from the native app
+            </Badge>
+          </Flex>
+          <Text color="gray" size="2">
+            {BEFORE_CAPTION}
+          </Text>
+        </>
+      )}
     </Flex>
   );
 }
+
+/**
+ * The pre-migration architecture: the IdP writes the application's own SCIM
+ * endpoint and that is the whole system. No proxy, no WorkOS, no listener.
+ *
+ * Drawn from a constant rather than from `mode`, because it depicts the
+ * deployment as it was *before* any of this — a directory sitting in
+ * `workos-only` today still had exactly this shape beforehand, and rendering
+ * its endpoint as dark here would describe the present, which is the other
+ * half of the toggle.
+ */
+const BEFORE_FLOW: FlowSpec = {
+  toNativeScim: "live",
+  toWorkos: "off",
+  workosToListener: "off",
+  scimEndpoint: "writing",
+  listener: "inert",
+  answeredBy: "native",
+};
+
+const BEFORE_CAPTION =
+  "Before the migration: the IdP provisions your application's own SCIM endpoint directly, and your database is the only copy of the directory. Nothing else is in the path — which is also why moving to WorkOS without a proxy means repointing the IdP and letting WorkOS mint its own ids for people your database already has. Switch to “With SCIM Bridge” to see what goes in between.";
 
 /**
  * The customer's application: two independent writers and the store they share.
@@ -180,7 +250,18 @@ export function FlowRail({
  * so the enclosure adds no vertical offset and the writers stay level with the
  * edges that feed them.
  */
-function NativeApp({ flow, databaseValue }: { flow: FlowSpec; databaseValue: string }) {
+function NativeApp({
+  flow,
+  databaseValue,
+  showListener,
+}: {
+  flow: FlowSpec;
+  databaseValue: string;
+  /** Hidden in the "before" topology: the listener exists to consume WorkOS
+   *  events, so in an architecture with no WorkOS there is nothing for it to
+   *  be, and drawing it greyed out would imply the customer already has one. */
+  showListener: boolean;
+}) {
   return (
     <Box className="relative rounded-[var(--radius-4)] border border-dashed border-[var(--gray-7)] bg-[var(--gray-2)] px-3 py-3">
       <Text
@@ -199,12 +280,14 @@ function NativeApp({ flow, databaseValue }: { flow: FlowSpec; databaseValue: str
             activeHint="accepting writes"
             inertHint="not written"
           />
-          <Part
-            label="DSync listener"
-            state={flow.listener}
-            activeHint="applying events"
-            inertHint="ignoring events"
-          />
+          {showListener && (
+            <Part
+              label="DSync listener"
+              state={flow.listener}
+              activeHint="applying events"
+              inertHint="ignoring events"
+            />
+          )}
         </Flex>
         {/* Both writers land in the one store; each edge is live only while its
             writer is. At cutover they swap in the same instant, which is what
@@ -213,9 +296,11 @@ function NativeApp({ flow, databaseValue }: { flow: FlowSpec; databaseValue: str
           <Flex align="center" className={ROW_H}>
             <Leg state={flow.scimEndpoint === "writing" ? "live" : "off"} label="" short />
           </Flex>
-          <Flex align="center" className={ROW_H}>
-            <Leg state={flow.listener === "writing" ? "live" : "off"} label="" short />
-          </Flex>
+          {showListener && (
+            <Flex align="center" className={ROW_H}>
+              <Leg state={flow.listener === "writing" ? "live" : "off"} label="" short />
+            </Flex>
+          )}
         </Flex>
         <Node label="Database" value={databaseValue} tone="store" stretch />
       </Flex>
@@ -335,7 +420,7 @@ function Leg({
       direction="column"
       align="center"
       gap="1"
-      className={grow ? "grow" : short ? "min-w-[40px]" : "min-w-[76px]"}
+      className={grow ? "min-w-[200px] grow" : short ? "min-w-[40px]" : "min-w-[76px]"}
       title={LEG_TITLE[state]}
     >
       {label !== "" && (
