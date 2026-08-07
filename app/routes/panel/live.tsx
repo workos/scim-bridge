@@ -19,7 +19,9 @@ import { FieldLabel, trimTrailingSlash } from "./ui";
 import {
   reconcileGroups,
   reconcileUsers,
+  workosGroupRows,
   type DirRow,
+  type GroupMemberReconRow,
   type GroupRow,
   type Presence,
 } from "./reconcile";
@@ -59,12 +61,17 @@ const ACTION_BADGE_COLORS = {
 
 const REFRESH_MS = 3000;
 
+interface ScimMember {
+  value?: string;
+  display?: string;
+}
+
 interface ScimResource {
   id?: string;
   userName?: string;
   displayName?: string;
   active?: boolean;
-  members?: unknown[];
+  members?: ScimMember[];
 }
 
 /** Read the WorkOS side live over SCIM, so this works whether the directory
@@ -88,10 +95,11 @@ async function fetchWorkosDirectory(
       name: r.userName ?? "",
       active: r.active === false ? 0 : 1,
     }));
-    const groups = (gBody.Resources ?? []).map((r) => ({
-      name: r.displayName ?? "",
-      member_count: r.members?.length ?? 0,
-    }));
+    // A group's members arrive as SCIM ids, and are resolved to userNames against
+    // the /Users listing this same call fetched — that resolution is what lets
+    // `reconcileGroups` ask whether a member is one of WorkOS's retained inactive
+    // records, so it lives in the module the test can reach.
+    const groups = workosGroupRows(gBody.Resources ?? [], uBody.Resources ?? []);
     return { reachable: true, users, groups };
   } catch {
     return { reachable: false, users: [], groups: [] };
@@ -143,7 +151,7 @@ export async function loader({ context }: Route.LoaderArgs) {
     return { directory: null } as const;
   }
 
-  const [nativeU, idpU, nativeG, idpG, workos, auto, events] = await Promise.all([
+  const [nativeU, idpU, nativeG, nativeGM, idpG, idpGM, workos, auto, events] = await Promise.all([
     withDatastoreRetry(() =>
       db.prepare("SELECT user_name AS name, active FROM native_users").all<DirRow>(),
     ),
@@ -153,24 +161,45 @@ export async function loader({ context }: Route.LoaderArgs) {
         .bind(directory.id)
         .all<DirRow>(),
     ),
+    // Groups and their membership edges are read separately and folded together
+    // in `foldGroupMembers`: the comparison is by member identity now, and a portable
+    // per-group list is a second query rather than a dialect-specific aggregate.
     withDatastoreRetry(() =>
       db
-        .prepare(
-          "SELECT g.display_name AS name, COUNT(m.user_id) AS member_count " +
-            "FROM native_groups g LEFT JOIN native_group_members m ON m.group_id = g.id " +
-            "GROUP BY g.id ORDER BY g.display_name, g.id",
-        )
-        .all<GroupRow>(),
+        .prepare("SELECT display_name AS name FROM native_groups ORDER BY display_name, id")
+        .all<GroupNameRow>(),
     ),
     withDatastoreRetry(() =>
       db
         .prepare(
-          "SELECT g.display_name AS name, COUNT(m.user_id) AS member_count " +
-            "FROM idp_groups g LEFT JOIN idp_group_members m ON m.group_id = g.id " +
-            "WHERE g.directory_id = ? GROUP BY g.id ORDER BY g.display_name, g.id",
+          // COALESCE, not an inner join: an edge whose user row is missing was
+          // counted before this change and still is, under its raw id.
+          "SELECT g.display_name AS name, COALESCE(u.user_name, m.user_id) AS member " +
+            "FROM native_groups g JOIN native_group_members m ON m.group_id = g.id " +
+            "LEFT JOIN native_users u ON u.id = m.user_id " +
+            "ORDER BY g.display_name, member",
+        )
+        .all<GroupMemberQueryRow>(),
+    ),
+    withDatastoreRetry(() =>
+      db
+        .prepare(
+          "SELECT display_name AS name FROM idp_groups WHERE directory_id = ? " +
+            "ORDER BY display_name, id",
         )
         .bind(directory.id)
-        .all<GroupRow>(),
+        .all<GroupNameRow>(),
+    ),
+    withDatastoreRetry(() =>
+      db
+        .prepare(
+          "SELECT g.display_name AS name, COALESCE(u.user_name, m.user_id) AS member " +
+            "FROM idp_groups g JOIN idp_group_members m ON m.group_id = g.id " +
+            "LEFT JOIN idp_users u ON u.id = m.user_id " +
+            "WHERE g.directory_id = ? ORDER BY g.display_name, member",
+        )
+        .bind(directory.id)
+        .all<GroupMemberQueryRow>(),
     ),
     fetchWorkosDirectory(directory.workos_url, directory.workos_token),
     withDatastoreRetry(() =>
@@ -194,8 +223,27 @@ export async function loader({ context }: Route.LoaderArgs) {
     auto: auto ?? null,
     events: events.results,
     users: { native: nativeU.results, workos: workos.users, idp: idpU.results },
-    groups: { native: nativeG.results, workos: workos.groups, idp: idpG.results },
+    groups: {
+      native: foldGroupMembers(nativeG.results, nativeGM.results),
+      workos: workos.groups,
+      idp: foldGroupMembers(idpG.results, idpGM.results),
+    },
   } as const;
+}
+
+interface GroupNameRow {
+  name: string;
+}
+interface GroupMemberQueryRow {
+  name: string;
+  member: string;
+}
+
+/** Fold a group listing and a flat (group, member) listing into one row per group. */
+function foldGroupMembers(groups: GroupNameRow[], members: GroupMemberQueryRow[]): GroupRow[] {
+  const byName = new Map<string, string[]>(groups.map((g) => [g.name, []]));
+  for (const m of members) byName.get(m.name)?.push(m.member);
+  return [...byName].map(([name, groupMembers]) => ({ name, members: groupMembers }));
 }
 
 interface AutoStateRow {
@@ -323,6 +371,49 @@ function CountCell({ value }: { value: number | null }) {
   );
 }
 
+/**
+ * The members of a group worth naming: the ones the native app and WorkOS
+ * disagree about, and the ones WorkOS retains for a deleted user.
+ *
+ * A count alone can only say a group differs; this says *which* member and which
+ * side holds them, which is the difference between a number to stare at and a
+ * row to act on. Members the two sides agree on are left out — every group would
+ * otherwise print its whole roster. Rendered only when the WorkOS column is
+ * readable, for the same reason the row highlight is: with no WorkOS side to
+ * compare against, every native member would read as a difference.
+ */
+function MemberNotes({ members }: { members: GroupMemberReconRow[] }) {
+  const notable = members.filter((m) => m.diverged || m.tombstone);
+  if (notable.length === 0) return null;
+  return (
+    <Flex direction="column" gap="1">
+      {notable.map((member) => (
+        <Flex
+          align="center"
+          gap="2"
+          key={member.name}
+          wrap="wrap"
+          // Same treatment as a deleted user's row: quiet, not hidden.
+          style={member.tombstone ? { opacity: 0.6 } : undefined}
+        >
+          <Text color="gray" size="1">
+            {member.name}
+          </Text>
+          {member.tombstone ? (
+            <Badge color="white" lowContrast>
+              deleted
+            </Badge>
+          ) : (
+            <Badge color="yellow" variant="soft">
+              {member.workos ? "WorkOS only" : "native only"}
+            </Badge>
+          )}
+        </Flex>
+      ))}
+    </Flex>
+  );
+}
+
 const MODE_LABEL: Record<Mode, string> = {
   passthrough: "Passthrough",
   "dual-write": "Dual-write",
@@ -367,10 +458,11 @@ export default function PanelLive() {
   const { directory, users, groups, workosReachable, workosConfigured, auto, events } = data;
   const mode = directory.mode as Mode;
   const userRows = reconcileUsers(users);
-  const groupRows = reconcileGroups(groups);
+  const groupRows = reconcileGroups(groups, users);
   const userDiffs = userRows.filter((r) => r.diverged).length;
   const groupDiffs = groupRows.filter((r) => r.diverged).length;
   const tombstones = userRows.filter((r) => r.tombstone).length;
+  const memberTombstones = groupRows.reduce((total, r) => total + r.tombstones, 0);
   const liveUsers = userRows.length - tombstones;
   const converged = userDiffs === 0 && groupDiffs === 0;
   const showDiff = workosConfigured && workosReachable;
@@ -492,6 +584,9 @@ export default function PanelLive() {
             {tombstones > 0
               ? ` Not counted: ${tombstones} deleted ${tombstones === 1 ? "user" : "users"} WorkOS keeps as inactive SCIM ${tombstones === 1 ? "record" : "records"}, listed below.`
               : ""}
+            {memberTombstones > 0
+              ? ` Nor the ${memberTombstones} group ${memberTombstones === 1 ? "membership" : "memberships"} WorkOS still holds for ${tombstones === 1 ? "that user" : "them"}.`
+              : ""}
           </Callout.Text>
         </Callout.Root>
       ) : (
@@ -501,6 +596,9 @@ export default function PanelLive() {
             {groupDiffs} {groupDiffs === 1 ? "group" : "groups"}
             {tombstones > 0
               ? `, excluding ${tombstones} deleted ${tombstones === 1 ? "user" : "users"} WorkOS keeps as inactive SCIM ${tombstones === 1 ? "record" : "records"} after the native app dropped ${tombstones === 1 ? "its" : "their"} row`
+              : ""}
+            {memberTombstones > 0
+              ? ` and ${memberTombstones} group ${memberTombstones === 1 ? "membership" : "memberships"} WorkOS still holds for ${tombstones === 1 ? "that user" : "those users"}`
               : ""}
             . That is expected mid-migration — dual-write plus a backfill converges them, and
             workos-primary keeps them converged because the proxy writes both sides; workos-only
@@ -586,7 +684,11 @@ export default function PanelLive() {
               Groups
             </Heading>
             <Text color="gray" size="2">
-              Member count per directory. Highlighted rows differ between the native app and WorkOS.
+              Member count per directory, as each one reports it. Highlighted rows differ between
+              the native app and WorkOS — by identity, so the row names the member that differs and
+              which side holds it. A <Code>deleted</Code> member is one WorkOS keeps in the group
+              after the native app dropped both the user and the edge; like the deleted users above
+              it is shown but not counted.
             </Text>
           </Flex>
           {groupRows.length === 0 ? (
@@ -610,7 +712,12 @@ export default function PanelLive() {
                     key={row.name}
                     style={showDiff && row.diverged ? { background: "var(--yellow-2)" } : undefined}
                   >
-                    <Table.Cell>{row.name}</Table.Cell>
+                    <Table.Cell>
+                      <Flex direction="column" gap="1">
+                        <Text size="2">{row.name}</Text>
+                        {showDiff ? <MemberNotes members={row.members} /> : null}
+                      </Flex>
+                    </Table.Cell>
                     <Table.Cell>
                       <CountCell value={row.native} />
                     </Table.Cell>

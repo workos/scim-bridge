@@ -14,10 +14,55 @@ export interface DirRow {
   active: number;
 }
 
-/** One group row, reduced to the only thing the panel compares. */
+/**
+ * One group row, with the member identities the comparison needs.
+ *
+ * `members` are userNames, the same key the users comparison is on: the WorkOS
+ * side resolves each SCIM member's `value` against the `/Users` listing fetched
+ * in the same call before it reaches here (see `fetchWorkosDirectory`).
+ */
 export interface GroupRow {
   name: string;
-  member_count: number;
+  members: string[];
+}
+
+/** The bits of a `GET /Users` resource the panel reads. */
+export interface ScimUserResource {
+  id?: string;
+  userName?: string;
+}
+
+/** The bits of a `GET /Groups` resource the panel reads. */
+export interface ScimGroupResource {
+  displayName?: string;
+  members?: { value?: string; display?: string }[];
+}
+
+/**
+ * Turn WorkOS's `GET /Groups` into rows the comparison can use, by resolving each
+ * member against the `GET /Users` listing fetched in the same call.
+ *
+ * This resolution is the whole reason group membership can be reconciled at all:
+ * a member arrives as a SCIM id, and only a userName can be matched against the
+ * users comparison to ask whether that member is one of WorkOS's retained
+ * inactive records. `display` covers a member outside this page of `/Users`; the
+ * raw id is the last resort, and surfaces as a difference rather than quietly
+ * dropping out of the count.
+ */
+export function workosGroupRows(
+  groups: ScimGroupResource[],
+  users: ScimUserResource[],
+): GroupRow[] {
+  const userNameById = new Map<string, string>();
+  for (const user of users) {
+    if (user.id && user.userName) userNameById.set(user.id, user.userName);
+  }
+  return groups.map((g) => ({
+    name: g.displayName ?? "",
+    members: (g.members ?? [])
+      .map((m) => (m.value ? (userNameById.get(m.value) ?? m.display ?? m.value) : m.display))
+      .filter((name): name is string => Boolean(name)),
+  }));
 }
 
 export type Presence = "active" | "inactive" | "absent";
@@ -33,12 +78,31 @@ export interface UserReconRow {
   tombstone: boolean;
 }
 
+/** One membership edge — one user in one group — across the three directories. */
+export interface GroupMemberReconRow {
+  name: string;
+  native: boolean;
+  workos: boolean;
+  idp: boolean;
+  diverged: boolean;
+  /** A membership edge WorkOS retains for a user it retains as an inactive SCIM
+   *  record after the native app dropped the row *and* the edge. See `isTombstone`. */
+  tombstone: boolean;
+}
+
 export interface GroupReconRow {
   name: string;
+  /** Member counts exactly as each directory reports them, tombstones included —
+   *  the numbers stay true and `diverged` carries the judgement, the same way the
+   *  users table still shows a tombstone as `Inactive`. */
   native: number | null;
   workos: number | null;
   idp: number | null;
   diverged: boolean;
+  /** Every member of the group in any of the three directories, so the panel can
+   *  say *which* member differs rather than only that a number does. */
+  members: GroupMemberReconRow[];
+  tombstones: number;
 }
 
 function presence(row: DirRow | undefined): Presence {
@@ -71,6 +135,10 @@ function presence(row: DirRow | undefined): Presence {
  * `/directory_users` needs an environment API key, WorkOS API keys are not
  * scopeable, and the panel will not ask an operator for full environment access
  * to render a headline number. Everything here comes from the SCIM listing.
+ *
+ * The same delete leaves the same user standing in their WorkOS groups, so
+ * `reconcileGroups` applies this predicate per membership edge as well — same
+ * user, same signal, same rule.
  */
 function isTombstone(native: Presence, workos: Presence): boolean {
   return workos === "inactive" && native === "absent";
@@ -102,42 +170,97 @@ export function reconcileUsers(users: {
 }
 
 /**
- * Groups get no tombstone exclusion, deliberately.
+ * A deleted user stays in their WorkOS groups too, so membership needs the same
+ * exclusion — and gets it from the same signal, not from a guess.
  *
- * The users exclusion above is only safe because a SCIM User carries `active`,
- * which separates "WorkOS retained a deleted record" from "WorkOS holds a live
- * record native is missing". A SCIM Group has no such attribute (RFC 7643 §4.2
- * is `displayName` + `members`), so `GET /Groups` gives the panel nothing that
- * distinguishes a retained group from a genuinely undelivered one, and nothing
- * that distinguishes a retained member inside a live group either — this
- * function sees member *counts*, because the listing's member identities are
- * dropped in `fetchWorkosDirectory`.
+ * A native delete drops the user's row *and* their group-membership edges. WorkOS
+ * retains the SCIM resource as `active: false` and keeps it in its groups, so
+ * `GET /Groups` reports an inflated member count forever: measured on a real
+ * directory, four groups over-counted by exactly one member each, and every one
+ * of the four extras was an inactive WorkOS record with no native row.
  *
- * Any group-side exclusion would therefore be a guess ("no native row and zero
- * members, probably deleted"), and a wrong guess here hides real divergence,
- * which is the exact failure the users exclusion is written to avoid. So groups
- * keep counting every difference, and an operator reading a group diff has the
- * users table beside it to read it against.
+ * An earlier version of this comment argued groups could not be fixed, because a
+ * SCIM Group has no `active` attribute (RFC 7643 §4.2 is `displayName` +
+ * `members`). The premise is true and the conclusion was wrong: the *edge* does
+ * not need an `active` of its own. It needs the member's identity, which
+ * `GET /Groups` supplies as `members[].value` and which `fetchWorkosDirectory`
+ * resolves against the `/Users` listing it already fetches in the same call. With
+ * a userName on each edge the rule is `isTombstone` verbatim — the user is
+ * inactive in WorkOS and absent from native — not a heuristic.
+ *
+ * The invariant the users fix protects holds here unchanged: an edge to a user
+ * WorkOS holds as **active** that native does not have is still divergence, and
+ * still counts. That is the real-bug channel — a live membership the native app
+ * should be holding and isn't — and an exclusion that swallowed it would hide the
+ * class of bug this exclusion exists to keep visible.
+ *
+ * What has no signal is a *group* WorkOS retains that native does not have: a
+ * Group really does carry nothing to distinguish a retained group from an
+ * undelivered one. So group presence keeps diverging on every difference; only
+ * the edges inside a group are excluded.
  */
-export function reconcileGroups(groups: {
-  native: GroupRow[];
-  workos: GroupRow[];
-  idp: GroupRow[];
-}): GroupReconRow[] {
-  const byName = (rows: GroupRow[]) => new Map(rows.map((r) => [r.name, r.member_count]));
+export function reconcileGroups(
+  groups: {
+    native: GroupRow[];
+    workos: GroupRow[];
+    idp: GroupRow[];
+  },
+  users: {
+    native: DirRow[];
+    workos: DirRow[];
+    idp: DirRow[];
+  },
+): GroupReconRow[] {
+  const byName = (rows: GroupRow[]) => new Map(rows.map((r) => [r.name, r.members]));
   const n = byName(groups.native);
   const w = byName(groups.workos);
   const i = byName(groups.idp);
+  const nativeUsers = new Map(users.native.map((r) => [r.name, r]));
+  const workosUsers = new Map(users.workos.map((r) => [r.name, r]));
   const names = [...new Set([...n.keys(), ...w.keys(), ...i.keys()])].sort();
   return names.map((name) => {
-    const native = n.has(name) ? n.get(name)! : null;
-    const workos = w.has(name) ? w.get(name)! : null;
+    const native = n.get(name);
+    const workos = w.get(name);
+    const idp = i.get(name);
+    const members = reconcileMembers({ native, workos, idp }, nativeUsers, workosUsers);
+    return {
+      name,
+      native: native ? native.length : null,
+      workos: workos ? workos.length : null,
+      idp: idp ? idp.length : null,
+      // Two ways a group can differ: one side does not have the group at all, or
+      // the two sides disagree about who is in it.
+      diverged:
+        (native === undefined) !== (workos === undefined) || members.some((m) => m.diverged),
+      members,
+      tombstones: members.filter((m) => m.tombstone).length,
+    };
+  });
+}
+
+function reconcileMembers(
+  edges: { native: string[] | undefined; workos: string[] | undefined; idp: string[] | undefined },
+  nativeUsers: Map<string, DirRow>,
+  workosUsers: Map<string, DirRow>,
+): GroupMemberReconRow[] {
+  const n = new Set(edges.native ?? []);
+  const w = new Set(edges.workos ?? []);
+  const i = new Set(edges.idp ?? []);
+  const names = [...new Set([...n, ...w, ...i])].sort();
+  return names.map((name) => {
+    const native = n.has(name);
+    const workos = w.has(name);
+    const tombstone =
+      workos &&
+      !native &&
+      isTombstone(presence(nativeUsers.get(name)), presence(workosUsers.get(name)));
     return {
       name,
       native,
       workos,
-      idp: i.has(name) ? i.get(name)! : null,
-      diverged: native !== workos,
+      idp: i.has(name),
+      diverged: native !== workos && !tombstone,
+      tombstone,
     };
   });
 }
