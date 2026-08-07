@@ -276,9 +276,30 @@ async function dualWrite(
     upstreamBase: directory.native_url,
     proxyBase: proxyBaseUrl(url),
   });
+  // A DELETE native answered 404 is a delete that has already converged on the
+  // native side, not one that failed: the resource is absent, which is exactly
+  // the state the IdP asked for. Gating the mirror on `isSuccess` alone strands
+  // the user live in WorkOS forever — the proxy hands native's 404 back, the IdP
+  // reads an idempotent delete as done and never retries, and nothing else in the
+  // system removes the WorkOS row. Found in the 2026-08-07 demo run against a live
+  // WorkOS directory: 14 DELETEs logged `native_status=404, workos_status=NULL`,
+  // and bob.baker@acme.test was left active in WorkOS while absent from both the
+  // native app and the IdP.
+  //
+  // Deliberately narrow — DELETE only, 404 only. For POST/PUT/PATCH a 404 means
+  // the write genuinely did not land, so mirroring it would manufacture drift in
+  // the other direction, and no other 4xx (403, 409, 410) carries the "already in
+  // the requested state" meaning that makes this safe. The mirror's own DELETE leg
+  // already treats a WorkOS 404 as convergence when it prunes the id mapping, and
+  // `workosPrimary` reads a WorkOS 404 on DELETE the same way; this is the same
+  // rule applied to the native side.
+  const deleteAlreadyGone = method === "DELETE" && native.status === 404;
   ctx.waitUntil(
     (async () => {
-      if (isSuccess(native.status)) {
+      if (isSuccess(native.status) || deleteAlreadyGone) {
+        // Reached on the already-gone path too: a resource native reports absent
+        // is not a write native is still missing, so any divergence row standing
+        // for it is retired rather than left to age on the operator's panel.
         await clearDivergenceForWrite(env.DB, directory, scimPath, method, requestBody, native);
         try {
           await mirrorDualWrite(env.DB, directory, scimPath, method, requestBody, native, log);
