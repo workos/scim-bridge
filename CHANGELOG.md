@@ -53,6 +53,13 @@ credentials are stored, both of which are worth a minor bump.
 
 ### Security
 
+- **The already-gone `DELETE` no longer retires divergence records named by the
+  request body.** A native `404` says nothing about resources the request did
+  not address, so a holder of a directory's proxy token could clear that
+  directory's deprovisioning gaps — the panel's cutover signal — by naming them
+  in the body of a `DELETE` for an id that does not exist. It now retires only
+  the path's own row, and only once the mirror has removed the resource from
+  WorkOS.
 - **Panel auth fails closed** when only one of `PANEL_AUTH_USER` /
   `PANEL_AUTH_PASSWORD` is set. Previously a half-configured panel served
   unauthenticated; it now refuses to start. Check both are set before upgrading.

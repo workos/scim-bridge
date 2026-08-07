@@ -213,15 +213,21 @@ async function clearDivergenceForWrite(
   method: string,
   requestBody: string | null,
   native: UpstreamResult,
+  { keysFromRequestBody }: { keysFromRequestBody: boolean } = { keysFromRequestBody: true },
 ): Promise<void> {
   const kind = scimPath.kind;
   if (kind === null) return;
-  const sent = parseJson(requestBody);
+  const sent = keysFromRequestBody ? parseJson(requestBody) : null;
   const returned = parseJson(native.bodyText);
   // Every key a row for this resource could carry. A create is not addressed by an
   // id yet, so `workosPrimaryCreate` files it under the externalId or unique
   // attribute the IdP will retry with — and the retry that repairs it, after a
   // rollback, is a POST with no path id at all.
+  //
+  // The body-derived keys name whatever the caller chose to send rather than the
+  // resource an upstream spoke about, so they are only usable on behalf of a write
+  // an upstream confirmed it applied. Callers without that confirmation pass
+  // `keysFromRequestBody: false`.
   const keys = new Set(
     [
       scimPath.id,
@@ -297,14 +303,42 @@ async function dualWrite(
   ctx.waitUntil(
     (async () => {
       if (isSuccess(native.status) || deleteAlreadyGone) {
-        // Reached on the already-gone path too: a resource native reports absent
-        // is not a write native is still missing, so any divergence row standing
-        // for it is retired rather than left to age on the operator's panel.
-        await clearDivergenceForWrite(env.DB, directory, scimPath, method, requestBody, native);
+        if (!deleteAlreadyGone) {
+          await clearDivergenceForWrite(env.DB, directory, scimPath, method, requestBody, native);
+        }
+        let mirrored = false;
         try {
-          await mirrorDualWrite(env.DB, directory, scimPath, method, requestBody, native, log);
+          mirrored = await mirrorDualWrite(
+            env.DB,
+            directory,
+            scimPath,
+            method,
+            requestBody,
+            native,
+            log,
+          );
         } catch (error) {
           log.error = `mirror failed: ${errorMessage(error)}`;
+        }
+        // The already-gone path retires divergence too — a resource native reports
+        // absent is not a write native is still missing — but on narrower terms
+        // than a 2xx, in both what it may retire and when.
+        //
+        // A 404 is native declining to speak about the path: it applied no write and
+        // echoed no body, so the id in the path is the only key it corroborates.
+        // Honouring the caller's `externalId`/`userName` on that evidence would let
+        // any holder of the directory's proxy token retire rows for resources the
+        // request never touched, by naming them in the body of a DELETE for an id
+        // that does not exist — silently, with `log_persistence` off, and a `DELETE`
+        // gap erased that way is a terminated user the panel stops reporting as live.
+        //
+        // Nor is the row stale until the mirror has run: on a 2xx native holds the
+        // write whatever WorkOS does, but here nothing converges until WorkOS drops
+        // the resource native already lacks.
+        if (deleteAlreadyGone && mirrored) {
+          await clearDivergenceForWrite(env.DB, directory, scimPath, method, requestBody, native, {
+            keysFromRequestBody: false,
+          });
         }
       }
       if (shouldPersistLogs(directory)) await insertProxyLog(env.DB, log).catch(() => {});
@@ -313,6 +347,7 @@ async function dualWrite(
   return response;
 }
 
+/** Returns whether the WorkOS leg reached the state the write asked for. */
 async function mirrorDualWrite(
   db: Datastore,
   directory: Directory,
@@ -321,7 +356,7 @@ async function mirrorDualWrite(
   requestBody: string | null,
   native: UpstreamResult,
   log: ProxyLogInsert,
-): Promise<void> {
+): Promise<boolean> {
   const kind = scimPath.kind as ResourceType;
   const maps = await loadIdMaps(db, directory.id);
   const translate = makeTranslator(maps.nativeToWorkos);
@@ -331,16 +366,17 @@ async function mirrorDualWrite(
     const nativeId = created && typeof created.id === "string" ? created.id : null;
     if (!nativeId) {
       log.error = "native create response had no id; mirror skipped";
-      return;
+      return false;
     }
     const resource = parseJson(requestBody) ?? {};
     const body = kind === "Groups" ? translateResourceIds(resource, kind, translate) : resource;
-    applyMirrorResult(log, await mirrorUpsert(db, directory, kind, nativeId, body));
-    return;
+    const mirror = await mirrorUpsert(db, directory, kind, nativeId, body);
+    applyMirrorResult(log, mirror);
+    return mirror.ok;
   }
 
   const nativeId = scimPath.id;
-  if (!nativeId) return;
+  if (!nativeId) return false;
 
   if (method === "PUT") {
     // The path id is the tenant's own value, and minting a mapping from it is
@@ -357,12 +393,13 @@ async function mirrorDualWrite(
       log.error =
         `${kind}/${nativeId}: unmapped, and another directory fronts this native app, so the ` +
         "id in the request cannot be adopted as this directory's; mirror skipped";
-      return;
+      return false;
     }
     const resource = parseJson(requestBody) ?? {};
     const body = kind === "Groups" ? translateResourceIds(resource, kind, translate) : resource;
-    applyMirrorResult(log, await mirrorUpsert(db, directory, kind, nativeId, body));
-    return;
+    const mirror = await mirrorUpsert(db, directory, kind, nativeId, body);
+    applyMirrorResult(log, mirror);
+    return mirror.ok;
   }
 
   const workosId = translate(kind, nativeId);
@@ -377,19 +414,25 @@ async function mirrorDualWrite(
       body: translated ? JSON.stringify(translated) : requestBody,
     });
     applyWorkosLeg(log, mirror);
-    return;
+    return isSuccess(mirror.status);
   }
 
   if (method === "DELETE") {
     log.workos_request = `DELETE /${kind}/${workosId}`;
     const mirror = await scimFetch(target, { method: "DELETE", token: directory.workos_token });
     applyWorkosLeg(log, mirror);
-    if (isSuccess(mirror.status) || mirror.status === 404) {
+    // A 404 counts with the successes for the same reason it does on the native
+    // side: WorkOS not holding the resource is the state the DELETE asked for.
+    const gone = isSuccess(mirror.status) || mirror.status === 404;
+    if (gone) {
       await deleteMapping(db, directory.id, kind, nativeId);
     } else {
       log.error = `mirror DELETE returned ${mirror.status}; id mapping kept for repair`;
     }
+    return gone;
   }
+
+  return false;
 }
 
 /**
