@@ -6,7 +6,7 @@ import { Box, Flex, Heading, TabNav, Text } from "@radix-ui/themes";
 import { Badge } from "../../ui/badge";
 
 export const meta: MetaFunction = () => [
-  { title: "SCIM migration panel" },
+  { title: "SCIM Bridge" },
   {
     name: "description",
     content: "Control panel for the reversible SCIM migration proxy",
@@ -36,7 +36,7 @@ export default function PanelLayout() {
       <Flex direction="column" gap="5" maxWidth="1040px" mx="auto" px="6" py="7">
         <Flex direction="column" gap="1">
           <Heading as="h1" size="7">
-            SCIM migration
+            SCIM Bridge
           </Heading>
           <Text color="gray" size="2">
             Reversible cutover — proxy your directories through passthrough, dual-write, backfill,

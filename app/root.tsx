@@ -6,7 +6,7 @@ import "./app.css";
 import "./theme.css";
 
 export const meta: MetaFunction = () => [
-  { title: "SCIM migration panel" },
+  { title: "SCIM Bridge" },
   {
     name: "description",
     content: "Control panel for the reversible SCIM migration proxy",
