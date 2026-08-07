@@ -1,9 +1,11 @@
 import { getConfig, listDirectories, truncateBody, withDatastoreRetry } from "../shared/db";
 import { timingSafeEqual } from "../shared/crypto";
 import { fetchDirectoryStatus } from "./status-client";
+import type { ReceivedDirectoryStatus } from "./status-client";
 import { NATIVE_TABLES, ScimStore } from "./store";
 import type { GroupRow, ScimResource, UserRow } from "./store";
 import type { Datastore } from "../shared/datastore";
+import type { Directory } from "../shared/types";
 
 const USER_SCHEMA = "urn:ietf:params:scim:core:2.0:User";
 const GROUP_SCHEMA = "urn:ietf:params:scim:core:2.0:Group";
@@ -636,6 +638,10 @@ function applyFromModeFallback(mode: string | null): boolean {
  *    panel), so the mode falls back to the directory row this bundled listener
  *    already shares.
  *
+ * An answer that says "apply" is acted on as it arrives; an answer that says
+ * "stay inert" is confirmed against the origin first, because only that one is
+ * unrecoverable — see the ENT-6778 note in the body.
+ *
  * The bundled simulator models a SINGLE directory (its mock WorkOS and native
  * app are one shared store, and its demo events carry no `directory_id`), so a
  * lone directory that was never linked to a WorkOS directory resolves to itself.
@@ -645,6 +651,9 @@ function applyFromModeFallback(mode: string | null): boolean {
  * onto the wrong directory.
  */
 async function dsyncInstructionForEvent(db: Datastore, data: Json): Promise<DsyncInstruction> {
+  // Stamped before any lookup, so it sits at or after the proxy write that
+  // produced this event — see the confirmation below, which is anchored to it.
+  const arrivedAt = Date.now();
   const directories = await listDirectories(db);
   const directoryId = asString(data.directory_id);
   const byId = directoryId
@@ -655,7 +664,50 @@ async function dsyncInstructionForEvent(db: Datastore, data: Json): Promise<Dsyn
   const directory = byId ?? unlinkedLone;
   if (!directory) return { apply: false, mode: null };
 
-  const status = await fetchDirectoryStatus(db, directory);
+  const instruction = instructionFrom(directory, await fetchDirectoryStatus(db, directory));
+  if (instruction.apply) return instruction;
+
+  // ENT-6778. `ignore` is the only decision here that cannot be taken back.
+  // Applying is idempotent and a replay costs nothing; ignoring acknowledges the
+  // delivery with a 200, so WorkOS never sends it again and the change is simply
+  // gone. That asymmetry is the whole reason for the extra request: a cached
+  // status may be up to a TTL old, and a directory flipped to workos-only inside
+  // that window has a proxy that has ALREADY stopped writing native while this
+  // listener still believes it must stay inert. Nobody writes the app, and the
+  // divergence is permanent (a live cutover lost two group memberships exactly
+  // this way). So before committing to it, require a status the origin confirmed
+  // no earlier than this event's arrival. It is a conditional request — the
+  // ETag makes the common answer a 304 — and it is paid only on the branch that
+  // is about to throw the event away, never on the apply path, where a stale
+  // answer is harmless and per-event revalidation would just be a tax.
+  //
+  // The other edge of the same window is the rollback workos-only →
+  // workos-primary: for up to a TTL the listener keeps applying while the proxy
+  // has resumed writing native, so those changes land twice. Deliberately left
+  // alone — every handler is idempotent (membership add/remove, state set), so
+  // that direction is self-repairing and does not deserve a second revalidation.
+  //
+  // If the confirmation cannot be had (endpoint down, or its failure backoff
+  // still open) the client hands back the stale answer it already holds and we
+  // ignore on that. Falling back is the point: forcing the fetch would turn a
+  // burst of events into a burst of 2s timeouts during the very outage that
+  // makes the answer unavailable, and the pre-cutover default was already the
+  // conservative one.
+  return instructionFrom(
+    directory,
+    await fetchDirectoryStatus(db, directory, { validatedSince: arrivedAt }),
+  );
+}
+
+/**
+ * The instruction a status answer carries, or — when there is no answer at all —
+ * the directory row's own fallback. Both fallbacks are documented in
+ * docs/listener-status.md and are `mode === "workos-only"`.
+ */
+function instructionFrom(
+  directory: Directory,
+  status: ReceivedDirectoryStatus | null,
+): DsyncInstruction {
   if (!status) return { apply: applyFromModeFallback(directory.mode), mode: directory.mode };
   return {
     apply: status.apply_dsync_events ?? applyFromModeFallback(status.mode),
