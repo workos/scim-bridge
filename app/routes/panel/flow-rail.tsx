@@ -106,6 +106,26 @@ function usersLabel(n: number | null | undefined): string {
 }
 
 /**
+ * The WorkOS box's second line.
+ *
+ * WorkOS keeps SCIM resources and directory users in separate tables (the SCIM
+ * decoupling), and deactivating a user removes the directory user while the
+ * SCIM resource stays behind carrying `active: false`. So `GET /Users` — the
+ * only thing a directory's `se_` SCIM token can reach — reports every record
+ * ever provisioned, while the WorkOS dashboard lists just the active ones. A
+ * real directory here read 14 records against 4 in the dashboard, which looks
+ * exactly like a migration that lost ten people.
+ *
+ * Reading the dashboard's own number is not an option: `/directory_users` needs
+ * an environment API key, and WorkOS API keys are not scopeable, so the panel
+ * would be asking an operator for full environment access to render a subtitle.
+ * The active count is derived from the same listing instead.
+ */
+function activeSuffix(active: number | null | undefined): string | undefined {
+  return active === null || active === undefined ? undefined : `${active} active`;
+}
+
+/**
  * The IdP → Proxy → {native app, WorkOS} topology. `counts.idp` is optional:
  * omit it (as the per-directory view does, where there's no IdP simulator) and
  * the diagram starts at the proxy. Counts may be null when an endpoint hasn't
@@ -121,7 +141,15 @@ export function FlowRail({
   counts,
 }: {
   mode: Mode;
-  counts: { idp?: number | null; native: number | null; workos: number | null };
+  counts: {
+    idp?: number | null;
+    native: number | null;
+    workos: number | null;
+    /** How many of `workos` are not deactivated. Optional: the per-directory
+     *  view reads a count without the per-user detail, and a box that cannot
+     *  say says nothing rather than guessing. See `activeSuffix`. */
+    workosActive?: number | null;
+  };
 }) {
   const [withBridge, setWithBridge] = useState(true);
   const flow = FLOW[mode];
@@ -160,7 +188,7 @@ export function FlowRail({
               {/* Spans both rows: it is the fan-out point, so both branches have
                   to meet its edge rather than float off a box shorter than they
                   are. */}
-              <Node label="Proxy" value={MODE_LABEL[mode]} tone="proxy" stretch />
+              <Node label="SCIM Bridge Proxy" value={MODE_LABEL[mode]} tone="proxy" stretch />
 
               {/* The two paths out of the proxy, on the same two-row geometry
                   the native app's writers use (ROW_H + gap-4), so the direct
@@ -177,7 +205,12 @@ export function FlowRail({
                     state={flow.toWorkos}
                     label={flow.toWorkos === "mirror" ? "mirror" : "workos"}
                   />
-                  <Node label="WorkOS" value={usersLabel(counts.workos)} tone="target" />
+                  <Node
+                    label="WorkOS"
+                    value={usersLabel(counts.workos)}
+                    sub={activeSuffix(counts.workosActive)}
+                    tone="target"
+                  />
                   <Leg state={flow.workosToListener} label="dsync" />
                 </Flex>
               </Flex>
@@ -348,11 +381,14 @@ function Part({
 function Node({
   label,
   value,
+  sub,
   tone,
   stretch,
 }: {
   label: string;
   value: string;
+  /** A qualifier under the headline number, when one number would mislead. */
+  sub?: string;
   tone: "idp" | "proxy" | "target" | "store";
   /** Span both writer rows, so the two edges into the database visibly land on
    *  the same box rather than on two separate things. */
@@ -377,6 +413,11 @@ function Node({
         <Text size={tone === "proxy" ? "2" : "4"} weight="bold">
           {value}
         </Text>
+        {sub && (
+          <Text size="1" color="gray">
+            {sub}
+          </Text>
+        )}
       </Flex>
     </Box>
   );
