@@ -523,11 +523,30 @@ async function workosPrimary(
   // leave the IdP retrying a delete that is done and a divergence row standing
   // for a resource native no longer has.
   const workosGone = method === "DELETE" && workosResponse.status === 404;
+  // The mirror of `workosGone`, and the same rule applied to the other side: a
+  // DELETE the NATIVE leg answered 404 is a delete that converged there, not a
+  // leg that failed. Native not holding the resource is precisely the state the
+  // request asked for, so there is nothing for `native_write_failures` to report
+  // — that table answers "what is native missing", and native is missing nothing.
+  //
+  // Recording it is not merely noisy, it is permanent: the row clears only on a
+  // later successful write to the same resource, and no further write ever comes
+  // for a user deleted on both sides; reconcile replays the WorkOS snapshot, which
+  // no longer lists the resource; and the sweep deliberately leaves DELETE rows
+  // standing so that a real deprovisioning gap stays visible. One immortal false
+  // row per deleted user, in the card the runbook calls the cutover gate.
+  //
+  // As narrow as its mirror — DELETE only, 404 only. On PUT/PATCH a 404 is native
+  // saying the write did not land, which is a genuine gap and must still record,
+  // and no other 4xx (403, 409, 410) carries the "already in the requested state"
+  // meaning that makes this safe. `dualWrite` reads a native DELETE 404 the same
+  // way, for the same reason.
+  const nativeGone = method === "DELETE" && native.result?.status === 404;
   // The resource's key in native-id space: what the IdP addressed, and what a
   // later successful write to the same resource will clear.
   const resourceKey = scimPath.id ?? `${method} ${scimPath.rest}`;
 
-  if (native.result === null || !isSuccess(native.result.status)) {
+  if (native.result === null || (!isSuccess(native.result.status) && !nativeGone)) {
     // Only a WorkOS 2xx means WorkOS holds a write native is missing, so a
     // delete both sides report absent records nothing.
     return finish(
@@ -544,15 +563,31 @@ async function workosPrimary(
     );
   }
   if (!workosCommitted && !workosGone) {
-    // Native has the write and WorkOS does not, so nothing goes in
+    // Native is settled and WorkOS is not, so nothing goes in
     // native_write_failures — that table answers "what is native missing". The
     // IdP's retry re-runs both legs and the WorkOS leg resolves by id.
     return finish(workosResponse);
   }
+  // Reached only when WorkOS no longer holds the resource (it committed, or the
+  // delete found it already gone) and native is settled too, so any standing row
+  // for this resource describes a gap that is now closed.
+  //
+  // `resourceKey` is the request line read back — the path id, or the method and
+  // path for an id-less request. Never the body, never an id native echoed. That
+  // matters most on the `nativeGone` path, where native applied no write and
+  // returned an error rather than a resource: the id in the path is the only key
+  // its 404 corroborates, and it corroborates it exactly, by saying it does not
+  // hold that id. Widening the key set here from the request body is VULN-3108 —
+  // it would let any holder of the directory's proxy token retire an unrelated
+  // resource's deprovisioning gap by naming it in the body of a DELETE.
   await clearNativeWriteFailure(env.DB, directory.id, kind, resourceKey);
   if (workosGone) {
-    // Native did the remaining work, so the IdP hears native's answer rather
-    // than a 404 for a delete that has now happened on both sides.
+    // The delete has converged; the IdP hears from the side that did the work.
+    // Here that is native — WorkOS was already gone — so its answer is passed
+    // through rather than a 404 for a delete that has now happened on both
+    // sides. When native was already gone too, neither side did any work and
+    // native's own 404 stands: the honest answer for a delete of a resource
+    // nobody holds, and the one `dualWrite` gives in the same situation.
     return finish(
       new Response(native.result.bodyText || null, {
         status: native.result.status,
@@ -560,6 +595,13 @@ async function workosPrimary(
       }),
     );
   }
+  // Both legs are settled, so WorkOS's answer is the IdP's. On the `nativeGone`
+  // delete that is WorkOS's 2xx: WorkOS is the side that did the work, the
+  // resource is absent on both sides, and success is what actually happened.
+  // Handing back native's 404 instead — what this path did before it read a
+  // native DELETE 404 as convergence — reports a failure for a delete that is
+  // complete, and an IdP that surfaces it strands the operator chasing a
+  // deprovision that already landed.
   return finish(workosResponse);
 }
 

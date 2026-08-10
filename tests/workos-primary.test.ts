@@ -306,8 +306,173 @@ describe("workos-primary", () => {
 
       const res = await del(directory);
 
+      // Neither side did any work, so neither has an answer better than native's
+      // own 404 — which an IdP reads as a delete that is done.
       expect(res.status).toBe(404);
       expect(await failures(directory.id)).toEqual([]);
+    });
+
+    it("records nothing when WorkOS deletes and native reports the resource already absent", async () => {
+      // The phantom row this fixes. Native answering 404 to a DELETE means native
+      // does not hold the resource — the state the request asked for — so there is
+      // nothing for a table that answers "what is native missing" to say. And the
+      // row would be permanent: no later write ever comes for a user deleted on
+      // both sides, reconcile replays a snapshot the resource has left, and the
+      // sweep leaves DELETE rows standing on purpose.
+      const directory = await seedMapped();
+      fake.route("workos", "DELETE", "/Users/workos-1", new Response(null, { status: 204 }));
+      fake.route("native", "DELETE", "/Users/native-1", scimJson(404, { detail: "gone" }));
+
+      const res = await del(directory);
+
+      // WorkOS did the work and the resource is absent on both sides, so the IdP
+      // hears success rather than a 404 for a deprovision that landed.
+      expect(res.status).toBe(204);
+      expect(await failures(directory.id)).toEqual([]);
+    });
+
+    it("retires a standing gap for the same resource once the delete converges", async () => {
+      // An open PUT gap says WorkOS holds a write native is missing. A delete both
+      // sides then agree on closes it: there is no longer a resource for native to
+      // be missing. The key is the one the request addressed in its path.
+      const directory = await seedMapped();
+      await recordNativeWriteFailure(env.DB, {
+        directory_id: directory.id,
+        resource_type: "Users",
+        resource_key: "native-1",
+        method: "PUT",
+        native_status: 500,
+        detail: "WorkOS committed this write; native did not",
+      });
+      fake.route("workos", "DELETE", "/Users/workos-1", new Response(null, { status: 204 }));
+      fake.route("native", "DELETE", "/Users/native-1", scimJson(404, { detail: "gone" }));
+
+      expect((await del(directory)).status).toBe(204);
+      expect(await failures(directory.id)).toEqual([]);
+    });
+
+    it("retires only the addressed resource's gap, not one named in the body", async () => {
+      // VULN-3108 in the mirror. Native applied no write and echoed no resource,
+      // so its 404 corroborates the path id and nothing else. A row for another
+      // resource must survive a DELETE that merely names it.
+      const directory = await seedMapped();
+      await recordNativeWriteFailure(env.DB, {
+        directory_id: directory.id,
+        resource_type: "Users",
+        resource_key: "victim-1",
+        method: "DELETE",
+        native_status: 500,
+        detail: "WorkOS committed this write; native did not",
+      });
+      fake.route("workos", "DELETE", "/Users/workos-1", new Response(null, { status: 204 }));
+      fake.route("native", "DELETE", "/Users/native-1", scimJson(404, { detail: "gone" }));
+
+      const res = await proxyWorker.fetch(
+        proxyRequest(directory, "DELETE", "/scim/v2/Users/native-1", {
+          id: "victim-1",
+          externalId: "victim-1",
+          userName: "victim-1",
+        }),
+        env,
+        createCtx(),
+      );
+
+      expect(res.status).toBe(204);
+      expect(await failures(directory.id)).toMatchObject([{ resource_key: "victim-1" }]);
+    });
+
+    it("fails the IdP when native is already gone but the WorkOS delete did not land", async () => {
+      // Only native has converged. WorkOS still holds the user, so the IdP must
+      // hear a failure and retry — handing back native's 404 would let an
+      // idempotent IdP call the deprovision done and strand the user live in
+      // WorkOS, which is the strand the 2026-08-07 demo run found on dual-write.
+      // Still no divergence row: native is not the side behind.
+      const directory = await seedMapped();
+      fake.route("workos", "DELETE", "/Users/workos-1", scimJson(503, { detail: "unavailable" }));
+      fake.route("native", "DELETE", "/Users/native-1", scimJson(404, { detail: "gone" }));
+
+      const res = await del(directory);
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(res.status).not.toBe(404);
+      expect(await failures(directory.id)).toEqual([]);
+    });
+
+    it("still records a DELETE native answers 500, because an error is not convergence", async () => {
+      // Native failing to speak is not native reporting the resource absent. This
+      // is the deprovisioning gap the panel exists to show.
+      const directory = await seedMapped();
+      fake.route("workos", "DELETE", "/Users/workos-1", new Response(null, { status: 204 }));
+      fake.route("native", "DELETE", "/Users/native-1", scimJson(500, { detail: "boom" }));
+
+      const res = await del(directory);
+
+      expect(res.status).toBe(502);
+      expect((await failures(directory.id))[0]).toMatchObject({
+        resource_key: "native-1",
+        method: "DELETE",
+        native_status: 500,
+      });
+    });
+
+    // 403, 409 and 410 do not mean "already in the requested state". Only 404
+    // does, and only on a DELETE.
+    for (const status of [403, 409, 410]) {
+      it(`still records a DELETE native answers ${status}`, async () => {
+        const directory = await seedMapped();
+        fake.route("workos", "DELETE", "/Users/workos-1", new Response(null, { status: 204 }));
+        fake.route("native", "DELETE", "/Users/native-1", scimJson(status, { detail: "no" }));
+
+        const res = await del(directory);
+
+        expect(res.status).toBe(status);
+        expect((await failures(directory.id))[0]).toMatchObject({
+          method: "DELETE",
+          native_status: status,
+        });
+      });
+    }
+  });
+
+  describe("a native 404 on a write that is not a DELETE", () => {
+    // The narrowing. On PUT and PATCH a 404 is native saying the write did not
+    // land — a genuine gap, and exactly what native_write_failures is for.
+    it("records the divergence on a PUT", async () => {
+      const directory = await seedMapped();
+      fake.route("native", "PUT", "/Users/native-1", scimJson(404, { detail: "no such user" }));
+      fake.route("workos", "PUT", "/Users/workos-1", scimJson(200, { id: "workos-1", ...ada }));
+
+      const res = await put(directory);
+
+      expect(res.status).toBe(404);
+      expect((await failures(directory.id))[0]).toMatchObject({
+        resource_key: "native-1",
+        method: "PUT",
+        native_status: 404,
+      });
+    });
+
+    it("records the divergence on a PATCH", async () => {
+      const directory = await seedMapped();
+      const patchBody = {
+        schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        Operations: [{ op: "replace", path: "active", value: false }],
+      };
+      fake.route("native", "PATCH", "/Users/native-1", scimJson(404, { detail: "no such user" }));
+      fake.route("workos", "PATCH", "/Users/workos-1", scimJson(200, { id: "workos-1", ...ada }));
+
+      const res = await proxyWorker.fetch(
+        proxyRequest(directory, "PATCH", "/scim/v2/Users/native-1", patchBody),
+        env,
+        createCtx(),
+      );
+
+      expect(res.status).toBe(404);
+      expect((await failures(directory.id))[0]).toMatchObject({
+        resource_key: "native-1",
+        method: "PATCH",
+        native_status: 404,
+      });
     });
   });
 

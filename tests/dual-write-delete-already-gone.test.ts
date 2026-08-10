@@ -210,6 +210,17 @@ describe("dual-write mirrors a DELETE native reports already gone", () => {
     expect(fake.callsTo("workos").map((call) => `${call.method} ${call.path}`)).toEqual([
       "DELETE /Users/wos_9",
     ]);
-    expect(res.status).toBe(404);
+    // 204, not the 404 this asserted while `workosPrimary` read a native DELETE
+    // 404 as a failed leg. It now reads it the way this suite reads it for
+    // dual-write: native not holding the resource is the state the DELETE asked
+    // for. WorkOS did the work and the resource is absent on both sides, so the
+    // IdP hears WorkOS's success rather than a failure for a deprovision that
+    // landed. What this test is here to pin — that the WorkOS leg runs at all —
+    // is the assertion above and is unchanged.
+    expect(res.status).toBe(204);
+    // And the phantom row that motivated the change: recording one here claimed
+    // native was missing a resource it had just reported it does not hold, and
+    // nothing could ever retire it.
+    expect(await listNativeWriteFailures(env.DB, directory.id)).toEqual([]);
   });
 });
