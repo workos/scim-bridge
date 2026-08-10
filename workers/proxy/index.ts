@@ -788,18 +788,15 @@ async function workosPrimaryCreate(
  * `scimPath.id` directly, rather than through some other encoding of it, so that
  * what native answers about is known to be the resource under that id.
  *
- * Both the literal id and its canonical percent-encoding count: an IdP may send
- * either for an id needing no escapes, and must send the encoded form for one
- * that does. Any other spelling that happens to decode to the same id does not,
- * because the native app is under no obligation to decode before it looks the id
- * up — the in-repo reference app does not.
+ * Only the byte-identical spelling counts. Any encoding of the id — including its
+ * canonical percent-encoding — does not, because the native app is under no
+ * obligation to decode before it looks the id up, and the in-repo reference app
+ * does not. So an id needing escapes can never be spelled unambiguously, and a
+ * native 404 on it never reads as convergence.
  */
 function pathSpellsId(scimPath: ScimPath, kind: ResourceType): boolean {
   if (scimPath.id === null) return false;
-  return (
-    scimPath.rest === `/${kind}/${scimPath.id}` ||
-    scimPath.rest === `/${kind}/${encodeURIComponent(scimPath.id)}`
-  );
+  return scimPath.rest === `/${kind}/${scimPath.id}`;
 }
 
 interface NativeLeg {

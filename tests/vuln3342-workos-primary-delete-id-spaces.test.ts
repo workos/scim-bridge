@@ -273,9 +273,48 @@ describe("workos-primary DELETE id spaces", () => {
     expect(await listNativeWriteFailures(env.DB, directory.id)).toEqual([]);
   });
 
-  it("clears the gap row on a properly encoded id that needs escaping", async () => {
-    // The guard accepts the canonical encoding, so an id with characters that
-    // must be escaped still converges.
+  it("keeps a standing gap row when native 404s the canonical encoding of an id", async () => {
+    // The canonical encoding is not proof either. `ada@example.com` must reach
+    // native as `ada%40example.com`, and a native that resolves the raw path —
+    // as the in-repo reference app does — 404s those bytes while the account is
+    // live. Reading that 404 as convergence is the whole bug, so the only
+    // spelling that can carry the inference is the byte-identical one.
+    const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+    await recordNativeWriteFailure(env.DB, {
+      directory_id: directory.id,
+      resource_type: "Users",
+      resource_key: "ada@example.com",
+      method: "DELETE",
+      native_status: 503,
+      detail: "WorkOS deleted the resource; native did not",
+    });
+
+    let nativeStillHasAda = true;
+    fake.route("native", "DELETE", /^\/Users\//, (call) => {
+      // Raw-path lookup: only the literal id matches.
+      if (call.path !== "/Users/ada@example.com") return scimJson(404, { detail: "not found" });
+      nativeStillHasAda = false;
+      return new Response(null, { status: 204 });
+    });
+    fake.route("workos", "DELETE", /^\/Users\//, scimJson(404, { detail: "not found" }));
+
+    const res = await proxyWorker.fetch(
+      proxyRequest(directory, "DELETE", "/scim/v2/Users/ada%40example.com"),
+      env,
+      createCtx(),
+    );
+
+    expect(res.status).toBe(404);
+    expect(nativeStillHasAda).toBe(true);
+    expect(await listNativeWriteFailures(env.DB, directory.id)).toMatchObject([
+      { resource_key: "ada@example.com", method: "DELETE" },
+    ]);
+  });
+
+  it("clears the gap row when a decoding native app accepts a properly encoded id", async () => {
+    // A native *success* on an encoded path is unambiguous — it could only have
+    // come from native resolving those bytes to the resource — so the canonical
+    // row clears even though the same spelling could not carry a 404.
     const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
     await recordNativeWriteFailure(env.DB, {
       directory_id: directory.id,
