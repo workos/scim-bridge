@@ -23,7 +23,7 @@ import {
  *
  * Every case here is driven from the position an attacker actually holds — a
  * proxy bearer token for one directory, and nothing else — because that is what
- * made the id-space split reachable rather than merely possible (VULN-3342).
+ * made the id-space split reachable rather than merely possible.
  */
 describe("workos-primary DELETE id spaces", () => {
   let env: PocEnv;

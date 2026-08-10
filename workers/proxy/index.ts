@@ -489,7 +489,7 @@ async function workosPrimary(
   // native id it never held and truthfully answers 404. Neither leg is wrong on
   // its own, and no downstream reading of the pair can recover which resource
   // was meant — so refuse before either leg runs, rather than half-applying the
-  // delete and then deciding what native's 404 proved (VULN-3342).
+  // delete and then deciding what native's 404 proved.
   //
   // Narrow by construction: it takes a path id this directory maps as some
   // resource's `workos_id` while mapping no resource under it as a `native_id`.
@@ -578,7 +578,7 @@ async function workosPrimary(
   // resource is gone, or native did not decode and the bytes addressed nothing
   // while the resource is still there. Nothing in the response distinguishes
   // them, so the alias cannot support the inference and the write is treated as
-  // the unlanded write it may well be (VULN-3342).
+  // the unlanded write it may well be.
   //
   // A native *success* on an alias is not ambiguous — it could only have come
   // from native decoding the path — so it still clears under `resourceKey` below.
