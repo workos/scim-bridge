@@ -132,7 +132,7 @@ jobs:
       # layer is reused by the multi-arch build below, so this is not a second
       # build so much as the first half of one.
       - name: Build for inspection
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64
@@ -189,7 +189,7 @@ jobs:
 
       - name: Build and push
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           # amd64 for the first customer's AWS hosts, arm64 for Cloudflare
