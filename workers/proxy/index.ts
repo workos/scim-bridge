@@ -5,6 +5,7 @@ import {
   deleteMapping,
   getDirectoryByToken,
   getMapping,
+  getMappingByWorkosId,
   insertProxyLog,
   type ProxyLogInsert,
   recordNativeWriteFailure,
@@ -482,6 +483,34 @@ async function workosPrimary(
     return workosPrimaryCreate(env, directory, kind, requestBody, contentType, url, log, finish);
   }
 
+  // A DELETE addressed by a resource's WorkOS-side id resolves in a different id
+  // space on each leg: the WorkOS leg falls through `makeTranslator`'s identity
+  // fallback onto a live row, while the native leg forwards the same bytes as a
+  // native id it never held and truthfully answers 404. Neither leg is wrong on
+  // its own, and no downstream reading of the pair can recover which resource
+  // was meant — so refuse before either leg runs, rather than half-applying the
+  // delete and then deciding what native's 404 proved (VULN-3342).
+  //
+  // Narrow by construction: it takes a path id this directory maps as some
+  // resource's `workos_id` while mapping no resource under it as a `native_id`.
+  // An id both sides share ('migrated-id') is a native id and passes; so does an
+  // id no mapping claims at all, which is the first-touch case.
+  if (method === "DELETE" && scimPath.id !== null) {
+    const [asNativeId, asWorkosId] = await Promise.all([
+      getMapping(env.DB, directory.id, kind, scimPath.id),
+      getMappingByWorkosId(env.DB, directory.id, kind, scimPath.id),
+    ]);
+    if (!asNativeId && asWorkosId) {
+      return finish(
+        scimError(
+          404,
+          `No ${kind} resource with id ${scimPath.id}. Address the resource by the id this ` +
+            "directory returned for it.",
+        ),
+      );
+    }
+  }
+
   // Both legs are started before either is awaited — that is what makes the
   // request cost max(native, workos) instead of the sum, and it is asserted in
   // tests/workos-primary.test.ts rather than left to reading this comment.
@@ -544,7 +573,18 @@ async function workosPrimary(
   const nativeGone = method === "DELETE" && native.result?.status === 404;
   // The resource's key in native-id space: what the IdP addressed, and what a
   // later successful write to the same resource will clear.
-  const resourceKey = scimPath.id ?? `${method} ${scimPath.rest}`;
+  //
+  // Only when the path spells that id the one way the native leg was sent it.
+  // `scimPath.id` is decoded while `nativeWrite` forwards `scimPath.rest`
+  // verbatim, so a percent-encoded alias of an id ('%6E' for 'n') reaches native
+  // as bytes addressing nothing while decoding here to the real id — native's
+  // answer would then be about one resource and this key about another. Keying
+  // such a request on its own raw path instead keeps it from retiring the
+  // canonical resource's row (VULN-3342).
+  const resourceKey =
+    scimPath.id !== null && pathSpellsId(scimPath, kind)
+      ? scimPath.id
+      : `${method} ${scimPath.rest}`;
 
   if (native.result === null || (!isSuccess(native.result.status) && !nativeGone)) {
     // Only a WorkOS 2xx means WorkOS holds a write native is missing, so a
@@ -738,6 +778,24 @@ async function workosPrimaryCreate(
       status: 201,
       headers: { "Content-Type": SCIM_CONTENT_TYPE },
     }),
+  );
+}
+
+/**
+ * Whether `scimPath.rest` — the bytes the native leg is forwarded — spells
+ * `scimPath.id` directly, rather than through an equivalent encoding of it.
+ *
+ * Both the literal id and its canonical percent-encoding count: an IdP may send
+ * either for an id needing no escapes, and must send the encoded form for one
+ * that does. Any other spelling that happens to decode to the same id does not,
+ * because the native app is under no obligation to decode before it looks the id
+ * up — the in-repo reference app does not.
+ */
+function pathSpellsId(scimPath: ScimPath, kind: ResourceType): boolean {
+  if (scimPath.id === null) return false;
+  return (
+    scimPath.rest === `/${kind}/${scimPath.id}` ||
+    scimPath.rest === `/${kind}/${encodeURIComponent(scimPath.id)}`
   );
 }
 
