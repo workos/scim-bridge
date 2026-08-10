@@ -15,8 +15,8 @@ import {
 } from "./helpers";
 
 /**
- * VULN-3087: the reconcile's per-resource clear is not bound to the watermark the
- * sweep is. `markDivergencesForSweep` stamps the ledger at reconcile start so the
+ * The defect these pin: the reconcile's per-resource clear is not bound to the
+ * watermark the sweep is. `markDivergencesForSweep` stamps the ledger at reconcile start so the
  * end-of-run sweep can only retire rows that predate the snapshot, but the clear
  * that runs after each successful replay PUT deletes by (directory, type, key)
  * alone — no stamp, no `method != 'DELETE'`. A divergence recorded by live
@@ -25,7 +25,7 @@ import {
  * state), yet the replay's own PUT erases it, and the stamped sweep never sees the
  * row. The operator's cutover gate turns green over a real gap.
  *
- * This is the mirrored ordering of VULN-3086's scenario: there the live failure
+ * This is the mirrored ordering of the sweep's ABA scenario: there the live failure
  * landed after the replay touched the key (and was erased by the sweep); here it
  * lands before, and is erased by the per-resource clear.
  *
@@ -42,7 +42,7 @@ function listPage(resources: Record<string, unknown>[], totalResults = resources
   });
 }
 
-describe("VULN-3087 reconcile's per-resource clear erases a post-watermark divergence", () => {
+describe("reconcile's per-resource clear and a post-watermark divergence", () => {
   let env: PocEnv;
   let fake: FakeUpstreams;
   afterEach(() => fake.restore());

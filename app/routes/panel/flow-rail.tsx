@@ -7,7 +7,7 @@ import { Badge, Box, Flex, SegmentedControl, Text } from "@radix-ui/themes";
  * a handoff *between* two of them and a single box hides it: the SCIM endpoint
  * the proxy writes, the DSync listener WorkOS drives, and the one database they
  * both land in. Which of the two is writing is the whole difference between the
- * rungs — and a gap where neither is writing is a real defect class (ENT-6778),
+ * rungs — and a gap where neither is writing is a real defect class,
  * so the diagram has to be able to show each of them off independently.
  */
 

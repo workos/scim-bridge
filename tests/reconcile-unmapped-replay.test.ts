@@ -14,7 +14,7 @@ import {
 } from "./helpers";
 
 /**
- * VULN-3099: the reconcile's replay is the fifth attribution sink, and PR #66/#67
+ * The reconcile's replay is the fifth attribution sink, and PR #66/#67
  * left it unguarded. An attacker on `workos-primary`, holding nothing but their
  * own directory's proxy token, POSTs a create whose `externalId` is a co-tenant's
  * native id and whose `userName` collides with that row. The WorkOS leg mints the
@@ -128,7 +128,7 @@ async function send(
   return res;
 }
 
-describe("VULN-3099: reconcile replay of an unmapped WorkOS row in a shared namespace", () => {
+describe("reconcile replay of an unmapped WorkOS row in a shared namespace", () => {
   let fake: FakeUpstreams | undefined;
   afterEach(() => fake?.restore());
 

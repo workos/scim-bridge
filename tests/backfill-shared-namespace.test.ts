@@ -14,7 +14,7 @@ import {
 } from "./helpers";
 
 /**
- * VULN-3073 attacker-perspective reproduction.
+ * Attacker-perspective reproduction of a shared-namespace backfill claim.
  *
  * Two bridge directories (attacker A, victim B) front ONE flat native SCIM app
  * (shared namespace). The native app answers 2xx for any existing id and its
@@ -107,7 +107,7 @@ async function send(
   return res;
 }
 
-describe("VULN-3073: backfill claims co-tenant rows in a shared native namespace", () => {
+describe("backfill in a shared native namespace", () => {
   let fake: FakeUpstreams | undefined;
   afterEach(() => fake?.restore());
 

@@ -20,7 +20,7 @@ function slug(s: string): string {
 }
 
 /**
- * Read a POST body as JSON *or* as a form encoding (ENT-6756).
+ * Read a POST body as JSON *or* as a form encoding.
  *
  * The panel always sends JSON (`callIdpSimulator`), which is why this went
  * unnoticed: the only caller that could hit it is a human or a script driving the
@@ -111,14 +111,14 @@ async function route(request: Request, env: IdpEnv): Promise<Response> {
     // caller-supplied id may never be resolved against the rest of the table — an
     // operator's imported directory holds real upstream credentials and real
     // users, and provisioning one from here would be an unauthenticated write to
-    // their production identity systems (VULN-3076).
+    // their production identity systems.
     const demoId = await demoDirectoryId(env.DB);
     const directory =
       directoryId && directoryId === demoId ? await getDirectoryById(env.DB, directoryId) : null;
     if (!directory) {
       // Two different mistakes, two different messages. The old single string said
       // "Unknown or missing" for both, so a valid id that failed to parse out of the
-      // body looked like an id the database had never heard of (ENT-6756).
+      // body looked like an id the database had never heard of.
       if (!directoryId) {
         return json(
           {

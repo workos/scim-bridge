@@ -13,7 +13,7 @@ import {
 } from "./helpers";
 
 /**
- * The IdP simulator's HTTP surface (ENT-6756).
+ * The IdP simulator's HTTP surface.
  *
  * `POST /__demo/idp/seed` returned 400 "Unknown or missing directoryId." for a
  * directoryId that was perfectly valid. The cause was the body parser, not the
@@ -173,8 +173,7 @@ describe("IdP simulator routes", () => {
    * The simulator is mounted without panel credentials (`panelAuthExempt`), so the
    * only thing standing between an anonymous caller and a real directory's stored
    * credentials is which ids it will resolve. It resolves one: the bundled demo
-   * directory. A second directory here stands in for an operator's own import
-   * (VULN-3076).
+   * directory. A second directory here stands in for an operator's own import.
    */
   describe("the directories it refuses to drive", () => {
     it("refuses an operator's imported directory and does not name it", async () => {

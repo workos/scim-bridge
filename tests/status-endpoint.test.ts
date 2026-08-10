@@ -147,10 +147,10 @@ describe("status endpoint", () => {
     });
   });
 
-  // ENT-6768. `native_authoritative` says who owns the data; `apply_dsync_events`
-  // says what the listener should do. They coincided for the first three modes,
-  // which is what made adding the second field a no-op change — and ENT-6767's
-  // `workos-primary` is the mode that separates them: WorkOS is authoritative and
+  // `native_authoritative` says who owns the data; `apply_dsync_events` says what
+  // the listener should do. They coincided for the first three modes, which is what
+  // made adding the second field a no-op change — and `workos-primary` is the mode
+  // that separates them: WorkOS is authoritative and
   // the listener must still stay inert, because the proxy is writing native.
   describe("the listener instruction", () => {
     it.each([
@@ -171,10 +171,11 @@ describe("status endpoint", () => {
     });
 
     // Replaces "still agrees with native_authoritative in every mode that exists
-    // today", deleted here deliberately rather than quietly adjusted: ENT-6767 is
-    // the mode that separates the two fields, which is the event that test named
-    // as its own reason to go. The equivalence must NOT hold any more, and a
-    // listener keying on `!native_authoritative` would double-apply every change.
+    // today", deleted here deliberately rather than quietly adjusted:
+    // `workos-primary` is the mode that separates the two fields, which is the
+    // event that test named as its own reason to go. The equivalence must NOT hold
+    // any more, and a listener keying on `!native_authoritative` would double-apply
+    // every change.
     it("reports WorkOS authoritative and the listener inert on workos-primary", async () => {
       const env = await createEnv();
       const directory = await seedDirectory(env.DB, { mode: "workos-primary" });

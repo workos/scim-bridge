@@ -70,7 +70,7 @@ function groupResource(group: IdpGroup, members: { value: string }[]): Record<st
  * The bearer token this simulated IdP presents to the proxy.
  *
  * Read from the simulator's own credential store, not from the directory row: the
- * row holds a digest since ENT-6742. A missing token means nobody ever told the
+ * row holds only a digest. A missing token means nobody ever told the
  * simulator about this directory (a row created before this store existed, or by
  * hand), and failing loudly beats sending an empty Authorization header and
  * reporting a 401 as if the proxy had rejected a real credential.

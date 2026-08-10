@@ -390,11 +390,11 @@ describe("dsync listener", () => {
   });
 
   /**
-   * ENT-6768. The listener must key on `apply_dsync_events` and on nothing else
-   * — not the mode, not `native_authoritative`. No mode that exists today can
+   * The listener must key on `apply_dsync_events` and on nothing else — not the
+   * mode, not `native_authoritative`. No mode that exists today can
    * make those three disagree, which is exactly why these payloads are hand-built:
-   * they are the ENT-6767 shape, and this is the regression test for a bug we
-   * have not yet had the chance to make.
+   * they are the `workos-primary` shape, and this is the regression test for a bug
+   * we have not yet had the chance to make.
    *
    * The pair matters. A listener hardwired to "never apply" passes the inert
    * cases; one hardwired to "always apply" passes the applying ones. Only a
@@ -428,7 +428,7 @@ describe("dsync listener", () => {
       expect(await nativeUsers(env.DB)).toHaveLength(0);
     });
 
-    it("stays inert on the ENT-6767 WorkOS-primary shape", async () => {
+    it("stays inert on the WorkOS-primary shape", async () => {
       // Rung 3: WorkOS answers the IdP, but the proxy still writes native
       // directly, so applying the events too would process every change twice.
       // A listener that inferred "not authoritative ⇒ apply" would double-apply.
@@ -523,7 +523,7 @@ describe("dsync listener", () => {
   });
 
   /**
-   * ENT-6778. The cutover window: the proxy stops writing native the instant the
+   * The cutover window: the proxy stops writing native the instant the
    * mode flips, while a listener holding a cached status keeps refusing to apply
    * for up to a TTL. Every event in that window is acknowledged with a 200 and
    * never redelivered, so the change is lost — a live cutover lost two group

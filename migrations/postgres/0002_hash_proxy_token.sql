@@ -1,4 +1,4 @@
--- ENT-6742: store a digest of the proxy token instead of the token.
+-- Store a digest of the proxy token instead of the token.
 -- The SQLite side of this is migrations/0008_hash_proxy_token.sql; the reasoning
 -- lives there, and tests/schema-parity.test.ts holds the two ends together.
 --

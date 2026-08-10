@@ -20,8 +20,8 @@ import {
 } from "./helpers";
 
 /**
- * VULN-3092: the sweep-token protocol assumes at most one reconcile per directory
- * is in flight, but nothing enforces it. `markDivergencesForSweep` is an
+ * The defect these pin: the sweep-token protocol assumes at most one reconcile
+ * per directory is in flight, but nothing enforces it. `markDivergencesForSweep` is an
  * unconditional `UPDATE ... SET sweep_token = ? WHERE directory_id = ?`, so a
  * second reconcile that starts mid-flight re-stamps the stamp-less rows the first
  * run's watermark deliberately protects. The second run then legitimately clears
@@ -43,7 +43,7 @@ function listPage(resources: Record<string, unknown>[], totalResults = resources
   });
 }
 
-describe("VULN-3092 overlapping reconciles launder a post-watermark divergence", () => {
+describe("overlapping reconciles and a post-watermark divergence", () => {
   let env: PocEnv;
   let fake: FakeUpstreams;
   afterEach(() => fake.restore());

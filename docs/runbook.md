@@ -23,7 +23,7 @@ IdP talks to and the side WorkOS talks to. Lose it mid-migration and the proxy
 cannot do that translation; the IdP also starts 401ing, because no directory
 matches the token it presents.
 
-This is not hypothetical. The ENT-6600 end-to-end run lost its database **three
+This is not hypothetical. An end-to-end run lost its database **three
 times**: the deployment ran on Cloudflare Containers, whose disk is recreated with
 the container, and nothing about writing to it looks wrong until a redeploy. Each
 loss meant re-importing every directory while the IdP kept sending traffic.
@@ -144,7 +144,7 @@ directory configuration, not mappings** — that part matters.
 
 ### One more reason not to leave the file lying around
 
-Proxy tokens are hashed at rest (ENT-6742), so a copy of the database is no longer
+Proxy tokens are hashed at rest, so a copy of the database is no longer
 a set of live credentials. It is still a set of *upstream* ones: the native and
 WorkOS bearer tokens are only encrypted if `APP_ENCRYPTION_KEY` is set, and the id
 mappings are irreplaceable. Both are arguments for a volume you control.
@@ -215,7 +215,7 @@ every request still reaches your native app.
 
 ### Proxy tokens are hashed, so they can't be read back
 
-The database stores `sha256(proxy_token)`, never the token (ENT-6742). Consequences
+The database stores `sha256(proxy_token)`, never the token. Consequences
 worth knowing before you need them:
 
 - **The directory page shows the last 4 characters**, not the token. Match it
@@ -312,7 +312,7 @@ Advance the directory's mode from its page, verifying convergence in the
    notice. An IdP write landing in that gap is written by nobody: the listener
    ignores it, acknowledges it with a `200`, and WorkOS never redelivers. The
    bundled listener closes the window by confirming every ignore against the
-   status endpoint before acting on it (ENT-6778), but a customer listener on an
+   status endpoint before acting on it, but a customer listener on an
    older bridge — or one that caches without revalidating — still has it, and
    the reconcile is the only remedy either way. It snapshots the live WorkOS
    directory back into native and is idempotent, so it costs nothing when the

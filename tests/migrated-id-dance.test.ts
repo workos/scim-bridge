@@ -749,7 +749,7 @@ describe("migrated-id dance", () => {
       ]);
     });
 
-    it("mints a random id, not from externalId, when a neighbour shares the URL under a distinct token (VULN-3083)", async () => {
+    it("mints a random id, not from externalId, when a neighbour shares the URL under a distinct token", async () => {
       // Distinct native tokens do NOT prove the neighbour's app scopes its rows by
       // credential, so the namespace is shared: a tenant-supplied externalId must
       // not become the native id, or a tenant could name a neighbour's row.
@@ -1059,7 +1059,7 @@ describe("migrated-id dance", () => {
       expect(await allMappings(env.DB, directory.id)).toEqual([]);
     });
 
-    it("refuses a first-touch replace when a neighbour shares the URL under a distinct token (VULN-3083)", async () => {
+    it("refuses a first-touch replace when a neighbour shares the URL under a distinct token", async () => {
       // Distinct native tokens do not prove disjoint row sets, so the namespace is
       // shared: adopting the tenant-supplied path id as a new mapping would let a
       // tenant name (and then overwrite) a neighbour's native row.

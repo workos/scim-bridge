@@ -190,7 +190,7 @@ export interface SeedDirectoryOptions {
 }
 
 /** A seeded row, plus the proxy token in the clear. The row itself holds only a
- *  digest (ENT-6742), so a test that needs to present the token — most of them —
+ *  digest, so a test that needs to present the token — most of them —
  *  takes it from here, exactly as production takes it from the mint. */
 export type SeededDirectory = Directory & { proxy_token: string };
 
@@ -231,7 +231,7 @@ export async function seedDirectory(
   // when there isn't one already (`seedDemoDirectory` is a no-op once any directory
   // exists). Mirrored here so the first directory a test seeds is the simulator's,
   // and a second one is a stand-in for an operator's real import — which the
-  // simulator must refuse (VULN-3076).
+  // simulator must refuse.
   await setConfigIfAbsent(db, DEMO_DIRECTORY_ID_KEY, id);
   const row = await db
     .prepare("SELECT * FROM scim_directories WHERE id = ?")

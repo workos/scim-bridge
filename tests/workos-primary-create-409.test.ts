@@ -13,7 +13,7 @@ import {
 } from "./helpers";
 
 /**
- * VULN-3084 attacker-perspective reproduction.
+ * Attacker-perspective reproduction of a co-tenant row adopted on a native 409.
  *
  * Attacker directory A (`workos-primary`) and victim directory B front ONE flat
  * native SCIM app under the same token, so the native namespace is shared: the
@@ -118,7 +118,7 @@ async function send(
   return res;
 }
 
-describe("VULN-3084: workos-primary create adopts a co-tenant row on native 409", () => {
+describe("workos-primary create on a native 409 in a shared namespace", () => {
   let fake: FakeUpstreams | undefined;
   afterEach(() => fake?.restore());
 

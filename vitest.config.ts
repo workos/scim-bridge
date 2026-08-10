@@ -12,7 +12,7 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text-summary", "lcov"],
       // What the migration itself is made of. The panel is excluded because it
-      // is not in the type gate yet either (ENT-6755) and a threshold that
+      // is not in the type gate yet either, and a threshold that
       // averages UI in would let the proxy's coverage fall without anyone
       // noticing — which is the opposite of what a floor is for.
       include: ["workers/**/*.ts", "server/**/*.ts"],

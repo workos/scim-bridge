@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 /**
  * Is the SQLite file on a filesystem that survives a restart?
  *
- * The ENT-6600 e2e run lost its database three times: Cloudflare Containers give
+ * An end-to-end deployment lost its database three times: Cloudflare Containers give
  * the process a writable disk that disappears with the container, and nothing
  * about writing to it looks wrong until the container is replaced. The database
  * holds `id_mappings`, so losing it mid-migration means the proxy can no longer

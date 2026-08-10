@@ -1,4 +1,4 @@
--- ENT-6767: the Postgres side of migrations/0009_workos_primary_mode.sql. The
+-- The Postgres side of migrations/0009_workos_primary_mode.sql. The
 -- reasoning for both the mode and the failures table lives there; this file
 -- carries only what the two engines express differently, and
 -- tests/schema-parity.test.ts holds the two ends together.

@@ -11,7 +11,7 @@ import type { Directory, PocEnv } from "../workers/shared/types";
 import { createEnv, seedDirectory } from "./helpers";
 
 /**
- * One directory per native SCIM namespace (ENT-6774): the rule itself, the
+ * One directory per native SCIM namespace: the rule itself, the
  * refusal an operator reads, boot-time seeding, and what happens to a database
  * that already breaks the rule.
  *

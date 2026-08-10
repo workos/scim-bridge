@@ -35,7 +35,7 @@ const PAGE_SIZE = 100;
 
 /**
  * Mappings queued before one batched write. 100 because that is where cost per
- * statement flattened in the ENT-6758 measurements — 50 is nearly as good, 200 buys
+ * statement flattened in the batching measurements — 50 is nearly as good, 200 buys
  * almost nothing, and a smaller page keeps less work at risk if a flush fails.
  */
 const MAPPING_FLUSH_SIZE = 100;
@@ -71,7 +71,7 @@ export async function runBackfill(db: Datastore, directory: Directory): Promise<
     errors: [],
   };
 
-  // Mappings are queued here and written a page at a time (ENT-6761). The upstream
+  // Mappings are queued here and written a page at a time. The upstream
   // SCIM calls stay one per resource — they are where the interesting failures are,
   // and they keep their per-resource attribution.
   const sink: MappingSink = [];
@@ -324,9 +324,8 @@ export async function runReconcileFromWorkos(
   // One reconcile per directory at a time. The sweep stamp below is a single
   // mutable column, so a second run re-stamps the NULL tokens this one leaves on
   // rows live traffic records after its watermark — clearing a live gap while this
-  // run's older snapshot replays the pre-change state back into native
-  // (VULN-3092). The claim makes the protocol's assumption enforced rather than
-  // documented.
+  // run's older snapshot replays the pre-change state back into native.
+  // The claim makes the protocol's assumption enforced rather than documented.
   const runToken = crypto.randomUUID();
   if (!(await claimReconcileRun(db, directory.id, runToken))) {
     throw new ReconcileInFlightError(directory.id);
@@ -350,8 +349,8 @@ async function reconcileFromWorkos(db: Datastore, directory: Directory): Promise
   // Stamped before the snapshot so the clear below can only ever retire rows that
   // predate this reconcile. A divergence recorded by live workos-primary traffic
   // while the reconcile runs is a resource the replay never pushed, so it must
-  // survive (VULN-3085 race variant) — including when it lands on a key the
-  // reconcile had already repaired and cleared (VULN-3086).
+  // survive — that is the race variant of the sweep hazard — including when it
+  // lands on a key the reconcile had already repaired and cleared.
   const sweepToken = crypto.randomUUID();
   await markDivergencesForSweep(db, directory.id, sweepToken);
 
@@ -413,7 +412,7 @@ async function reconcileFromWorkos(db: Datastore, directory: Directory): Promise
   // reconcile and excludes DELETE gaps: a PUT-only replay proves native holds
   // everything WorkOS holds (additive) but never that native dropped what WorkOS
   // deleted (subtractive), so a DELETE row stands until a real native-side
-  // deprovision closes it — see clearReplayedDivergences (VULN-3085).
+  // deprovision closes it — see clearReplayedDivergences.
   //
   // Both snapshots have to be COMPLETE, not merely free of replay failures. A
   // snapshot that gave up — WorkOS down, a non-SCIM body, pagination ending short
@@ -479,8 +478,8 @@ async function pushToNative(
   // mapping written after that — live proxy traffic keeps interleaving, and a
   // create's WorkOS-side 409 recovery records one — used to satisfy an
   // existence-only check here while the stale translator still resolved the row
-  // to its raw id, putting the refusal and the write on different rows
-  // (VULN-3100). Read the mapping now and address ITS native_id: a mapped row is
+  // to its raw id, putting the refusal and the write on different rows.
+  // Read the mapping now and address ITS native_id: a mapped row is
   // written where this directory's own mapping says it lives, never at the
   // identity fallback.
   const mapping = await getMappingByWorkosId(db, directory.id, kind, workosId);
