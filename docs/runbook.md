@@ -201,9 +201,13 @@ Open `/panel`.
   and optional, so six-column CSVs written before it existed import unchanged.
   Two rows sharing a `native_url` — or a row taking an endpoint an existing
   directory already has — refuses the **whole** file: nothing is imported, so
-  you never have to work out which half landed. See
-  [workos-directory-provisioning.md](./workos-directory-provisioning.md)
-  for producing the WorkOS side in bulk.
+  you never have to work out which half landed.
+
+  The WorkOS half of each row — the directory endpoint and its bearer token —
+  comes from the WorkOS dashboard, one directory at a time. If you are migrating
+  enough directories that doing it by hand is the bottleneck, talk to your WorkOS
+  contact: bulk provisioning is a WorkOS-side operation, not something this tool
+  can do for you.
 
 Then copy the directory's **SCIM base URL + proxy token** into your IdP's SCIM
 config. It starts in `passthrough`, so repointing the IdP changes no behavior —
