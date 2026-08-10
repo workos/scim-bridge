@@ -5,6 +5,7 @@ import {
   deleteMapping,
   getDirectoryByToken,
   getMapping,
+  getMappingByWorkosId,
   insertProxyLog,
   type ProxyLogInsert,
   recordNativeWriteFailure,
@@ -482,6 +483,34 @@ async function workosPrimary(
     return workosPrimaryCreate(env, directory, kind, requestBody, contentType, url, log, finish);
   }
 
+  // A DELETE addressed by a resource's WorkOS-side id resolves in a different id
+  // space on each leg: the WorkOS leg falls through `makeTranslator`'s identity
+  // fallback onto a live row, while the native leg forwards the same bytes as a
+  // native id it never held and truthfully answers 404. Neither leg is wrong on
+  // its own, and no downstream reading of the pair can recover which resource
+  // was meant — so refuse before either leg runs, rather than half-applying the
+  // delete and then deciding what native's 404 proved.
+  //
+  // Narrow by construction: it takes a path id this directory maps as some
+  // resource's `workos_id` while mapping no resource under it as a `native_id`.
+  // An id both sides share ('migrated-id') is a native id and passes; so does an
+  // id no mapping claims at all, which is the first-touch case.
+  if (method === "DELETE" && scimPath.id !== null) {
+    const [asNativeId, asWorkosId] = await Promise.all([
+      getMapping(env.DB, directory.id, kind, scimPath.id),
+      getMappingByWorkosId(env.DB, directory.id, kind, scimPath.id),
+    ]);
+    if (!asNativeId && asWorkosId) {
+      return finish(
+        scimError(
+          404,
+          `No ${kind} resource with id ${scimPath.id}. Address the resource by the id this ` +
+            "directory returned for it.",
+        ),
+      );
+    }
+  }
+
   // Both legs are started before either is awaited — that is what makes the
   // request cost max(native, workos) instead of the sum, and it is asserted in
   // tests/workos-primary.test.ts rather than left to reading this comment.
@@ -541,7 +570,20 @@ async function workosPrimary(
   // and no other 4xx (403, 409, 410) carries the "already in the requested state"
   // meaning that makes this safe. `dualWrite` reads a native DELETE 404 the same
   // way, for the same reason.
-  const nativeGone = method === "DELETE" && native.result?.status === 404;
+  //
+  // Read only off a path that spells the resource's id the one way the native leg
+  // was sent it. `scimPath.id` is decoded while `nativeWrite` forwards
+  // `scimPath.rest` verbatim, so on a percent-encoded alias ('%6E' for 'n') a 404
+  // is equally consistent with two different facts: native decoded and the
+  // resource is gone, or native did not decode and the bytes addressed nothing
+  // while the resource is still there. Nothing in the response distinguishes
+  // them, so the alias cannot support the inference and the write is treated as
+  // the unlanded write it may well be.
+  //
+  // A native *success* on an alias is not ambiguous — it could only have come
+  // from native decoding the path — so it still clears under `resourceKey` below.
+  const nativeGone =
+    method === "DELETE" && native.result?.status === 404 && pathSpellsId(scimPath, kind);
   // The resource's key in native-id space: what the IdP addressed, and what a
   // later successful write to the same resource will clear.
   const resourceKey = scimPath.id ?? `${method} ${scimPath.rest}`;
@@ -739,6 +781,22 @@ async function workosPrimaryCreate(
       headers: { "Content-Type": SCIM_CONTENT_TYPE },
     }),
   );
+}
+
+/**
+ * Whether `scimPath.rest` — the bytes the native leg is forwarded — spells
+ * `scimPath.id` directly, rather than through some other encoding of it, so that
+ * what native answers about is known to be the resource under that id.
+ *
+ * Only the byte-identical spelling counts. Any encoding of the id — including its
+ * canonical percent-encoding — does not, because the native app is under no
+ * obligation to decode before it looks the id up, and the in-repo reference app
+ * does not. So an id needing escapes can never be spelled unambiguously, and a
+ * native 404 on it never reads as convergence.
+ */
+function pathSpellsId(scimPath: ScimPath, kind: ResourceType): boolean {
+  if (scimPath.id === null) return false;
+  return scimPath.rest === `/${kind}/${scimPath.id}`;
 }
 
 interface NativeLeg {
