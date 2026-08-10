@@ -1,0 +1,7 @@
+# See GitHub's docs for more details:
+# https://help.github.com/en/github/creating-cloning-and-archiving-repositories/about-code-owners
+
+# A team, not individuals: ownership has to survive someone changing roles.
+# #team-enterprise owns SSO, Directory Sync, RBAC and Audit Logs — this tool
+# migrates a customer's SCIM directory onto Directory Sync, so it belongs here.
+* @workos/enterprise
