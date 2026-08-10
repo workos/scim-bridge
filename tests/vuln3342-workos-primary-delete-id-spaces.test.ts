@@ -205,6 +205,33 @@ describe("workos-primary DELETE id spaces", () => {
     ]);
   });
 
+  it("clears the gap row when a decoding native app accepts an aliased path", async () => {
+    // The ambiguity is only in native's 404. A success on an aliased path could
+    // only have come from native decoding it, so it names the resource and its
+    // row must still clear — otherwise the gate reports a gap that is closed.
+    const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+    await recordNativeWriteFailure(env.DB, {
+      directory_id: directory.id,
+      resource_type: "Users",
+      resource_key: "nat_victim",
+      method: "DELETE",
+      native_status: 503,
+      detail: "WorkOS deleted the resource; native did not",
+    });
+
+    fake.route("native", "DELETE", /^\/Users\//, new Response(null, { status: 204 }));
+    fake.route("workos", "DELETE", /^\/Users\//, scimJson(404, { detail: "not found" }));
+
+    const res = await proxyWorker.fetch(
+      proxyRequest(directory, "DELETE", "/scim/v2/Users/%6Eat_victim"),
+      env,
+      createCtx(),
+    );
+
+    expect(res.status).toBe(204);
+    expect(await listNativeWriteFailures(env.DB, directory.id)).toEqual([]);
+  });
+
   it("clears the gap row on a properly encoded id that needs escaping", async () => {
     // The guard accepts the canonical encoding, so an id with characters that
     // must be escaped still converges.

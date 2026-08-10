@@ -570,21 +570,23 @@ async function workosPrimary(
   // and no other 4xx (403, 409, 410) carries the "already in the requested state"
   // meaning that makes this safe. `dualWrite` reads a native DELETE 404 the same
   // way, for the same reason.
-  const nativeGone = method === "DELETE" && native.result?.status === 404;
+  //
+  // Read only off a path that spells the resource's id the one way the native leg
+  // was sent it. `scimPath.id` is decoded while `nativeWrite` forwards
+  // `scimPath.rest` verbatim, so on a percent-encoded alias ('%6E' for 'n') a 404
+  // is equally consistent with two different facts: native decoded and the
+  // resource is gone, or native did not decode and the bytes addressed nothing
+  // while the resource is still there. Nothing in the response distinguishes
+  // them, so the alias cannot support the inference and the write is treated as
+  // the unlanded write it may well be (VULN-3342).
+  //
+  // A native *success* on an alias is not ambiguous — it could only have come
+  // from native decoding the path — so it still clears under `resourceKey` below.
+  const nativeGone =
+    method === "DELETE" && native.result?.status === 404 && pathSpellsId(scimPath, kind);
   // The resource's key in native-id space: what the IdP addressed, and what a
   // later successful write to the same resource will clear.
-  //
-  // Only when the path spells that id the one way the native leg was sent it.
-  // `scimPath.id` is decoded while `nativeWrite` forwards `scimPath.rest`
-  // verbatim, so a percent-encoded alias of an id ('%6E' for 'n') reaches native
-  // as bytes addressing nothing while decoding here to the real id — native's
-  // answer would then be about one resource and this key about another. Keying
-  // such a request on its own raw path instead keeps it from retiring the
-  // canonical resource's row (VULN-3342).
-  const resourceKey =
-    scimPath.id !== null && pathSpellsId(scimPath, kind)
-      ? scimPath.id
-      : `${method} ${scimPath.rest}`;
+  const resourceKey = scimPath.id ?? `${method} ${scimPath.rest}`;
 
   if (native.result === null || (!isSuccess(native.result.status) && !nativeGone)) {
     // Only a WorkOS 2xx means WorkOS holds a write native is missing, so a
@@ -783,7 +785,8 @@ async function workosPrimaryCreate(
 
 /**
  * Whether `scimPath.rest` — the bytes the native leg is forwarded — spells
- * `scimPath.id` directly, rather than through an equivalent encoding of it.
+ * `scimPath.id` directly, rather than through some other encoding of it, so that
+ * what native answers about is known to be the resource under that id.
  *
  * Both the literal id and its canonical percent-encoding count: an IdP may send
  * either for an id needing no escapes, and must send the encoded form for one
