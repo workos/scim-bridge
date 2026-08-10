@@ -19,7 +19,7 @@
  * The proxy token is not encrypted, it is HASHED — see `hashProxyToken` below.
  * Encryption is the wrong tool for a value that is only ever compared: AES-GCM is
  * randomized, so an encrypted token could not be matched against the one the IdP
- * presents, which is why this column was plaintext until ENT-6742.
+ * presents, which is why this column was plaintext until it was switched to a digest.
  *
  * The digest is UNSALTED, and that is deliberate rather than an oversight — the
  * paragraph below exists because `sha256(secret)` with no salt is a bug in the case
@@ -39,8 +39,8 @@
  * exist because passwords are low-entropy and guessable, and a rainbow table is
  * only worth building against a value someone might plausibly have chosen.
  *
- * The one dent in that reasoning: ENT-6741 lets an operator import their IdP's
- * existing token, which could be weak. It is still their secret, chosen for a system
+ * The one dent in that reasoning: an operator may import their IdP's existing
+ * token, which could be weak. It is still their secret, chosen for a system
  * that also stored it, and the alternative is refusing the import.
  */
 
@@ -60,8 +60,9 @@ const PREFIX = "enc:v1:";
  *
  * Stored `sha256:v1:<hex>` rather than bare hex, mirroring `enc:v1:`. The prefix
  * is what makes "has this row been hashed yet?" answerable — the boot backfill for
- * rows written before ENT-6742 needs to tell a digest from a plaintext token, and
- * "is it 64 hex characters?" is not that test: an imported token could itself be
+ * rows written before this column was hashed needs to tell a digest from a plaintext
+ * token, and "is it 64 hex characters?" is not that test: an imported token could
+ * itself be
  * 64 hex characters, and the backfill would skip it and lock that directory out.
  */
 const HASH_PREFIX = "sha256:v1:";
@@ -109,8 +110,9 @@ export function proxyTokenHint(token: string): string {
 /**
  * Compare two credential-shaped strings without leaking where they differ.
  *
- * Moved here from `workers/native/listener.ts` (ENT-6742): it arrived with the
- * webhook signature check, and the proxy-token compare is a second caller in a
+ * Moved here from `workers/native/listener.ts` when the proxy token became a digest:
+ * it arrived with the webhook signature check, and the proxy-token compare is a
+ * second caller in a
  * different subsystem, so it belongs beside the other credential primitives. Kept
  * as a hand-rolled loop rather than `node:crypto`'s `timingSafeEqual`, because this
  * module is imported by the workers too, and only `crypto.getRandomValues` /

@@ -14,8 +14,9 @@ import {
 } from "./helpers";
 
 /**
- * VULN-3100: PR #73's replay guard decides attribution from a live `id_mappings`
- * lookup while the address the replay writes to comes from the translation maps
+ * The defect these pin: PR #73's replay guard decides attribution from a live
+ * `id_mappings` lookup while the address the replay writes to comes from the
+ * translation maps
  * snapshotted once at reconcile start. A co-tenant holding nothing but their own
  * directory's proxy token can mint a qualifying mapping mid-run — an ordinary
  * SCIM create whose `userName` collides with an unmapped WorkOS row they hold
@@ -176,7 +177,7 @@ async function seedScenario(env: PocEnv, onPut?: (id: string) => Promise<void>) 
   return { attacker, victim, fake, native, workos };
 }
 
-describe("VULN-3100: PR #73's replay guard is race-bypassable by a mid-reconcile create", () => {
+describe("PR #73's replay guard under a mid-reconcile create", () => {
   let fake: FakeUpstreams | undefined;
   afterEach(() => fake?.restore());
 

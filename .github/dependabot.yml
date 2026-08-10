@@ -1,0 +1,34 @@
+version: 2
+
+updates:
+  # npm. Grouped so a week of patch bumps is one review rather than twenty, and
+  # majors are left ungrouped because those are the ones worth reading.
+  #
+  # Note for reviewers: `npm run check:registry` fails the build if any lockfile
+  # entry resolves from anywhere but registry.npmjs.org. Dependabot resolves from
+  # the public registry, so its PRs pass — but a maintainer who rebases one on a
+  # machine behind an internal registry proxy will rewrite those URLs and the
+  # check will catch it. That is the check doing its job, not a flake.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # The workflows pin actions by major tag; this keeps those moving.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # The published image's base. A base image with a known CVE is the most likely
+  # way this repository ships a vulnerability it did not write.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

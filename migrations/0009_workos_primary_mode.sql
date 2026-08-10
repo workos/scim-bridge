@@ -1,4 +1,4 @@
--- ENT-6767: the fourth migration mode, `workos-primary`, plus the table that
+-- The fourth migration mode, `workos-primary`, plus the table that
 -- records what it can leave behind.
 --
 -- 1. Widen the mode CHECK to admit 'workos-primary': WorkOS answers the IdP, and

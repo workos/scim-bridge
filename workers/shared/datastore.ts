@@ -4,7 +4,7 @@
  * This is the slice of the D1 API the application actually uses — the shape
  * `server/db/d1-sqlite.ts` was written against when the datastore was a SQLite
  * file pretending to be D1. Naming it here makes it the interface rather than an
- * imitation, so a second driver (Postgres, ENT-6753) is a new implementation
+ * imitation, so a second driver (Postgres) is a new implementation
  * instead of a new pretence, and `tsc` decides whether the slice is sufficient.
  *
  * Deliberately narrower than D1's own interface: no `raw()`, no `first(colName)`, no

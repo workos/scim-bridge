@@ -1,5 +1,5 @@
 /** The migration ladder, in the order a directory climbs it. `workos-primary`
- *  (ENT-6767) sits between the two ends of the leap it splits: WorkOS answers the
+ *  sits between the two ends of the leap it splits: WorkOS answers the
  *  IdP as in `workos-only`, while native keeps receiving direct proxy writes as in
  *  `dual-write`, so rolling back is a mode change and nothing else. */
 export const MODES = ["passthrough", "dual-write", "workos-primary", "workos-only"] as const;
@@ -27,7 +27,7 @@ export interface Directory {
   name: string;
   mode: Mode;
   /** `sha256:v1:<hex>` of the bearer token the IdP presents. The token itself is
-   *  not stored (ENT-6742); this is what `getDirectoryByToken` matches against. */
+   *  not stored; this is what `getDirectoryByToken` matches against. */
   proxy_token_hash: string;
   /** Last 4 characters of that token's plaintext, captured when it was minted, so
    *  the panel can identify the credential without being able to show it. */
@@ -57,7 +57,7 @@ export interface IdMapping {
 }
 
 /**
- * A resource WorkOS holds a write for that native does not (ENT-6767). One row
+ * A resource WorkOS holds a write for that native does not. One row
  * per diverged resource, written unconditionally — unlike `proxy_log`, which is
  * off unless a directory opts in — because the promise of `workos-primary` is
  * that native is current, and an invisible divergence breaks that promise

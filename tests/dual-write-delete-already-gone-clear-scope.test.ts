@@ -19,7 +19,7 @@ import {
  * about the path. So it is evidence about the path id and nothing else, and the
  * clear it triggers has to be scoped to that: keying off the request body as the
  * 2xx path does let any holder of the directory's proxy token retire divergence
- * rows for resources the request never touched (VULN-3108). Nor is the row stale
+ * rows for resources the request never touched. Nor is the row stale
  * until the mirror has actually dropped the resource from WorkOS, which is the
  * only leg that closes the gap here.
  *

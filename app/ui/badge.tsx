@@ -14,7 +14,7 @@ type ThemesBadgeProps = React.ComponentPropsWithoutRef<typeof ThemesBadge>;
  * Every other colour is a real Radix accent and passes straight through, as does
  * `variant` — the vendored component `Omit`ted `variant` while its call sites
  * passed it anyway, which is where most of the panel's 32 pre-existing type
- * errors came from (ENT-6755).
+ * errors came from.
  */
 interface BadgeProps extends Omit<ThemesBadgeProps, "color"> {
   color?: "white" | ThemesBadgeProps["color"];

@@ -1,8 +1,8 @@
 /**
  * Where a bundled component finds the proxy token it has to *present*.
  *
- * ENT-6742 hashes the token in `scim_directories`, which is correct for the proxy —
- * it only ever verifies — but this repo also ships two components that act as
+ * The token in `scim_directories` is stored as a digest, which is correct for the
+ * proxy — it only ever verifies — but this repo also ships two components that act as
  * *clients* of the proxy and therefore need the token itself:
  *
  *   - the IdP simulator (`workers/idp`), standing in for Okta

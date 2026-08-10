@@ -21,8 +21,8 @@ import type { Datastore } from "../workers/shared/datastore";
 import { createEnv, installFakeUpstreams, seedDirectory } from "./helpers";
 
 /**
- * ENT-6742: the proxy token is stored as a digest, so the database holds nothing
- * that can be presented as a credential.
+ * The proxy token is stored as a digest, so the database holds nothing that can be
+ * presented as a credential.
  *
  * The whole suite runs on both engines, so everything here is checked against
  * SQLite and Postgres — which matters most for the backfill, whose write goes
@@ -218,7 +218,7 @@ describe("proxy token hashing", () => {
 
     it("converts a token that is itself 64 hex characters", async () => {
       // Why the stored digest carries a `sha256:v1:` prefix. An imported IdP token
-      // (ENT-6741 accepts any) can look exactly like a bare digest, and a backfill
+      // (import accepts any shape) can look exactly like a bare digest, and a backfill
       // that guessed by shape would skip this row and lock the directory out.
       const env = await createEnv();
       const looksLikeADigest = "a".repeat(64);
@@ -382,7 +382,7 @@ describe("proxy token hashing", () => {
       // The keying that made the simulator a confused deputy: gating on the
       // process-wide flag kept a usable plaintext credential for every real
       // directory minted or rotated while a demo was running, and /__demo answers
-      // without panel credentials (VULN-3076).
+      // without panel credentials.
       const env = await createEnv();
       const demo = await insertDirectory(env.DB, { name: "Demo directory" });
       await setConfig(env.DB, DEMO_DIRECTORY_ID_KEY, demo.id);

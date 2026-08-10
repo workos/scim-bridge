@@ -469,7 +469,12 @@ export default function PanelLive() {
   const settingMode = navigation.formData?.get("intent") === "set-mode";
   const backfilling = navigation.formData?.get("intent") === "run-backfill";
 
-  const activeCount = (rows: DirRow[]) => rows.length;
+  // Named for what it returns. It used to be `activeCount`, which it never was:
+  // a deactivated SCIM user is still a record, and reading the WorkOS box as a
+  // headcount is what made "14 users" here look like a contradiction of the 4
+  // in the WorkOS dashboard. Both were right about different tables.
+  const recordCount = (rows: DirRow[]) => rows.length;
+  const activeCount = (rows: DirRow[]) => rows.filter((r) => r.active === 1).length;
 
   return (
     <Flex direction="column" gap="4">
@@ -510,9 +515,10 @@ export default function PanelLive() {
           <FlowRail
             mode={mode}
             counts={{
-              idp: activeCount(users.idp),
-              native: activeCount(users.native),
-              workos: activeCount(users.workos),
+              idp: recordCount(users.idp),
+              native: recordCount(users.native),
+              workos: recordCount(users.workos),
+              workosActive: activeCount(users.workos),
             }}
           />
           <Flex align="center" gap="3" wrap="wrap">

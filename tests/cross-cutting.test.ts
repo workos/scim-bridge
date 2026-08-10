@@ -459,7 +459,7 @@ describe("cross-cutting seams", () => {
     it("stays inert on workos-primary, where the real endpoint reports WorkOS authoritative", async () => {
       // The listener suite pins the behaviour given the payload shape; this pins
       // that the shape is what the endpoint actually serves in the mode, so the
-      // two halves of the ENT-6767 contract cannot drift apart.
+      // two halves of the workos-primary contract cannot drift apart.
       const env = await createEnv();
       await env.DB.prepare(
         "DELETE FROM poc_config WHERE key IN ('proxy.public_url', 'proxy.loopback_url')",

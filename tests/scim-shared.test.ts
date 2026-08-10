@@ -890,7 +890,7 @@ describe("secretsMatch", () => {
 describe("sharesNativeNamespace", () => {
   const url = "https://native.test/scim/v2";
 
-  it("is shared for the same url regardless of the tokens (VULN-3083)", async () => {
+  it("is shared for the same url regardless of the tokens", async () => {
     // The bridge cannot verify a customer's app partitions its rows by the
     // presenting credential, so a matching native_url is shared whether the
     // tokens match or differ. Distinct tokens must not downgrade it to "not

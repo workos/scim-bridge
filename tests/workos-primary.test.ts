@@ -20,8 +20,8 @@ import {
 } from "./helpers";
 
 /**
- * ENT-6767, rung 3 of the ladder: WorkOS answers the IdP and the proxy still
- * writes the native app directly. Both legs run at once and the IdP is answered
+ * `workos-primary`, rung 3 of the ladder: WorkOS answers the IdP and the proxy
+ * still writes the native app directly. Both legs run at once and the IdP is answered
  * only once both have finished.
  *
  * What these tests hold in place, in order of how expensive the mistake would be:
@@ -352,9 +352,9 @@ describe("workos-primary", () => {
     });
 
     it("retires only the addressed resource's gap, not one named in the body", async () => {
-      // VULN-3108 in the mirror. Native applied no write and echoed no resource,
-      // so its 404 corroborates the path id and nothing else. A row for another
-      // resource must survive a DELETE that merely names it.
+      // The body-keyed clear hazard, in the mirror. Native applied no write and
+      // echoed no resource, so its 404 corroborates the path id and nothing else.
+      // A row for another resource must survive a DELETE that merely names it.
       const directory = await seedMapped();
       await recordNativeWriteFailure(env.DB, {
         directory_id: directory.id,

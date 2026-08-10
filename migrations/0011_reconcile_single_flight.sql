@@ -4,7 +4,7 @@
 -- every row of the directory, so a second reconcile starting while the first is
 -- still replaying launders the first run's protective NULLs into its own stamp and
 -- clears them — while the first run's older snapshot replays the pre-change state
--- back into the native app (VULN-3092).
+-- back into the native app.
 --
 -- The stamp protocol only holds for one reconcile per directory at a time, and
 -- nothing enforced that. These columns are the claim a run takes before it stamps:

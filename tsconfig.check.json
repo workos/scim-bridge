@@ -4,10 +4,10 @@
   //
   // The panel is not here yet, but the reason it wasn't is gone: it used to
   // import app/vendor/design-system, a tree overwritten by a sync, so one panel
-  // file in this project dragged 470 unfixable files in with it. ENT-6762 deleted
-  // that tree and `npm run typecheck:app` now reports **zero** errors, so adding
-  // tsconfig.app.json to the solution file is all that remains of ENT-6755. Left
-  // for that ticket deliberately: this project changing what CI enforces should be
+  // file in this project dragged 470 unfixable files in with it. That tree is gone
+  // and `npm run typecheck:app` now reports **zero** errors, so adding
+  // tsconfig.app.json to the solution file is all that remains. Left for a change
+  // of its own deliberately: this project changing what CI enforces should be
   // its own reviewable commit, not a rider on a 470-file deletion.
   "extends": "./tsconfig.json",
   // Two panel files are in here. app/context.ts, because server/index.ts imports
@@ -25,7 +25,8 @@
   ],
   // The one test that imports a panel route. scripts/check-type-gate.mjs fails if
   // another test starts crossing that line. Now that the panel typechecks clean,
-  // this exclusion is what ENT-6755 gets to delete rather than maintain.
+  // this exclusion is what bringing the panel into the gate gets to delete rather
+  // than maintain.
   "exclude": ["tests/directory-import.test.ts"],
   "compilerOptions": {
     "composite": true,

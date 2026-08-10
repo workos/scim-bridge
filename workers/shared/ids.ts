@@ -5,8 +5,8 @@
  * two `INSERT`s in migration 0002. That works only as long as SQLite is the only
  * engine: each driver would otherwise reproduce a different id shape, and a
  * credential whose value depends on which datastore you picked is a bad
- * property. Generating here also means the proxy token — the value ENT-6741 made
- * importable — has exactly one origin in the code.
+ * property. Generating here also means the proxy token — the one value an operator
+ * may import instead of minting — has exactly one origin in the code.
  *
  * `crypto.getRandomValues` is available identically on Node and Workers, as
  * `workers/shared/crypto.ts` already assumes.

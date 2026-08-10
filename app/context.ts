@@ -12,7 +12,7 @@ import type { Datastore } from "../workers/shared/datastore";
  * Until then this was a single `cloudflare: { env, ctx, demoMode }` key, kept
  * from the original Workers app so routes could read `context.cloudflare.env.DB`
  * unchanged. Nothing runs on Workers now — the bridge is a Node container whose
- * datastore may be SQLite or Postgres (ENT-6753) — and no panel route ever
+ * datastore may be SQLite or Postgres — and no panel route ever
  * touched `ctx.waitUntil`, so the name and both wrapper layers are gone with it.
  */
 

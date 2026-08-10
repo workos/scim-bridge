@@ -67,7 +67,7 @@ export class BridgeContainer extends Container<Env> {
     super(ctx, env);
     // Only pass through what is actually set: the container's own config validation
     // distinguishes "unset" from "empty", and an empty PANEL_AUTH_PASSWORD is a
-    // half-configured pair that it deliberately refuses to serve (VULN-1612).
+    // half-configured pair that it deliberately refuses to serve.
     this.envVars = defined({
       PORT: "8080",
       PUBLIC_URL: env.PUBLIC_URL,

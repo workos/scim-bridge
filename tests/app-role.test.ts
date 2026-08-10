@@ -25,7 +25,7 @@ import {
 
 /**
  * A bridge config that is allowed to have no panel credentials. Every bare
- * `loadConfig({})` in a bridge role now refuses to boot (VULN-1612), so the
+ * `loadConfig({})` in a bridge role now refuses to boot, so the
  * cases below that are about something else say so explicitly rather than
  * quietly depending on the unsafe default they were written against.
  */
@@ -190,7 +190,7 @@ describe("APP_ROLE", () => {
         ["directory_01B", "directory_01B", await hashProxyToken("tok_b"), "directory_01B"],
       ]);
       // The declared token is hashed like any other, so DIRECTORIES_JSON stays the
-      // only plaintext copy in this role (ENT-6742). Asserted against the digest of
+      // only plaintext copy in this role. Asserted against the digest of
       // the declared value rather than "not tok_a", which a typo would also satisfy.
       expect(rows.map((d) => d.proxy_token_hint)).toEqual(["ok_a", "ok_b"]);
       // Left at the table default: if the bridge is unreachable the listener
@@ -424,7 +424,7 @@ describe("APP_ROLE", () => {
  * The panel serves every directory's decrypted `native_token`, `workos_token`
  * and `proxy_token`, on the same origin as the SCIM data plane an IdP has to
  * reach from the public internet — so who its gate admits is the whole security
- * boundary (VULN-1612). These pin the decision itself, which is why it lives in
+ * boundary. These pin the decision itself, which is why it lives in
  * config.ts rather than inside the middleware.
  */
 describe("panel auth is required to boot", () => {
@@ -574,7 +574,7 @@ describe("what panel auth never challenges", () => {
  * directory named by `idp.demo_directory_id`. That config value is therefore an
  * authorization decision, and `seedDemoDirectory` is where boot makes it — including
  * for a demo database seeded before the key existed, where it has to recognise the
- * bundled directory rather than record one it just created (VULN-3076).
+ * bundled directory rather than record one it just created.
  */
 describe("naming the directory the unauthenticated simulator may drive", () => {
   const demoConfig = (): AppConfig => loadConfig({ ...OPEN_PANEL, DEMO_MODE: "true" });

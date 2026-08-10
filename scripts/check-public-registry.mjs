@@ -1,7 +1,7 @@
 /**
  * Every dependency must resolve from the public npm registry.
  *
- * This repository is published (ENT-6597), so a lockfile entry pointing at an
+ * This repository is published, so a lockfile entry pointing at an
  * internal host is two problems at once: nobody outside WorkOS can install it,
  * and the URL itself advertises internal infrastructure.
  *

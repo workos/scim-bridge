@@ -19,7 +19,7 @@ import {
 } from "./helpers";
 
 /**
- * VULN-3085: a clean, complete `Reconcile from WorkOS` sweeps EVERY
+ * The defect these pin: a clean, complete `Reconcile from WorkOS` sweeps EVERY
  * native_write_failures row for the directory (clearNativeWriteFailures, keyed on
  * directory_id alone). That erases rows the replay cannot and did not repair:
  *   - a DELETE-method deprovisioning gap (WorkOS committed a delete, native
@@ -42,7 +42,7 @@ function listPage(resources: Record<string, unknown>[], totalResults = resources
   });
 }
 
-describe("VULN-3085 reconcile sweep erases un-repairable divergence rows", () => {
+describe("reconcile sweep and un-repairable divergence rows", () => {
   let env: PocEnv;
   let fake: FakeUpstreams;
   afterEach(() => fake.restore());

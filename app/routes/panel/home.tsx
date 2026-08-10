@@ -182,9 +182,9 @@ export async function loader({ context }: Route.LoaderArgs) {
   return {
     directories,
     /** Per directory, how many resources WorkOS holds a write for that native does
-     *  not (ENT-6767). One query for the fleet rather than one per row. */
+     *  not. One query for the fleet rather than one per row. */
     diverged,
-    /** Directories already sharing a native SCIM namespace (ENT-6774). New ones are
+    /** Directories already sharing a native SCIM namespace. New ones are
      *  refused, so this is only ever data written before the check existed — and the
      *  panel is where an operator repairs it, which is why it is surfaced rather
      *  than made fatal at boot. */
@@ -213,7 +213,7 @@ export async function action({ context, request }: Route.ActionArgs) {
     if (tokenError) {
       return { error: tokenError };
     }
-    // One directory per native namespace (ENT-6774), checked here rather than
+    // One directory per native namespace, checked here rather than
     // defended at every write path downstream.
     const namespaceError = checkNativeNamespace(field("native_url"), await listDirectories(db));
     if (namespaceError) {
@@ -233,9 +233,9 @@ export async function action({ context, request }: Route.ActionArgs) {
     } catch (error) {
       return { error: directoryError(error) };
     }
-    // The minted token is readable here and nowhere afterwards (ENT-6742). Showing
-    // it at mint is the held half of the ticket, so this keeps today's redirect and
-    // the operator recovers the token by rotating on the directory page.
+    // The minted token is readable here and nowhere afterwards. Showing it at mint
+    // is still to be built, so this keeps today's redirect and the operator
+    // recovers the token by rotating on the directory page.
     //
     // Only a bundled simulator gets a plaintext copy; see publishMintedToken.
     await publishMintedToken(db, created.id, created.proxy_token, { demoMode });
@@ -264,7 +264,7 @@ export async function action({ context, request }: Route.ActionArgs) {
     }
     // Whole-file gate, before any insert. A namespace collision is the one import
     // failure that must not be partial: half an import leaves directories sharing
-    // an id space with no record of which rows landed (ENT-6774).
+    // an id space with no record of which rows landed.
     const refusals = csvNamespaceRefusals(candidates, await listDirectories(db));
     if (refusals.length > 0) {
       return {

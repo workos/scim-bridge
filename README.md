@@ -13,7 +13,9 @@ id mappings.
 
 > How the migration works (dual-write → backfill → WorkOS-primary → commit), the
 > migrated-id contract, and the platform changes it depends on are documented in
-> [`docs/`](./docs) and the WorkOS internal migration guide.
+> [`docs/`](./docs) — start with [`docs/runbook.md`](./docs/runbook.md) to operate
+> it, or [`docs/architecture.md`](./docs/architecture.md) for why it is built this
+> way.
 
 ## Try it, with no WorkOS account and no registry
 
@@ -309,6 +311,22 @@ docker buildx imagetools inspect ghcr.io/workos/scim-bridge:latest
 
 Cutting a release, and the checks the pipeline runs before publishing anything,
 are documented in [`docs/releasing.md`](./docs/releasing.md).
+
+## Contributing
+
+Issues and pull requests are welcome — see
+[`CONTRIBUTING.md`](./CONTRIBUTING.md) for how to get set up, what the review
+looks for, and the one thing we are strict about: **break your change on purpose
+and confirm the test goes red before you open the PR.** A guard that was never
+seen to fail is indistinguishable from one that does nothing, and both look the
+same in a green build.
+
+## Security
+
+Please don't report vulnerabilities in a public issue. Email
+<security@workos.com> — see [`SECURITY.md`](./SECURITY.md), which also documents
+what this process is trusted with and the deployment assumptions its threat model
+makes.
 
 ## License
 

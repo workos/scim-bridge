@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { inspectStorage, mountFor } from "../server/db/storage-durability";
 
 /**
- * The boot guard for ENT-6751: the e2e deployment lost its database three times
- * because a container's own disk looks writable right up to the moment the
+ * The boot guard for ephemeral storage: the e2e deployment lost its database three
+ * times because a container's own disk looks writable right up to the moment the
  * container is replaced.
  *
  * Mount tables here are real ones, trimmed: the first from Cloudflare Containers

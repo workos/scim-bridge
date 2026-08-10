@@ -113,7 +113,7 @@ async function decryptDirectory(
  * Resolve the directory a presented bearer token belongs to.
  *
  * The token is hashed and the digest is looked up, so this authenticates without the
- * database holding anything usable (ENT-6742).
+ * database holding anything usable.
  *
  * The match found by SQL is then re-checked in JS with a constant-time compare.
  * Being straight about what that buys, because "constant-time" oversells it: the
@@ -171,7 +171,7 @@ export interface NewDirectory {
 /** A created directory: its id, plus the proxy token in the clear. This is the
  *  only moment the token exists in a readable form — nothing can recover it from
  *  the row afterwards, so a caller that needs to show or configure it must take it
- *  from here (ENT-6742). */
+ *  from here. */
 export interface CreatedDirectory {
   id: string;
   proxy_token: string;
@@ -240,8 +240,9 @@ export async function rotateProxyToken(db: Datastore, id: string): Promise<strin
 }
 
 /**
- * Convert rows written before ENT-6742, where `proxy_token_hash` still holds the
- * plaintext token the column used to be called `proxy_token`.
+ * Convert rows written before the token was hashed at rest, where
+ * `proxy_token_hash` still holds the plaintext token the column used to be called
+ * `proxy_token`.
  *
  * Runs at boot, once, and is a no-op afterwards. It has to happen here rather than
  * in the migration because neither engine computes SHA-256 portably, and it has to
@@ -538,11 +539,11 @@ export async function upsertMapping(db: Datastore, mapping: NewMapping): Promise
 /**
  * Write many mappings in one round trip.
  *
- * The backfill's reason for existing (ENT-6761): it mirrors a resource at a time and
+ * The backfill's reason for existing: it mirrors a resource at a time and
  * used to write a mapping at a time, which is one implicit transaction per statement
- * on SQLite, one network round trip per statement on Postgres, and — measured on the
- * ENT-6758 spike — 7 ms per statement against a Durable Object, versus 0.21 ms when
- * the same statements arrive together.
+ * on SQLite, one network round trip per statement on Postgres, and — measured on a
+ * benchmarking spike — 7 ms per statement against a Durable Object, versus 0.21 ms
+ * when the same statements arrive together.
  *
  * Order is significant and preserved: later rows for the same key overwrite earlier
  * ones, exactly as sequential `upsertMapping` calls would, so a caller that queues
@@ -581,7 +582,7 @@ export type NewNativeWriteFailure = Pick<
 >;
 
 /**
- * Record that WorkOS holds a write native does not (ENT-6767).
+ * Record that WorkOS holds a write native does not.
  *
  * Written unconditionally — `shouldPersistLogs` deliberately does not gate this.
  * `proxy_log` is off by default, so a divergence recorded only there would
@@ -678,7 +679,7 @@ export async function clearReplayedDivergenceForResource(
  *  never observes and the deliberately non-destructive reconcile never repairs.
  *  Sweeping those rows would erase the record of a deprovisioning that never
  *  reached native, leaving a terminated user active while the operator's cutover
- *  gate flips green (VULN-3085) — so DELETE rows are excluded here.
+ *  gate flips green — so DELETE rows are excluded here.
  *
  *  Only the rows captured at reconcile start are touched, so a divergence recorded
  *  by live `workos-primary` traffic while the reconcile ran — a resource the replay
@@ -693,7 +694,7 @@ export async function clearReplayedDivergenceForResource(
  *  routinely mid-reconcile — the per-resource repair clears the row, then a live
  *  failure on the same key INSERTs a fresh one. Matching on those values let the
  *  sweep delete a fresh, unresolved divergence in place of the retired one it
- *  resembled (VULN-3086). A stamp cannot be resurrected that way: a re-created row
+ *  resembled. A stamp cannot be resurrected that way: a re-created row
  *  is stamp-less, and an in-place upsert clears the stamp. */
 export async function clearReplayedDivergences(
   db: Datastore,
@@ -747,7 +748,7 @@ function sqlTimestamp(at: Date): string {
  *  while one reconcile per directory is in flight: the stamp is a single mutable
  *  column, so a second run re-stamps the NULL tokens the first run left on rows
  *  live traffic recorded after its watermark, making them clearable again while
- *  the first run's older snapshot is still replaying (VULN-3092). The claim is
+ *  the first run's older snapshot is still replaying. The claim is
  *  what enforces the assumption instead of documenting it.
  *
  *  Conditional UPDATE rather than read-then-write: two callers racing here both
