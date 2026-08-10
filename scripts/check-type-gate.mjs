@@ -3,8 +3,8 @@
  * Prove the type gate can fail.
  *
  * `npm run typecheck` used to run `tsc --noEmit` against a solution file with no
- * files of its own, so it checked nothing and passed on any error for months
- * (ENT-6754). A gate nobody has watched fail is indistinguishable from no gate,
+ * files of its own, so it checked nothing and passed on any error for months.
+ * A gate nobody has watched fail is indistinguishable from no gate,
  * so this asserts the failure directly: drop a file with a deliberate type error
  * into each gated root, run the gate, and require it to reject.
  *
@@ -83,7 +83,7 @@ if (crossing.length > 0) {
   failures.push(
     `${crossing.join(", ")} import(s) from app/, which pulls the vendored design system into the ` +
       `gated project. Either extract the logic under test out of the panel route, or bring app/ ` +
-      `into the gate (ENT-6755) — don't add another name to tsconfig.check.json's exclude list.`,
+      `into the gate — don't add another name to tsconfig.check.json's exclude list.`,
   );
 } else {
   console.log("✓ tests/ does not reach the vendored design system");

@@ -104,7 +104,7 @@ The pipeline is ready before the repository is. These are the remaining steps,
 all of them permission changes an org admin makes by hand; none can or should be
 automated by a workflow holding `GITHUB_TOKEN`.
 
-- [ ] **Remove the vendored internal UI code** (ENT-6762) — blocks everything
+- [ ] **Remove the vendored internal UI code** — blocks everything
       below. Until then the image and the repo both contain WorkOS-internal
       source.
 - [ ] **Publish once while still internal.** Tag a release, or run the workflow
@@ -113,7 +113,7 @@ automated by a workflow holding `GITHUB_TOKEN`.
       package that does not exist cannot be made public.
 - [ ] **GHCR package → public.** Org → Packages → `scim-bridge` → Package
       settings → Change visibility → Public. Until this is done, a pull returns
-      `denied` for everyone outside the org (ENT-6598).
+      `denied` for everyone outside the org.
 - [ ] **Delete the "Not yet" note in the README**, under *Running a published
       image instead of building*, and re-read every `ghcr.io` line in the README
       to confirm it is now true. The note exists because until the two steps
@@ -125,7 +125,7 @@ automated by a workflow holding `GITHUB_TOKEN`.
       `org.opencontainers.image.source`, which GitHub uses to link the package
       to `workos/scim-bridge` and show this README on the package page. Check
       the link appeared; if it did not, set it in Package settings.
-- [ ] **Repository → public** (ENT-6597). Settings → Danger Zone. Org-admin
+- [ ] **Repository → public**. Settings → Danger Zone. Org-admin
       only.
 - [ ] **Verify as an outsider**, not as yourself:
       `docker logout ghcr.io && docker pull ghcr.io/workos/scim-bridge:latest`

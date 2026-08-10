@@ -71,10 +71,10 @@ async function only(env: PocEnv): Promise<Directory> {
 const IDP_TOKEN = "okta_scim_tok_9f3ac81be24d";
 
 /**
- * The token an operator supplied is honoured — which since ENT-6742 means it
- * authenticates and the row does *not* contain it, rather than the row echoing it
- * back. Both halves matter: a bug that stored the plaintext would still let the
- * token authenticate, and a bug that stored nothing would still keep it out.
+ * The token an operator supplied is honoured — which, now that tokens are hashed,
+ * means it authenticates and the row does *not* contain it, rather than the row
+ * echoing it back. Both halves matter: a bug that stored the plaintext would still
+ * let the token authenticate, and a bug that stored nothing would still keep it out.
  */
 async function expectStoredToken(row: Directory, token: string): Promise<void> {
   expect(row.proxy_token_hash).toBe(await hashProxyToken(token));
@@ -97,7 +97,7 @@ describe("directory import", () => {
       expect(row.name).toBe("Acme — Okta");
       expect(row.workos_directory_id).toBe("directory_01A");
       // No seventh column: insertDirectory mints the token (shared/ids.ts). The row
-      // holds only its digest now (ENT-6742), so the minted shape is pinned where
+      // holds only its digest now, so the minted shape is pinned where
       // the plaintext still exists — "mints a 48-hex token" below.
       expect(row.proxy_token_hash).toMatch(/^sha256:v1:[0-9a-f]{64}$/);
       expect(row.proxy_token_hint).toHaveLength(4);
@@ -317,7 +317,7 @@ describe("directory import", () => {
   });
 
   /**
-   * Where the import route leaves a readable copy of the token (ENT-6742). The
+   * Where the import route leaves a readable copy of the token. The
    * policy itself is `publishMintedToken`, unit-tested in proxy-token-hashing; what
    * this pins is that the *route* asks it, and that an operator's own import is
    * never the directory it answers yes for — the mistake that would put every
@@ -343,7 +343,7 @@ describe("directory import", () => {
       // The simulator drives the bundled demo directory and nothing else, so an
       // imported directory has no presenter in this process and a readable copy of
       // its token would only be a credential waiting to be used — which is what an
-      // unauthenticated /__demo turned it into (VULN-3076).
+      // unauthenticated /__demo turned it into.
       const env = await createEnv();
 
       await submit(env, { intent: "create-directory", name: "Acme", proxy_token: IDP_TOKEN }, true);
@@ -356,7 +356,7 @@ describe("directory import", () => {
 });
 
 /**
- * One directory per native SCIM namespace (ENT-6774) — the three panel paths.
+ * One directory per native SCIM namespace — the three panel paths.
  *
  * Two directories on one native endpoint share a single set of SCIM ids, so the
  * bridge cannot tell whose record a native id names. Six downstream guards

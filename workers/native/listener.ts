@@ -599,10 +599,11 @@ interface DsyncInstruction {
  * bridge did not send one. Deliberately conservative: stay inert unless the
  * directory is fully cut over.
  *
- * This is the pre-ENT-6768 rule, and it is what an older bridge meant by the
- * modes it can report. It is duplicated from `appliesDsyncEvents` in
- * workers/proxy/status.ts on purpose — that one is this bridge's live policy and
- * may grow cases (ENT-6767); this one is a frozen compatibility shim for a peer
+ * This is the rule that predates the `apply_dsync_events` instruction, and it is
+ * what an older bridge meant by the modes it can report. It is duplicated from
+ * `appliesDsyncEvents` in workers/proxy/status.ts on purpose — that one is this
+ * bridge's live policy and may grow cases; this one is a frozen compatibility shim
+ * for a peer
  * that predates the instruction field, and must not follow it. Failing toward
  * inert is also the right default for a mode this listener has never heard of.
  */
@@ -625,7 +626,7 @@ function applyFromModeFallback(mode: string | null): boolean {
  * It reads `apply_dsync_events` and nothing else. It does NOT infer the answer
  * from `mode`, and it does NOT infer it from `native_authoritative`: "who owns
  * the data" and "what the listener should do" coincide for every mode that
- * exists today and stop coinciding at ENT-6767, where WorkOS is authoritative
+ * exists today and stop coinciding at `workos-primary`, where WorkOS is authoritative
  * but the proxy still writes native directly — a listener that applied events
  * there would process every change twice. This is a reference implementation a
  * customer copies, so inferring here would reintroduce the bug at the customer.
@@ -640,7 +641,7 @@ function applyFromModeFallback(mode: string | null): boolean {
  *
  * An answer that says "apply" is acted on as it arrives; an answer that says
  * "stay inert" is confirmed against the origin first, because only that one is
- * unrecoverable — see the ENT-6778 note in the body.
+ * unrecoverable — see the cutover-window note in the body.
  *
  * The bundled simulator models a SINGLE directory (its mock WorkOS and native
  * app are one shared store, and its demo events carry no `directory_id`), so a
@@ -667,7 +668,7 @@ async function dsyncInstructionForEvent(db: Datastore, data: Json): Promise<Dsyn
   const instruction = instructionFrom(directory, await fetchDirectoryStatus(db, directory));
   if (instruction.apply) return instruction;
 
-  // ENT-6778. `ignore` is the only decision here that cannot be taken back.
+  // `ignore` is the only decision here that cannot be taken back.
   // Applying is idempotent and a replay costs nothing; ignoring acknowledges the
   // delivery with a 200, so WorkOS never sends it again and the change is simply
   // gone. That asymmetry is the whole reason for the extra request: a cached
@@ -718,7 +719,7 @@ function instructionFrom(
 async function isDuplicate(db: Datastore, eventId: string): Promise<boolean> {
   // Check-then-act: this read and the INSERT that follows it are only exclusive
   // because one process handles webhooks. A second instance would need a partial
-  // unique index on event_id plus insert-first-then-decide (ENT-6753 §6) — the
+  // unique index on event_id plus insert-first-then-decide — the
   // Postgres driver removes the storage-level single-writer constraint, not this
   // one, which is why boot logs that a single instance is expected.
   // Only a delivery we actually processed (applied or skipped) counts as a

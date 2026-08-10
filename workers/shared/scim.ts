@@ -478,7 +478,7 @@ async function putWorkos(
  *
  * The live mirror passes nothing and writes immediately, because it handles one
  * resource per request and has nothing to batch with. The backfill passes an array
- * and flushes it per page (ENT-6761) — same rows, same order, one round trip.
+ * and flushes it per page — same rows, same order, one round trip.
  *
  * Deliberately a plain array rather than a callback: the caller needs to see what is
  * pending in order to report which resources a failed flush affected, and an array of

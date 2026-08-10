@@ -12,7 +12,7 @@ jobs:
     # Postgres unless TEST_DATABASE_URL points at a real server — a fake would
     # prove nothing about the dialect, which is the entire risk. Without this
     # service the suite passes while exercising no Postgres code, which is the
-    # failure mode ENT-6754 existed to kill, one layer down. The suite itself
+    # failure mode the type-gate check exists to kill, one layer down. The suite itself
     # refuses to skip the driver when CI is set, so a service that fails to come
     # up is a red build rather than a quietly narrower one.
     services:
@@ -38,7 +38,7 @@ jobs:
       # published, and an internal proxy URL installs for nobody else (#45).
       - run: npm run check:registry
       - run: npm run typecheck
-      # Proves the gate above can actually fail (ENT-6754: for months it could not).
+      # Proves the gate above can actually fail (for months it could not).
       - run: npm run typecheck:gate
       - run: npm run lint
       - run: npm run format:check

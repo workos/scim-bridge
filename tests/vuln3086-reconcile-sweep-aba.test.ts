@@ -15,8 +15,8 @@ import {
 } from "./helpers";
 
 /**
- * VULN-3086: the post-reconcile sweep gates its DELETE on the `attempts` value
- * captured at reconcile start, on the premise that `attempts` is a monotonic row
+ * The defect this pins: the post-reconcile sweep gates its DELETE on the
+ * `attempts` value captured at reconcile start, on the premise that `attempts` is a monotonic row
  * version. It is monotonic only within one row's lifetime: `native_write_failures`
  * rows are deleted (per-resource repair during the reconcile, or a live write that
  * lands) and re-created by an INSERT that omits `attempts`, so the new row restarts
@@ -38,7 +38,7 @@ function listPage(resources: Record<string, unknown>[], totalResults = resources
   });
 }
 
-describe("VULN-3086 reconcile sweep erases a divergence re-created mid-reconcile", () => {
+describe("reconcile sweep and a divergence re-created mid-reconcile", () => {
   let env: PocEnv;
   let fake: FakeUpstreams;
   afterEach(() => fake.restore());

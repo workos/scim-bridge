@@ -7,9 +7,9 @@ honestly which components are third-party and which are ours.
 
 It replaced `app/vendor/design-system` — 470 files copied out of the WorkOS
 monorepo, of which 299 were a _modified_ fork of `@radix-ui/themes`, a package
-already in `package.json` (ENT-6762). Beyond publishing internal source in a repo
-that is about to go public (ENT-6597), the vendored CSS declared `@font-face`
-rules pointing at `https://cdn.workos.com/fonts/*`, so opening the panel of a
+already in `package.json`. Beyond publishing internal source in a repo that is about
+to go public, the vendored CSS declared `@font-face` rules pointing at
+`https://cdn.workos.com/fonts/*`, so opening the panel of a
 _self-hosted_ bridge made live requests to a WorkOS CDN. Fonts are now served
 from the bridge itself; see `app/theme.css`.
 

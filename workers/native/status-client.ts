@@ -13,7 +13,7 @@ const FETCH_TIMEOUT_MS = 2_000;
  * A status payload as *received*, which is not the same type as one we serve.
  * A listener may be talking to a bridge older than itself, so every field the
  * contract has gained since the endpoint shipped is optional here.
- * `apply_dsync_events` (ENT-6768) is the first; callers must handle its absence
+ * `apply_dsync_events` is the first; callers must handle its absence
  * rather than assume this bridge wrote the response.
  */
 export type ReceivedDirectoryStatus = Omit<DirectoryStatus, "apply_dsync_events"> & {
@@ -36,7 +36,7 @@ const failedUntil = new Map<string, number>();
 export interface StatusReadOptions {
   /**
    * Refuse a cached entry the origin last confirmed before this instant (epoch
-   * ms), however far inside the TTL it still is. ENT-6778: a caller about to
+   * ms), however far inside the TTL it still is. A caller about to
    * make an *unrecoverable* decision from the answer — the listener's
    * `ignored`, which acknowledges an event nothing will ever redeliver — passes
    * the moment the event arrived, so the answer it acts on cannot predate the
@@ -89,7 +89,7 @@ export async function fetchDirectoryStatus(
     (await getConfig(db, "proxy.loopback_url")) ?? (await getConfig(db, "proxy.public_url"))
   )?.replace(/\/+$/, "");
   if (!base) return staleAnswer;
-  // The directory row holds a digest (ENT-6742), so the token comes from the copy
+  // The directory row holds a digest, so the token comes from the copy
   // this process was started with — `DIRECTORIES_JSON` in native-app mode. Without
   // one there is no credential to present, and the caller's own fallback (the row's
   // mode) is the documented inert behaviour.

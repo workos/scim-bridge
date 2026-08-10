@@ -69,7 +69,7 @@ function trail(fake: FakeUpstreams) {
 
 /**
  * Wraps a datastore to record how mapping writes reach it: one statement at a time,
- * or together in a `batch()` (ENT-6761).
+ * or together in a `batch()`.
  */
 function countingWrites(inner: PocEnv["DB"]) {
   const counts = { singleMappingWrites: 0, batches: 0, batchedStatements: 0 };
@@ -162,7 +162,7 @@ describe("runBackfill", () => {
   });
 
   it("writes a page of id mappings in one batch, not one statement per resource", async () => {
-    // The point of ENT-6761. Measured on the ENT-6758 spike: 7 ms per statement
+    // The point of batching. Measured on a benchmarking spike: 7 ms per statement
     // against a Durable Object versus 0.21 ms when they arrive together, and one
     // implicit transaction per statement on SQLite either way.
     const env = await createEnv();
@@ -943,7 +943,7 @@ describe("runReconcileFromWorkos", () => {
     // The mapping wins even though the attacker minted an externalId matching the
     // victim's native id: a row another directory maps is never written. The row
     // is unmapped HERE and the namespace is shared, so the replay guard refuses it
-    // before the PUT (VULN-3099) and the drift repair is never reached.
+    // before the PUT and the drift repair is never reached.
     expect(fake.callsTo("native").some((c) => c.path.startsWith("/Users/victim-1"))).toBe(false);
     expect(fake.callsTo("native").some((c) => c.path.startsWith("/Users/attacker-1"))).toBe(false);
     expect(summary.users).toEqual({ total: 1, mirrored: 0, failed: 1 });
@@ -1024,8 +1024,7 @@ describe("runReconcileFromWorkos", () => {
     const summary = await runReconcileFromWorkos(env.DB, directory);
 
     // Refused one step earlier than the drift repair: the group is unmapped and
-    // the namespace is shared, so the replay never PUTs it at its raw id either
-    // (VULN-3099).
+    // the namespace is shared, so the replay never PUTs it at its raw id either.
     expect(fake.callsTo("native").some((c) => c.path.startsWith("/Groups/victim-g1"))).toBe(false);
     expect(summary.groups).toEqual({ total: 1, mirrored: 0, failed: 1 });
     expect(summary.errors[0]).toBe(
@@ -1072,7 +1071,7 @@ describe("runReconcileFromWorkos", () => {
     expect(fake.callsTo("native").some((c) => c.path.startsWith("/Users/victim-1"))).toBe(false);
     expect(summary.users).toEqual({ total: 1, mirrored: 0, failed: 1 });
     // The canonically-equal URL makes the namespace shared, so the unmapped row is
-    // refused by the replay guard before the drift repair sees it (VULN-3099).
+    // refused by the replay guard before the drift repair sees it.
     expect(summary.errors[0]).toBe(
       "Users/attacker-1: unmapped, and another directory fronts this native app, so this id " +
         "cannot be attributed to this directory; the reconcile did not replay it rather than " +
@@ -1125,7 +1124,7 @@ describe("runReconcileFromWorkos", () => {
     ]);
   });
 
-  it("refuses to repair an unmapped colliding row when a neighbour shares the URL under a distinct token (VULN-3083)", async () => {
+  it("refuses to repair an unmapped colliding row when a neighbour shares the URL under a distinct token", async () => {
     const env = await createEnv();
     // A neighbour on the same native_url under a *different* native token. The
     // bridge cannot verify the customer's app scopes rows by token, so the
@@ -1160,7 +1159,7 @@ describe("runReconcileFromWorkos", () => {
     expect(await mappingRows(env, directory.id)).toEqual([]);
   });
 
-  it("refuses to repair a colliding row another directory maps on the same URL under a distinct token (VULN-3083)", async () => {
+  it("refuses to repair a colliding row another directory maps on the same URL under a distinct token", async () => {
     const env = await createEnv();
     // The other directory maps victim-1 on the same native_url under a different
     // token. Distinct tokens do not prove disjoint row sets, so this is a shared

@@ -1,4 +1,4 @@
--- ENT-6742: store a digest of the proxy token instead of the token.
+-- Store a digest of the proxy token instead of the token.
 --
 -- The column is RENAMED, not dropped and re-added, because existing rows must keep
 -- their value: it is still plaintext at this point, and the boot backfill

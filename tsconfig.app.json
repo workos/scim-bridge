@@ -1,10 +1,10 @@
 {
   // The control panel, plus everything it imports. Not in the solution file yet,
-  // so not gated — but it now reports **zero** errors: ENT-6762 deleted the
-  // vendored design system, and the 32 remaining errors were all `variant`/`color`
+  // so not gated — but it now reports **zero** errors: the vendored design system
+  // was deleted, and the 32 remaining errors were all `variant`/`color`
   // props that the vendored Badge and Button `Omit`ted while their call sites
   // passed them anyway. Against public @radix-ui/themes both are simply valid.
-  // Adding a reference to this project is the whole of ENT-6755; measure with
+  // Adding a reference to this project is all that gating the panel takes; measure with
   // `npm run typecheck:app` until then. The gate lives in tsconfig.check.json.
   "extends": "./tsconfig.json",
   "include": [".react-router/types/**/*", "app/**/*", "workers/**/*", "server/**/*", "tests/**/*"],

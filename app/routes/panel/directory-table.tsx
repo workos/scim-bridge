@@ -22,8 +22,8 @@ export function DirectoryTable({
   diverged,
 }: {
   directories: Directory[];
-  /** Resources WorkOS holds a write for that native does not, by directory id
-   *  (ENT-6767). Absent means none. */
+  /** Resources WorkOS holds a write for that native does not, by directory id.
+   *  Absent means none. */
   diverged: Record<string, number>;
 }) {
   const fetcher = useFetcher<BulkResult>();

@@ -24,7 +24,7 @@ export interface DirectoryStatus {
 /**
  * Whether a listener should apply DSync events for a directory in this mode.
  *
- * This is NOT `!native_authoritative`, and `workos-primary` (ENT-6767) is the mode
+ * This is NOT `!native_authoritative`, and `workos-primary` is the mode
  * that proves it: WorkOS answers the IdP, so native is not authoritative, and yet
  * the proxy still writes native directly on every request — a listener that also
  * applied the events would process every change twice. Both fields are `false`

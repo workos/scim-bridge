@@ -48,12 +48,13 @@ if (applied.length) console.log(`Applied ${applied.length} migration(s): ${appli
 store.encryptionKey = config.encryptionKey;
 if (config.encryptionKey) console.log("Per-directory token encryption: enabled");
 const env: PocEnv = { DB: store };
-// Rows written before ENT-6742 hold the proxy token in the clear. Convert them
-// before anything authenticates, and before the seeding below writes more rows.
+// Rows written before proxy tokens were hashed at rest hold them in the clear.
+// Convert them before anything authenticates, and before the seeding below writes
+// more rows.
 const hashed = await backfillProxyTokenHashes(store);
 if (hashed) {
   console.log(
-    `Hashed ${hashed} plaintext proxy token(s) at rest (ENT-6742). ` +
+    `Hashed ${hashed} plaintext proxy token(s) at rest. ` +
       "The tokens themselves still work; they are no longer readable from the database.",
   );
 }
@@ -71,8 +72,8 @@ if (config.role === "native-app") {
   await seedConfig(env, config);
   await seedDemoDirectory(env, config);
 }
-// One directory per native SCIM namespace is enforced when a directory is saved
-// (ENT-6774), but a database written before that could already violate it. Say so
+// One directory per native SCIM namespace is enforced when a directory is saved,
+// but a database written before that could already violate it. Say so
 // loudly, naming the directories — and keep starting: the panel is where the
 // operator repairs the data, so refusing to boot would remove the only remedy.
 const namespaceDuplicates = await reportNativeNamespaceDuplicates(env);
@@ -93,7 +94,7 @@ function openDatastore(): {
   if (config.databaseDriver === "postgres") {
     // Single-writer: the proxy serialises writes per directory and the listener's
     // dedup is check-then-act, so Postgres removing the storage-level constraint
-    // does not make this safe to run twice yet (ENT-6753 §6).
+    // does not make this safe to run twice yet.
     console.log("DATABASE_DRIVER=postgres: run a single instance against this database");
     const pool = openPostgres(config.databaseUrl as string);
     return {

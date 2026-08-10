@@ -64,8 +64,8 @@ interface OverviewActionData {
   health?: HealthResult;
   topology?: TopologyResult;
   /** A freshly minted proxy token, in the clear. Present only in the response to a
-   *  rotate, and never persisted anywhere readable — the row keeps a digest
-   *  (ENT-6742), so this render is the operator's only chance to copy it. */
+   *  rotate, and never persisted anywhere readable — the row keeps a digest, so
+   *  this render is the operator's only chance to copy it. */
   rotatedToken?: string;
 }
 
@@ -191,7 +191,7 @@ export async function action({
       demoMode: context.get(demoModeContext),
     });
     // Returned rather than redirected: a redirect would drop the plaintext, and
-    // this response is the only place it exists (ENT-6742).
+    // this response is the only place it exists.
     return { rotatedToken: token };
   }
 
@@ -203,7 +203,7 @@ export async function action({
   if (intent === "save-native") {
     const nativeUrl = String(form.get("native_url") ?? "").trim();
     // This intent can *move* a directory onto an endpoint another already uses,
-    // which is the same hazard as creating it there (ENT-6774). Every other
+    // which is the same hazard as creating it there. Every other
     // directory is a candidate; this one is excluded, or re-saving an unchanged
     // URL would collide with itself.
     const others = (await listDirectories(db)).filter((other) => other.id !== directory.id);
@@ -433,7 +433,7 @@ function ModeCard({ currentMode, pending }: { currentMode: Mode; pending: boolea
 }
 
 /**
- * The resources WorkOS holds a write for that native does not (ENT-6767).
+ * The resources WorkOS holds a write for that native does not.
  *
  * The mode's claim is that native is current, so a divergence has to be visible
  * rather than inferred from a log a directory has to opt into. Repair is the

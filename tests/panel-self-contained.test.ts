@@ -6,12 +6,13 @@ import { describe, expect, it } from "vitest";
  * The panel reaches nothing but the host that served it, and vendors nothing.
  *
  * This replaces tests/vendored-design-system.test.ts, which asserted that every
- * vendored file carried a `@ts-nocheck` header. ENT-6762 deleted the tree that
- * guard protected, and a guard for a thing that no longer exists is worse than
- * none — but the invariant underneath it is real and worth keeping, one level up:
+ * vendored file carried a `@ts-nocheck` header. Deleting the vendored tree removed
+ * what that guard protected, and a guard for a thing that no longer exists is worse
+ * than none — but the invariant underneath it is real and worth keeping, one level
+ * up:
  *
  *  1. No `app/vendor/**`. The 470-file copy of the WorkOS design system is what
- *     made this repository unpublishable (ENT-6597) and 299 of those files were a
+ *     made this repository unpublishable, and 299 of those files were a
  *     modified fork of `@radix-ui/themes`, which is an npm dependency.
  *  2. No WorkOS-controlled hosts in anything the browser loads. The vendored CSS
  *     declared `@font-face` rules against `https://cdn.workos.com/fonts/*` and
@@ -71,7 +72,7 @@ describe("the panel is self-contained", () => {
   it("vendors no third-party source tree", () => {
     expect(
       existsSync(join(APP, "vendor")),
-      "app/vendor was deleted by ENT-6762; depend on the published package instead of copying it in",
+      "app/vendor was deleted; depend on the published package instead of copying it in",
     ).toBe(false);
   });
 

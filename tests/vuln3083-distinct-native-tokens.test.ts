@@ -14,7 +14,7 @@ import {
 } from "./helpers";
 
 /**
- * VULN-3083: two bridge directories (attacker A, victim B) front ONE native SCIM
+ * Two bridge directories (attacker A, victim B) front ONE native SCIM
  * app on the same `native_url` with DISTINCT native tokens. The native app accepts
  * either token over one flat user set — it does not partition rows per credential,
  * which the bridge cannot verify — so the ids collide even though the tokens
@@ -121,7 +121,7 @@ async function send(
   return res;
 }
 
-describe("VULN-3083: distinct native tokens on one flat native app", () => {
+describe("distinct native tokens on one flat native app", () => {
   let fake: FakeUpstreams | undefined;
   afterEach(() => fake?.restore());
 

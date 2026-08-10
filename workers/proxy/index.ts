@@ -437,7 +437,7 @@ async function mirrorDualWrite(
 }
 
 /**
- * `workos-primary` (ENT-6767): WorkOS answers the IdP, and the native app is kept
+ * `workos-primary`: WorkOS answers the IdP, and the native app is kept
  * current by the same direct write it received on `dual-write` — not by a DSync
  * event. Rolling back to `dual-write` is therefore a mode change and nothing
  * else: native never stopped being written, so there is nothing to reconcile.
@@ -577,7 +577,7 @@ async function workosPrimary(
   // matters most on the `nativeGone` path, where native applied no write and
   // returned an error rather than a resource: the id in the path is the only key
   // its 404 corroborates, and it corroborates it exactly, by saying it does not
-  // hold that id. Widening the key set here from the request body is VULN-3108 —
+  // hold that id. Widening the key set here from the request body would be a hole:
   // it would let any holder of the directory's proxy token retire an unrelated
   // resource's deprovisioning gap by naming it in the body of a DELETE.
   await clearNativeWriteFailure(env.DB, directory.id, kind, resourceKey);
@@ -620,7 +620,7 @@ async function workosPrimary(
  *   POST without one → native-first, adopting native's id, exactly as dual-write
  *     does. Two concurrent sides would each mint an id the other never sees, and
  *     the resource would exist twice under two unrelated ids — the id divergence
- *     ENT-6752 and its five follow-ups were all about. A create is also the one
+ *     the whole id-mapping design exists to prevent. A create is also the one
  *     request the IdP has not yet been told an id for, so serializing it costs a
  *     round trip on a request that happens once per resource.
  *
@@ -629,7 +629,7 @@ async function workosPrimary(
  * The mapping this create writes is keyed on native's own echoed id, so it cannot
  * claim a row the directory did not create — but the WorkOS row id is itself a
  * native address later on: an unmapped WorkOS row is what a reconcile replays at
- * its raw id (VULN-3099), and a native leg that fails leaves exactly such a row.
+ * its raw id, and a native leg that fails leaves exactly such a row.
  * In a shared namespace the id is minted at random instead, so the row a failed
  * create leaves behind names nothing in the native app. (The other unscoped id in
  * this path — a native 409 resolved from an unscoped listing — is guarded in

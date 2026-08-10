@@ -35,7 +35,7 @@ export type AppRole = (typeof APP_ROLES)[number];
  * Which datastore backs the container. `sqlite` (the default) is the documented
  * docker-compose deployment: one file on a mounted volume. `postgres` is for the
  * deployments that already run RDS/Aurora and want the database backed up by the
- * machinery they already own (ENT-6753).
+ * machinery they already own.
  */
 export const DATABASE_DRIVERS = ["sqlite", "postgres"] as const;
 export type DatabaseDriver = (typeof DATABASE_DRIVERS)[number];
@@ -273,7 +273,7 @@ export type PanelAuthDecision = "open" | "granted" | "denied";
  * with your own reverse proxy / SSO" deployment. Anything else demands a
  * matching header, including a *half*-configured pair: a username with no
  * password is a misconfiguration, and treating it as `open` served every
- * directory's decrypted SCIM tokens to anonymous callers (VULN-1612).
+ * directory's decrypted SCIM tokens to anonymous callers.
  *
  * Lives here rather than in the middleware because the middleware only exists
  * once the react-router build is mounted, and a decision this consequential
@@ -309,8 +309,9 @@ export async function decidePanelAuth(
   // fixed 64 characters and tells an observer nothing — not even the length of the
   // right answer.
   //
-  // Being straight about the value, as with the digest recheck in ENT-6742: timing
-  // this over a network, through Hono, react-router and a TLS terminator, is a weak
+  // Being straight about the value, as with the digest recheck in
+  // `getDirectoryByToken`: timing this over a network, through Hono, react-router and
+  // a TLS terminator, is a weak
   // attack. The reasons to do it anyway are that a plaintext credential compared
   // with `===` is what a reviewer flags forever, and that it costs two lines.
   const [userMatches, passwordMatches] = await Promise.all([
@@ -393,14 +394,14 @@ export async function seedNativeAppConfig(env: PocEnv, config: AppConfig): Promi
  * longer resolve an event or hold on to a proxy token.
  *
  * `DIRECTORIES_JSON` carries no `native_url` and `reconcileDirectories` writes
- * none, so this path cannot itself put two directories on one native namespace
- * (ENT-6774) — a row it creates addresses no native app at all. Rows that
+ * none, so this path cannot itself put two directories on one native namespace —
+ * a row it creates addresses no native app at all. Rows that
  * carried a URL before this role took over the database still can, which is
  * what `reportNativeNamespaceDuplicates` covers at boot.
  */
 export async function seedNativeAppDirectories(env: PocEnv, config: AppConfig): Promise<void> {
   await reconcileDirectories(env.DB, config.directories);
-  // The rows keep only a digest (ENT-6742), so the status client gets its copy from
+  // The rows keep only a digest, so the status client gets its copy from
   // the environment we just read. In-process: this runs on every boot.
   for (const directory of config.directories) {
     rememberClientToken(directory.workos_directory_id, directory.proxy_token);
@@ -422,7 +423,7 @@ export async function seedDemoDirectory(env: PocEnv, config: AppConfig): Promise
   const endpoints = bundledEndpoints(config);
   // Unreachable while the guard above returns on any existing directory — there is
   // nothing to collide with. Kept for the same reason the six downstream guards
-  // are (ENT-6774): if that precondition is ever relaxed, seeding must not be the
+  // are: if that precondition is ever relaxed, seeding must not be the
   // one path that can still mint a second directory on an occupied namespace.
   const namespaceError = checkNativeNamespace(endpoints.native_url, existing);
   if (namespaceError) {
@@ -452,8 +453,8 @@ export async function seedDemoDirectory(env: PocEnv, config: AppConfig): Promise
  * Warn at boot about directories that already share a native SCIM namespace,
  * and return how many groups were found.
  *
- * Deliberately not fatal. A database written before ENT-6774 may hold two
- * directories on one endpoint, and the only place an operator can repair that
+ * Deliberately not fatal. A database written before the rule was enforced may hold
+ * two directories on one endpoint, and the only place an operator can repair that
  * is the panel this process serves — refusing to start would lock them out of
  * the fix. This is the opposite call to the panel-auth refusal above, and for
  * the opposite reason: there the unsafe state is *serving credentials*, which

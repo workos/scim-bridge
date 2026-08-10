@@ -168,7 +168,7 @@ describe.each(drivers)("$name driver", ({ open }) => {
   });
 
   it("leaves no mapping behind when one write in the batch fails", async () => {
-    // What ENT-6761's backfill flush relies on, asserted per engine rather than
+    // What the backfill's batched flush relies on, asserted per engine rather than
     // assumed to be the same. `INSERT OR IGNORE` reached production once because
     // nobody asked whether app SQL meant the same thing on both engines; a batch
     // that half-applied would be worse — some resources would have mappings and
