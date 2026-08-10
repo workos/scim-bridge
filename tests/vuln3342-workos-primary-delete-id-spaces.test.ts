@@ -127,6 +127,47 @@ describe("workos-primary DELETE id spaces", () => {
     expect(await getMapping(env.DB, directory.id, "Users", "nat_9f3c")).toBeNull();
   });
 
+  it("deletes a migrated-id resource, whose one id is both a native and a WorkOS id", async () => {
+    // The normal shape under the migrated-id contract, and the case the refusal
+    // above must never catch: native_id === workos_id, so the path id resolves as
+    // BOTH a native id and a WorkOS id. The guard is `!asNativeId && asWorkosId`
+    // for exactly this reason — drop the first half and every ordinary delete
+    // 404s while the id-space tests above stay green.
+    const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+    await upsertMapping(env.DB, {
+      directory_id: directory.id,
+      resource_type: "Users",
+      native_id: "shared-7",
+      workos_id: "shared-7",
+      strategy: "migrated-id",
+    });
+
+    let nativeHasUser = true;
+    let workosHasUser = true;
+    fake.route("native", "DELETE", /^\/Users\//, (call) => {
+      if (call.path !== "/Users/shared-7") return scimJson(404, { detail: "not found" });
+      nativeHasUser = false;
+      return new Response(null, { status: 204 });
+    });
+    fake.route("workos", "DELETE", /^\/Users\//, (call) => {
+      if (call.path !== "/Users/shared-7") return scimJson(404, { detail: "not found" });
+      workosHasUser = false;
+      return new Response(null, { status: 204 });
+    });
+
+    const res = await proxyWorker.fetch(
+      proxyRequest(directory, "DELETE", "/scim/v2/Users/shared-7"),
+      env,
+      createCtx(),
+    );
+
+    expect(res.status).toBe(204);
+    expect(nativeHasUser).toBe(false);
+    expect(workosHasUser).toBe(false);
+    expect(await listNativeWriteFailures(env.DB, directory.id)).toEqual([]);
+    expect(await getMapping(env.DB, directory.id, "Users", "shared-7")).toBeNull();
+  });
+
   it("still converges a retried DELETE the native app has already applied", async () => {
     // The case PR #82 exists for, and the one the guard must not break: native
     // settled on the first attempt, WorkOS did not, and the IdP retries.
