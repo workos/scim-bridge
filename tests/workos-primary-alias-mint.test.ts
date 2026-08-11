@@ -85,10 +85,19 @@ describe("workos-primary id mints across resources", () => {
       workosHasVictim = false;
       return new Response(null, { status: 204 });
     });
-    // Nothing else in the native app answers to the resources these tests create.
-    fake.route("native", "GET", /^\/Users\?/, () =>
-      scimJson(200, { totalResults: 0, startIndex: 1, itemsPerPage: 0, Resources: [] }),
-    );
+    // A uniqueness lookup: the native app answers for the victim it holds and for
+    // nothing else, as it would for a resource it has never seen.
+    fake.route("native", "GET", /^\/Users\?/, (call) => {
+      const filter = new URL(`http://native${call.path}`).searchParams.get("filter");
+      const hit = filter === 'userName eq "ada@example.com"' && nativeHasVictim;
+      const rows = hit ? [{ id: "nat_9f3c", userName: "ada@example.com" }] : [];
+      return scimJson(200, {
+        totalResults: rows.length,
+        startIndex: 1,
+        itemsPerPage: rows.length,
+        Resources: rows,
+      });
+    });
     // The native app holds only its own id and resolves the raw path bytes.
     fake.route("native", "PUT", /^\/Users\//, (call) =>
       call.path === "/Users/nat_9f3c"
@@ -153,21 +162,8 @@ describe("workos-primary id mints across resources", () => {
   it("refuses a create whose externalId is another resource's WorkOS-side id", async () => {
     const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
     expect((await createVictim(directory)).status).toBe(201);
-    fake.route("native", "POST", "/Users", scimJson(201, { id: "nat_att", userName: "fresh" }), {
-      once: true,
-    });
-    let rolledBack = false;
-    fake.route(
-      "native",
-      "DELETE",
-      "/Users/nat_att",
-      () => {
-        rolledBack = true;
-        return new Response(null, { status: 204 });
-      },
-      { once: true },
-    );
     const { nativeHas, workosHas, workosTitle } = routeUpstreams();
+    const before = fake.callsTo("native").length;
 
     const created = await proxyWorker.fetch(
       proxyRequest(directory, "POST", "/scim/v2/Users", {
@@ -190,24 +186,28 @@ describe("workos-primary id mints across resources", () => {
       workos_id: "idp-1",
     });
 
-    // The refusal is final, so the row native made for it is taken back rather
-    // than left unmapped for a reconcile to find.
-    expect(rolledBack).toBe(true);
+    // The refusal is final, so it is reached before either app is written to:
+    // there is no row to take back and nothing for a reconcile to find.
+    expect(
+      fake
+        .callsTo("native")
+        .slice(before)
+        .filter((c) => c.method !== "GET"),
+    ).toEqual([]);
     expect(workosHas()).toBe(true);
     expect(nativeHas()).toBe(true);
     expect(await listNativeWriteFailures(env.DB, directory.id)).toEqual([]);
   });
 
-  it("records the native row when a refused create cannot be taken back", async () => {
+  it("refuses a claimed mint whose resource native cannot be resolved", async () => {
+    // Native holds the claimed resource but cannot be asked which row it is (no
+    // filter support): with no proof the create is the claimed resource's retry,
+    // the refusal stands, and it still costs neither app a write.
     const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
     expect((await createVictim(directory)).status).toBe(201);
-    fake.route("native", "POST", "/Users", scimJson(201, { id: "nat_att", userName: "fresh" }), {
-      once: true,
-    });
-    fake.route("native", "DELETE", "/Users/nat_att", scimJson(500, { detail: "boom" }), {
-      once: true,
-    });
+    fake.route("native", "GET", /^\/Users\?/, scimJson(501, { detail: "filters unsupported" }));
     routeUpstreams();
+    const before = fake.callsTo("native").length;
 
     const created = await proxyWorker.fetch(
       proxyRequest(directory, "POST", "/scim/v2/Users", {
@@ -220,11 +220,13 @@ describe("workos-primary id mints across resources", () => {
     );
 
     expect(created.status).toBe(409);
-    expect(await getMapping(env.DB, directory.id, "Users", "nat_att")).toBeNull();
-    // The orphan is on the operator's divergence card, not only in the log.
-    expect(await listNativeWriteFailures(env.DB, directory.id)).toMatchObject([
-      { resource_type: "Users", resource_key: "nat_att", method: "POST" },
-    ]);
+    expect(
+      fake
+        .callsTo("native")
+        .slice(before)
+        .filter((c) => c.method !== "GET"),
+    ).toEqual([]);
+    expect(await listNativeWriteFailures(env.DB, directory.id)).toEqual([]);
   });
 
   it("refuses a backfill replay of a native row another resource's mapping claims", async () => {

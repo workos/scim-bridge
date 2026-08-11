@@ -719,27 +719,23 @@ async function workosPrimaryCreate(
   const claimedMint = workosMintId
     ? await getMappingByWorkosId(env.DB, directory.id, kind, workosMintId)
     : null;
-  let undoableNativeCreate = false;
-  // A claimed mint can end in a refusal the native leg has already acted on, and
-  // the row it leaves has to go back — so ask native what it already holds for
-  // this resource BEFORE the create rather than read it out of the create's own
-  // answer. A native app is free to answer a duplicate POST 2xx with the row it
-  // already had, and a 2xx is then not evidence this request created anything;
-  // undoing that row would delete a resource the request did not make.
+  // The one create a claimed mint can legitimately be: the IdP retrying a create
+  // this directory already completed, whose resource native therefore still holds
+  // under the id the claimed mapping names. Anything else is refused here, before
+  // either leg is written — asking native what it holds rather than reading the
+  // answer out of a write of our own is what keeps a refusal from having to be
+  // walked back. A refusal after the native leg could only be walked back by
+  // deleting the row it reports, and a 2xx is not proof the row is this request's:
+  // a native app may answer a duplicate POST with the row it already had, or with
+  // one a concurrent create just made.
   if (claimedMint) {
     const priorNativeId = uniqueAttributeValue(kind, parsed)
       ? await findNativeByUniqueAttribute(directory, kind, parsed)
       : null;
-    // Native already has it under an id the mint does not name: the create is
-    // refused with no write on either leg. When native does hold the claimed
-    // resource, this is the IdP retry the create leg still has to converge.
-    if (priorNativeId !== null && priorNativeId !== claimedMint.native_id) {
+    if (priorNativeId !== claimedMint.native_id) {
       log.error = mintConflictDetail(kind, claimedMint.workos_id, claimedMint.native_id);
       return finish(scimError(409, log.error));
     }
-    // Nothing to undo either, so a create that has to be refused below is only
-    // undone when native had no row for it and answered this request 2xx.
-    undoableNativeCreate = priorNativeId === null;
   }
   const nativeCreatePromise = nativeCreate(env, directory, kind, requestBody, contentType, url);
   // The mappings mirrorUpsert would write are collected instead of written: the
@@ -782,32 +778,23 @@ async function workosPrimaryCreate(
   }
   if (claimedMint && claimedMint.native_id !== native.id) {
     // The mint names a resource this create is not, and nothing was written to
-    // WorkOS. Refusing is what keeps the two ids the mapping separates from
-    // collapsing onto one WorkOS row — but the native leg has already run, so a
-    // row this request created has to go back: the refusal is final (a retry
-    // gets the same 409), so nothing would ever converge it, and an unmapped
-    // native row is itself an address a later reconcile replays. Only a row this
-    // request made: native held none for the resource before it, and answered
-    // this create 2xx.
+    // WorkOS, which is what keeps the two ids the mapping separates from
+    // collapsing onto one WorkOS row. The claim was resolved against native above,
+    // so reaching this means native answered the create with a third id — nothing
+    // this request can safely take back, since the row may be another request's.
+    // Record it: an unmapped native row is an address a later reconcile replays,
+    // and this refusal is final, so nothing else would ever surface it.
     log.error = mintConflictDetail(kind, claimedMint.workos_id, claimedMint.native_id);
-    if (native.result !== null && isSuccess(native.result.status)) {
-      const undone = undoableNativeCreate && (await nativeDelete(directory, kind, native.id));
-      if (!undone) {
-        // Either the undo failed or the row could not be proven this request's, so
-        // it stays. Record it where the operator's divergence card will show it
-        // rather than leave it only in this log.
-        await recordNativeWriteFailure(env.DB, {
-          directory_id: directory.id,
-          resource_type: kind,
-          resource_key: native.id,
-          method: "POST",
-          native_status: native.result.status,
-          detail:
-            `${log.error} The create was refused after the native app had answered it, and the ` +
-            "native row was not removed, so it exists with no WorkOS counterpart and no mapping.",
-        });
-      }
-    }
+    await recordNativeWriteFailure(env.DB, {
+      directory_id: directory.id,
+      resource_type: kind,
+      resource_key: native.id,
+      method: "POST",
+      native_status: native.result?.status ?? null,
+      detail:
+        `${log.error} The create was refused after the native app had answered it with this id, ` +
+        "so the native row has no WorkOS counterpart and no mapping.",
+    });
     return finish(scimError(409, log.error));
   }
   if (!workosOk) {
@@ -981,27 +968,6 @@ async function nativeCreate(
     };
   }
   return { result, error: null, id: existingId };
-}
-
-/**
- * Undo a native create this request made, for a create the proxy then refused.
- * Reports whether the row is gone (404 counts: something else already removed it),
- * so a caller can record the orphan it could not take back.
- */
-async function nativeDelete(
-  directory: Directory,
-  kind: ResourceType,
-  nativeId: string,
-): Promise<boolean> {
-  try {
-    const result = await scimFetch(
-      joinScimUrl(directory.native_url, `/${kind}/${encodeURIComponent(nativeId)}`),
-      { method: "DELETE", token: directory.native_token },
-    );
-    return isSuccess(result.status) || result.status === 404;
-  } catch {
-    return false;
-  }
 }
 
 /** Resolve a resource native already holds by the attribute it is unique on, so a
