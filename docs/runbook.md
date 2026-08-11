@@ -259,15 +259,17 @@ Constraints worth knowing before you plan a swap:
   A native app that issued **one shared token to every enterprise customer**
   therefore cannot be token-routed at all — that needs a different routing key
   (hostname or path per tenant) and is not supported today.
-- **Imported tokens are stored as-is**, like minted ones: `APP_ENCRYPTION_KEY`
-  covers the native/WorkOS upstream tokens, not the routing key the proxy must
-  look up on every request.
+- **Imported tokens are hashed at rest**, like minted ones — the proxy stores
+  only a digest and routes by it, so the token cannot be read back later
+  ([recovery paths](#proxy-tokens-are-hashed-so-they-cant-be-read-back)).
+  `APP_ENCRYPTION_KEY` covers the native/WorkOS upstream tokens, which the
+  proxy must present, not this routing key, which it only verifies.
 - A too-short value is rejected at import (a truncated paste would 401 every
   SCIM request instead of failing here).
-- **The token is set at import only.** The directory page shows it read-only;
-  there is no in-place rotation, and re-importing means deleting the directory
-  (which drops its id mappings). Get it right while the directory is being
-  created.
+- **Rotation is in place, and immediate.** **Rotate** on the directory page
+  mints a new token and shows it once; the previous token stops authenticating
+  the moment it returns, so on a live directory rotate only when you can paste
+  the new token into the IdP straight away.
 
 ## Run the migration
 
