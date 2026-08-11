@@ -1,6 +1,12 @@
 import type { Directory, IdMapping, ResourceType } from "./types";
 import { MIGRATED_ID_HEADER } from "./types";
-import { getMapping, listDirectories, upsertMapping, withDatastoreRetry } from "./db";
+import {
+  getMapping,
+  getMappingByWorkosId,
+  listDirectories,
+  upsertMapping,
+  withDatastoreRetry,
+} from "./db";
 import type { NewMapping } from "./db";
 import type { Datastore } from "./datastore";
 
@@ -533,6 +539,29 @@ export async function mirrorUpsert(
       // First touch: try the migrated-id PUT. It 404s when absent (only POST
       // creates now) but succeeds if the row already exists under the shared id.
       const label = `PUT /${kind}/${nativeId} +${MIGRATED_ID_HEADER}`;
+      // "The row already exists under the shared id" is only safe to adopt when no
+      // other resource is already mapped to that WorkOS row. WorkOS answers a PUT
+      // to an id whichever resource sits under it, so a 2xx here is not evidence
+      // the id is this resource's: an id already recorded as ANOTHER resource's
+      // `workos_id` would be adopted as a `native_id` of its own, and the two id
+      // spaces the mapping exists to keep apart collapse onto one row — writes and
+      // deletes addressed in either space then land on the other resource.
+      //
+      // `nativeId` has to be the resource's own native id for the comparison to
+      // mean anything, which is why the create legs pass a sink: their id is a
+      // mint whose owner is not known until the native leg answers, and they run
+      // the same check themselves once it has.
+      const claimed = sink ? null : await getMappingByWorkosId(db, directory.id, kind, nativeId);
+      if (claimed && claimed.native_id !== nativeId) {
+        return {
+          ok: false,
+          workosRequest: label,
+          status: 409,
+          ms: acc.ms || null,
+          body: null,
+          error: mintConflictDetail(kind, nativeId, claimed.native_id),
+        };
+      }
       const put = await putWorkos(directory, kind, nativeId, resource, acc, nativeId);
       if (isSuccess(put.status)) {
         await recordMapping(
@@ -667,6 +696,18 @@ async function resolveCreateRace(
     create,
     acc,
     `WorkOS POST hit 409 and the ${attribute} lookup did not recover an id`,
+  );
+}
+
+/**
+ * Why an id cannot be adopted as a resource's own. Names both resources in
+ * native-id space, which is the space the caller addresses.
+ */
+export function mintConflictDetail(kind: ResourceType, id: string, ownerNativeId: string): string {
+  return (
+    `${kind}/${id} is already the WorkOS-side id of ${kind}/${ownerNativeId} in this directory, ` +
+    "so it cannot also be a resource id of its own. Address that resource by the id this " +
+    "directory returned for it."
   );
 }
 

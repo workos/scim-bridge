@@ -22,6 +22,7 @@ import {
   joinScimUrl,
   loadIdMaps,
   makeTranslator,
+  mintConflictDetail,
   mirrorUpsert,
   nativeNamespaceIsShared,
   parseJson,
@@ -706,19 +707,30 @@ async function workosPrimaryCreate(
       ? crypto.randomUUID()
       : externalId;
 
+  // A mint this directory already records as another resource's WorkOS-side id
+  // cannot be written concurrently: WorkOS answers the mirror's PUT for whatever
+  // resource sits under the id, so the leg would land on that resource's row
+  // before native has said which resource this create is. Serialise on it
+  // instead — the native-first path a create without an externalId already takes
+  // — and let the id through only once native's own id proves this create is the
+  // claimed resource's, which is what an IdP retry of a completed create is.
+  const claimedMint = workosMintId
+    ? await getMappingByWorkosId(env.DB, directory.id, kind, workosMintId)
+    : null;
   const nativeCreatePromise = nativeCreate(env, directory, kind, requestBody, contentType, url);
   // The mappings mirrorUpsert would write are collected instead of written: the
   // row has to be keyed on the id NATIVE reports, which is not known until its
   // leg finishes, and a mapping keyed on the minted id would claim a native row
   // that does not exist.
   const sink: MappingSink = [];
-  const mirrorPromise = workosMintId
-    ? mirrorUpsert(env.DB, directory, kind, workosMintId, workosBody, sink)
-    : nativeCreatePromise.then((native) =>
-        native.id === null
-          ? null
-          : mirrorUpsert(env.DB, directory, kind, native.id, workosBody, sink),
-      );
+  const mirrorPromise =
+    workosMintId && !claimedMint
+      ? mirrorUpsert(env.DB, directory, kind, workosMintId, workosBody, sink)
+      : nativeCreatePromise.then((native) =>
+          native.id === null || (claimedMint && claimedMint.native_id !== native.id)
+            ? null
+            : mirrorUpsert(env.DB, directory, kind, native.id, workosBody, sink),
+        );
   const [native, mirror] = await Promise.all([nativeCreatePromise, mirrorPromise]);
 
   if (mirror) applyMirrorResult(log, mirror);
@@ -743,6 +755,13 @@ async function workosPrimaryCreate(
       });
     }
     return finish(nativeFailureResponse(native));
+  }
+  if (claimedMint && claimedMint.native_id !== native.id) {
+    // Native created a row of its own, and nothing was written to WorkOS: the
+    // mint names a resource this create is not. Refusing here is what keeps the
+    // two ids the mapping separates from collapsing onto one WorkOS row.
+    log.error = mintConflictDetail(kind, claimedMint.workos_id, claimedMint.native_id);
+    return finish(scimError(409, log.error));
   }
   if (!workosOk) {
     return finish(
