@@ -6,19 +6,19 @@ WorkOS, to cutover. The [runbook](./runbook.md) covers each step's operational
 depth; this is the map of the whole journey and the exact shapes exchanged at
 each handoff.
 
-**The short version, for a fleet:**
+**The short version, when you are migrating many directories:**
 
 1. Send WorkOS one CSV naming your organizations → get back one credentials
    sheet (Step A)
 2. Deploy the bridge, paste that sheet into **Bulk import** (Step B)
 3. Repoint IdPs — no credential change needed if you import each existing
    token (Step C)
-4. Stand up **one** listener for the whole fleet, keyed by directory id
+4. Stand up **one** listener for all directories, keyed by directory id
    (Step D)
 5. **Pilot one directory end to end**, then advance the rest in waves with the
    bulk mode controls (Step E)
 
-Every per-directory operation has a fleet-sized counterpart: import, mode
+Every per-directory operation has a bulk counterpart: import, mode
 changes, and the divergence counters all work across the whole list.
 
 Two parties act in this guide:
@@ -98,7 +98,7 @@ WorkOS webhooks do **not** target the bridge — they go to your app's listener
 (Step D). The bridge has no inbound dependency on WorkOS at all.
 
 Deploy ([runbook: deploy](./runbook.md#deploy)), then import each directory —
-one at a time in the panel, or the whole fleet at once with **Bulk import**
+one at a time in the panel, or all of them at once with **Bulk import**
 (one row per directory, header optional):
 
 ```csv
@@ -127,7 +127,7 @@ Verify traffic in the **Activity** tab before going further.
 
 ## Step D — prepare your DSync listener
 
-One listener serves the whole fleet: every event carries `data.directory_id`,
+One listener serves every directory: each event carries `data.directory_id`,
 so a single webhook endpoint resolves the directory per event and asks the
 bridge whether to apply it. You register **one** webhook in WorkOS, not two
 hundred.
@@ -148,14 +148,14 @@ Before cutover your app must consume Directory Sync events:
    spells them out, including the rehire case that silently loses data when a
    listener gets this wrong.
 
-## Step E — pilot one directory, then advance the fleet in waves
+## Step E — pilot one directory, then advance the rest in waves
 
 **Pilot first.** Take one low-stakes directory through every rung below — all
 the way to `workos-only` and one post-cutover change observed arriving through
 your listener — before touching the rest. Every integration surprise you'll
 meet lives in that first pass; the other 199 are repetition.
 
-Then advance the fleet in waves: the directory list has **bulk mode changes**
+Then advance the rest in waves: the directory list has **bulk mode changes**
 (select directories → set mode), and its per-directory divergence counter shows
 which ones aren't ready to advance. Keep waves small enough that a surprise in
 one is visible before the next wave moves.
@@ -175,7 +175,7 @@ operational detail, including what "safe to cut over" looks like:
 
 **Rollback** is a mode change at any rung — before cutover nothing needs
 reconciling first; after cutover, run **Reconcile from WorkOS** if you're unsure
-the listener kept up. Bulk mode changes for a fleet are on the directory list.
+the listener kept up. Bulk mode changes are on the directory list.
 
 ## When something looks off
 

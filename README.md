@@ -126,7 +126,7 @@ as a hash), but these two cannot be: the bridge has to present them upstream.
 
 ## Importing a directory
 
-> Migrating a whole fleet, or starting from scratch? Follow
+> Migrating many directories, or starting from scratch? Follow
 > [`docs/migration-guide.md`](./docs/migration-guide.md) — it starts one step
 > earlier, with WorkOS provisioning your directories (they must be created as
 > **imported** directories; the dashboard can't do it), and covers bulk import.
