@@ -85,6 +85,10 @@ describe("workos-primary id mints across resources", () => {
       workosHasVictim = false;
       return new Response(null, { status: 204 });
     });
+    // Nothing else in the native app answers to the resources these tests create.
+    fake.route("native", "GET", /^\/Users\?/, () =>
+      scimJson(200, { totalResults: 0, startIndex: 1, itemsPerPage: 0, Resources: [] }),
+    );
     // The native app holds only its own id and resolves the raw path bytes.
     fake.route("native", "PUT", /^\/Users\//, (call) =>
       call.path === "/Users/nat_9f3c"
@@ -277,6 +281,84 @@ describe("workos-primary id mints across resources", () => {
     expect(await getMapping(env.DB, directory.id, "Users", "nat_att")).toMatchObject({
       workos_id: "nat_victim",
     });
+  });
+
+  it("refuses a same-page backfill claim that has not been flushed yet", async () => {
+    // The claim and the row that collides with it are mirrored in one page, so
+    // the claim only exists in the run's queue when the second row is reached.
+    const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+    fake.route("native", "GET", /^\/Users(\?|$)/, () =>
+      scimJson(200, {
+        totalResults: 2,
+        startIndex: 1,
+        itemsPerPage: 2,
+        Resources: [
+          { id: "nat_att", userName: "fresh@example.com", externalId: "nat_victim" },
+          { id: "nat_victim", userName: "ada@example.com" },
+        ],
+      }),
+    );
+    fake.route("native", "GET", /^\/Groups(\?|$)/, () =>
+      scimJson(200, { totalResults: 0, startIndex: 1, itemsPerPage: 0, Resources: [] }),
+    );
+    // nat_att's own migrated-id PUT 404s, so WorkOS mints it the victim's id.
+    fake.route("workos", "PUT", "/Users/nat_att", scimJson(404, { detail: "not found" }), {
+      once: true,
+    });
+    fake.route("workos", "POST", "/Users", scimJson(201, { id: "nat_victim" }), { once: true });
+    let victimReplayed = false;
+    fake.route("workos", "PUT", "/Users/nat_victim", () => {
+      victimReplayed = true;
+      return scimJson(200, { id: "nat_victim" });
+    });
+
+    const summary = await runBackfill(env.DB, directory);
+
+    // The queued claim is enough: the victim's row is not written under it.
+    expect(victimReplayed).toBe(false);
+    expect(summary.users).toMatchObject({ total: 2, mirrored: 1, failed: 1 });
+    expect(await getMapping(env.DB, directory.id, "Users", "nat_victim")).toBeNull();
+    expect(await getMapping(env.DB, directory.id, "Users", "nat_att")).toMatchObject({
+      workos_id: "nat_victim",
+    });
+  });
+
+  it("refuses a claimed mint without writing to native at all", async () => {
+    // The refusal the create leg cannot undo: native already holds the resource,
+    // so its answer to the POST would not be evidence this request made the row.
+    const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+    expect((await createVictim(directory)).status).toBe(201);
+    const before = fake.callsTo("native").length;
+    // Native resolves the attacker's userName to a row it already has.
+    fake.route("native", "GET", /^\/Users\?/, () =>
+      scimJson(200, {
+        totalResults: 1,
+        startIndex: 1,
+        itemsPerPage: 1,
+        Resources: [{ id: "nat_pre", userName: "fresh@example.com" }],
+      }),
+    );
+    routeUpstreams();
+
+    const created = await proxyWorker.fetch(
+      proxyRequest(directory, "POST", "/scim/v2/Users", {
+        userName: "fresh@example.com",
+        externalId: "idp-1",
+        active: true,
+      }),
+      env,
+      createCtx(),
+    );
+
+    expect(created.status).toBe(409);
+    // The pre-existing row is neither created, written to, nor deleted.
+    expect(
+      fake
+        .callsTo("native")
+        .slice(before)
+        .filter((c) => c.method !== "GET"),
+    ).toEqual([]);
+    expect(await listNativeWriteFailures(env.DB, directory.id)).toEqual([]);
   });
 
   it("still converges an IdP retry of a create it already completed", async () => {

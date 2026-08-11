@@ -550,8 +550,14 @@ export async function mirrorUpsert(
       // Every caller is held to this, including backfill: an unmapped native row
       // whose id another resource already holds as its `workos_id` is exactly the
       // collision, and replaying it would write the neighbour's row under cover of
-      // a mapping the replay itself mints.
-      const claimed = await getMappingByWorkosId(db, directory.id, kind, nativeId);
+      // a mapping the replay itself mints. A batching caller's queued rows count —
+      // they are claims this run has already made, and a page of them lands after
+      // every resource on the page has been mirrored.
+      const claimed =
+        sink?.find(
+          (m) =>
+            m.directory_id === directory.id && m.resource_type === kind && m.workos_id === nativeId,
+        ) ?? (await getMappingByWorkosId(db, directory.id, kind, nativeId));
       if (claimed && claimed.native_id !== nativeId) {
         return {
           ok: false,
