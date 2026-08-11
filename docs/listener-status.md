@@ -232,9 +232,18 @@ it. This is why offboard must keep the row, and why a directory whose
 environment lacks suspension soft-delete must not cut over until WorkOS confirms
 it is enabled.
 
-**Keep your own ids stable.** Address rows by the id your app already holds for
-the user (match on `idp_id`/`userName`), not by minting a new row per
-`user.created`. The event's `data.id` is a WorkOS-internal id (`directory_user_…`)
-— it is not the id the SCIM endpoint serves, and adopting it produces rows the
-bridge's reconcile cannot attribute. The reference listener
-(`workers/native/listener.ts`) shows the lookup order.
+**Keep resource ids stable.** Locate an existing user by identity attributes —
+`idp_id` first, then `userName` — and only when nothing matches create the row
+**adopting the event's `data.id`**. On an imported directory that value is the
+shared migrated id — the same id WorkOS, the bridge's mappings, reconcile, and
+rollback all address — which is exactly why the reference listener
+(`workers/native/listener.ts`) adopts it rather than minting its own or using
+`idp_id`. The lookup-first order is what keeps a rehire landing on the existing
+row instead of creating a duplicate.
+
+> **Diagnostic:** if the `data.id` on your user events looks like
+> `directory_user_…`, the directory was **not** provisioned as imported
+> (migration guide, Step A) — that is WorkOS's internal id, adopting it produces
+> rows the bridge's reconcile cannot attribute, and the migration contract this
+> document assumes is not in effect. Stop and get the directory provisioned
+> correctly before cutover.
