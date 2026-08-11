@@ -205,3 +205,36 @@ endpoint the same way via `workers/native/status-client.ts` — it reads
 against the endpoint before committing to it — falling back to its shared
 database only when the endpoint isn't mounted (`npm run dev`), and to
 `mode === "workos-only"` when the bridge is old enough not to send the field.
+
+## Applying events
+
+What each event means on a directory provisioned for migration (an **imported**
+directory — see the [migration guide, Step A](./migration-guide.md#step-a--workos-provisions-your-directories)),
+and the two mistakes that silently lose data:
+
+- **`dsync.user.created` / `dsync.user.updated`** — upsert the user. A payload
+  with an inactive `state` is an **offboard**: revoke access, keep the row.
+  Imported directories run with suspension soft-delete, so this — not
+  `user.deleted` — is how a deactivation (Okta unassign, Entra soft delete)
+  arrives.
+- **`dsync.user.deleted`** — the user is actually gone from the directory.
+  Deprovision, and only then consider removing data — actual purging is a
+  retention-policy decision, not something to do on webhook receipt.
+- **`dsync.group.user_added` / `user_removed`** — membership edges. WorkOS
+  emits them only when a membership *changes*: state your app dropped on its
+  own is never re-announced.
+
+**The rehire trap.** A listener that deletes its row on any deactivation signal
+loses the user's id and group memberships the moment that user is reactivated:
+WorkOS kept both, considers nothing changed, and emits no event that would
+rebuild them — the drift is permanent until a **Reconcile from WorkOS** repairs
+it. This is why offboard must keep the row, and why a directory whose
+environment lacks suspension soft-delete must not cut over until WorkOS confirms
+it is enabled.
+
+**Keep your own ids stable.** Address rows by the id your app already holds for
+the user (match on `idp_id`/`userName`), not by minting a new row per
+`user.created`. The event's `data.id` is a WorkOS-internal id (`directory_user_…`)
+— it is not the id the SCIM endpoint serves, and adopting it produces rows the
+bridge's reconcile cannot attribute. The reference listener
+(`workers/native/listener.ts`) shows the lookup order.
