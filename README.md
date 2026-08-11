@@ -11,10 +11,12 @@ final commit. A built-in **control panel** imports directories, holds their SCIM
 credentials, flips migration modes, runs backfill, and shows the request log and
 id mappings.
 
-> How the migration works (dual-write → backfill → WorkOS-primary → commit), the
-> migrated-id contract, and the platform changes it depends on are documented in
-> [`docs/`](./docs) — start with [`docs/runbook.md`](./docs/runbook.md) to operate
-> it, or [`docs/architecture.md`](./docs/architecture.md) for why it is built this
+> **Migrating for real? Start with
+> [`docs/migration-guide.md`](./docs/migration-guide.md)** — the end-to-end path
+> from the directory list you hand WorkOS to cutover, including the exact CSV
+> shapes exchanged at each handoff. [`docs/runbook.md`](./docs/runbook.md) has
+> each step's operational depth, and
+> [`docs/architecture.md`](./docs/architecture.md) explains why it is built this
 > way.
 
 ## Try it, with no WorkOS account and no registry
@@ -124,9 +126,15 @@ as a hash), but these two cannot be: the bridge has to present them upstream.
 
 ## Importing a directory
 
+> Migrating a whole fleet, or starting from scratch? Follow
+> [`docs/migration-guide.md`](./docs/migration-guide.md) — it starts one step
+> earlier, with WorkOS provisioning your directories (they must be created as
+> **imported** directories; the dashboard can't do it), and covers bulk import.
+
 1. Open `/panel` and create a directory to migrate.
 2. Paste your **existing app's SCIM** base URL + bearer token, and the **WorkOS
-   directory** endpoint + bearer token (from the WorkOS dashboard).
+   directory** endpoint + bearer token (from the WorkOS-provisioned sheet —
+   see the migration guide's Step A).
 3. **Press Rotate to get the proxy token.** The directory page shows only the
    last four characters of it — the token itself is stored as a hash and cannot
    be read back. **Rotate** mints a new one and displays it once, with a Copy
