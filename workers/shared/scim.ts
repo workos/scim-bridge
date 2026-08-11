@@ -547,11 +547,11 @@ export async function mirrorUpsert(
       // spaces the mapping exists to keep apart collapse onto one row — writes and
       // deletes addressed in either space then land on the other resource.
       //
-      // `nativeId` has to be the resource's own native id for the comparison to
-      // mean anything, which is why the create legs pass a sink: their id is a
-      // mint whose owner is not known until the native leg answers, and they run
-      // the same check themselves once it has.
-      const claimed = sink ? null : await getMappingByWorkosId(db, directory.id, kind, nativeId);
+      // Every caller is held to this, including backfill: an unmapped native row
+      // whose id another resource already holds as its `workos_id` is exactly the
+      // collision, and replaying it would write the neighbour's row under cover of
+      // a mapping the replay itself mints.
+      const claimed = await getMappingByWorkosId(db, directory.id, kind, nativeId);
       if (claimed && claimed.native_id !== nativeId) {
         return {
           ok: false,

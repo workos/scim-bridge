@@ -714,6 +714,8 @@ async function workosPrimaryCreate(
   // instead — the native-first path a create without an externalId already takes
   // — and let the id through only once native's own id proves this create is the
   // claimed resource's, which is what an IdP retry of a completed create is.
+  // (`mirrorUpsert` refuses the same collision on its own id; this is what keeps
+  // the refusal from arriving after the neighbour's row has been written.)
   const claimedMint = workosMintId
     ? await getMappingByWorkosId(env.DB, directory.id, kind, workosMintId)
     : null;
@@ -757,10 +759,32 @@ async function workosPrimaryCreate(
     return finish(nativeFailureResponse(native));
   }
   if (claimedMint && claimedMint.native_id !== native.id) {
-    // Native created a row of its own, and nothing was written to WorkOS: the
-    // mint names a resource this create is not. Refusing here is what keeps the
-    // two ids the mapping separates from collapsing onto one WorkOS row.
+    // The mint names a resource this create is not, and nothing was written to
+    // WorkOS. Refusing is what keeps the two ids the mapping separates from
+    // collapsing onto one WorkOS row — but the native leg has already run, so a
+    // row this request created has to go back: the refusal is final (a retry
+    // gets the same 409), so nothing would ever converge it, and an unmapped
+    // native row is itself an address a later reconcile replays. A row native
+    // resolved from a 409 predates this request and is left alone.
     log.error = mintConflictDetail(kind, claimedMint.workos_id, claimedMint.native_id);
+    if (native.result !== null && isSuccess(native.result.status)) {
+      const undone = await nativeDelete(directory, kind, native.id);
+      if (!undone) {
+        // The orphan outlived the refusal. Record it where the operator's
+        // divergence card will show it rather than leave it only in this log.
+        await recordNativeWriteFailure(env.DB, {
+          directory_id: directory.id,
+          resource_type: kind,
+          resource_key: native.id,
+          method: "POST",
+          native_status: native.result.status,
+          detail:
+            `${log.error} The create was refused after the native app had already made the ` +
+            "resource, and removing it again failed, so this native row exists with no WorkOS " +
+            "counterpart and no mapping.",
+        });
+      }
+    }
     return finish(scimError(409, log.error));
   }
   if (!workosOk) {
@@ -934,6 +958,27 @@ async function nativeCreate(
     };
   }
   return { result, error: null, id: existingId };
+}
+
+/**
+ * Undo a native create this request made, for a create the proxy then refused.
+ * Reports whether the row is gone (404 counts: something else already removed it),
+ * so a caller can record the orphan it could not take back.
+ */
+async function nativeDelete(
+  directory: Directory,
+  kind: ResourceType,
+  nativeId: string,
+): Promise<boolean> {
+  try {
+    const result = await scimFetch(
+      joinScimUrl(directory.native_url, `/${kind}/${encodeURIComponent(nativeId)}`),
+      { method: "DELETE", token: directory.native_token },
+    );
+    return isSuccess(result.status) || result.status === 404;
+  } catch {
+    return false;
+  }
 }
 
 /** Resolve a resource native already holds by the attribute it is unique on, so a

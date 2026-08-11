@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import proxyWorker from "../workers/proxy/index";
+import { runBackfill } from "../workers/shared/backfill";
 import { getMapping, listNativeWriteFailures } from "../workers/shared/db";
 import type { PocEnv } from "../workers/shared/types";
 import {
@@ -148,11 +149,22 @@ describe("workos-primary id mints across resources", () => {
   it("refuses a create whose externalId is another resource's WorkOS-side id", async () => {
     const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
     expect((await createVictim(directory)).status).toBe(201);
-    const { nativeHas, workosHas, workosTitle } = routeUpstreams();
-
     fake.route("native", "POST", "/Users", scimJson(201, { id: "nat_att", userName: "fresh" }), {
       once: true,
     });
+    let rolledBack = false;
+    fake.route(
+      "native",
+      "DELETE",
+      "/Users/nat_att",
+      () => {
+        rolledBack = true;
+        return new Response(null, { status: 204 });
+      },
+      { once: true },
+    );
+    const { nativeHas, workosHas, workosTitle } = routeUpstreams();
+
     const created = await proxyWorker.fetch(
       proxyRequest(directory, "POST", "/scim/v2/Users", {
         userName: "fresh@example.com",
@@ -174,20 +186,97 @@ describe("workos-primary id mints across resources", () => {
       workos_id: "idp-1",
     });
 
-    // So a DELETE addressed by the attacker's own native id cannot reach the
-    // victim's WorkOS row through a mapping it minted.
-    fake.route("native", "DELETE", "/Users/nat_att", new Response(null, { status: 204 }), {
-      once: true,
-    });
-    const del = await proxyWorker.fetch(
-      proxyRequest(directory, "DELETE", "/scim/v2/Users/nat_att"),
-      env,
-      createCtx(),
-    );
-    expect(del.status).toBe(404);
+    // The refusal is final, so the row native made for it is taken back rather
+    // than left unmapped for a reconcile to find.
+    expect(rolledBack).toBe(true);
     expect(workosHas()).toBe(true);
     expect(nativeHas()).toBe(true);
     expect(await listNativeWriteFailures(env.DB, directory.id)).toEqual([]);
+  });
+
+  it("records the native row when a refused create cannot be taken back", async () => {
+    const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+    expect((await createVictim(directory)).status).toBe(201);
+    fake.route("native", "POST", "/Users", scimJson(201, { id: "nat_att", userName: "fresh" }), {
+      once: true,
+    });
+    fake.route("native", "DELETE", "/Users/nat_att", scimJson(500, { detail: "boom" }), {
+      once: true,
+    });
+    routeUpstreams();
+
+    const created = await proxyWorker.fetch(
+      proxyRequest(directory, "POST", "/scim/v2/Users", {
+        userName: "fresh@example.com",
+        externalId: "idp-1",
+        active: true,
+      }),
+      env,
+      createCtx(),
+    );
+
+    expect(created.status).toBe(409);
+    expect(await getMapping(env.DB, directory.id, "Users", "nat_att")).toBeNull();
+    // The orphan is on the operator's divergence card, not only in the log.
+    expect(await listNativeWriteFailures(env.DB, directory.id)).toMatchObject([
+      { resource_type: "Users", resource_key: "nat_att", method: "POST" },
+    ]);
+  });
+
+  it("refuses a backfill replay of a native row another resource's mapping claims", async () => {
+    // The same collision reached through the operator's runbook rather than the
+    // proxy: the attacker names a native row's id as its own externalId, so the
+    // victim row's later replay would write the attacker's WorkOS row.
+    const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+    fake.route("native", "POST", "/Users", scimJson(201, { id: "nat_att", userName: "fresh" }), {
+      once: true,
+    });
+    fake.route("workos", "PUT", "/Users/nat_victim", scimJson(404, { detail: "not found" }), {
+      once: true,
+    });
+    fake.route("workos", "POST", "/Users", scimJson(201, { id: "nat_victim" }), { once: true });
+    const claim = await proxyWorker.fetch(
+      proxyRequest(directory, "POST", "/scim/v2/Users", {
+        userName: "fresh@example.com",
+        externalId: "nat_victim",
+        active: true,
+      }),
+      env,
+      createCtx(),
+    );
+    expect(claim.status).toBe(201);
+    expect(await getMapping(env.DB, directory.id, "Users", "nat_att")).toMatchObject({
+      workos_id: "nat_victim",
+    });
+
+    // The operator backfills. The victim's own native row is unmapped, and its
+    // id is the attacker's WorkOS-side id.
+    fake.route("native", "GET", /^\/Users(\?|$)/, () =>
+      scimJson(200, {
+        totalResults: 1,
+        startIndex: 1,
+        itemsPerPage: 1,
+        Resources: [{ id: "nat_victim", userName: "ada@example.com", active: true }],
+      }),
+    );
+    fake.route("native", "GET", /^\/Groups(\?|$)/, () =>
+      scimJson(200, { totalResults: 0, startIndex: 1, itemsPerPage: 0, Resources: [] }),
+    );
+    let victimReplayed = false;
+    fake.route("workos", "PUT", "/Users/nat_victim", () => {
+      victimReplayed = true;
+      return scimJson(200, { id: "nat_victim" });
+    });
+
+    const summary = await runBackfill(env.DB, directory);
+
+    // The replay would have landed on the attacker's WorkOS row, so it is not made.
+    expect(victimReplayed).toBe(false);
+    expect(summary.users.failed).toBe(1);
+    expect(await getMapping(env.DB, directory.id, "Users", "nat_victim")).toBeNull();
+    expect(await getMapping(env.DB, directory.id, "Users", "nat_att")).toMatchObject({
+      workos_id: "nat_victim",
+    });
   });
 
   it("still converges an IdP retry of a create it already completed", async () => {
