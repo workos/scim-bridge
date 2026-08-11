@@ -2,6 +2,7 @@ import {
   getConfig,
   insertDirectory,
   listDirectories,
+  deleteConfig,
   reconcileDirectories,
   setConfig,
   setConfigIfAbsent,
@@ -10,6 +11,7 @@ import {
 } from "../workers/shared/db";
 import {
   DEMO_DIRECTORY_ID_KEY,
+  clientTokenKey,
   rememberClientToken,
   storeClientToken,
 } from "../workers/shared/client-tokens";
@@ -502,7 +504,17 @@ async function adoptSeededDemoDirectory(
   config: AppConfig,
   existing: { id: string; native_url: string; workos_url: string }[],
 ): Promise<void> {
-  if (await getConfig(env.DB, DEMO_DIRECTORY_ID_KEY)) return;
+  const named = await getConfig(env.DB, DEMO_DIRECTORY_ID_KEY);
+  if (named) {
+    if (existing.some((d) => d.id === named)) return;
+    // The key names a directory that no longer exists — deleted on an older
+    // build, or while demo mode was off (the delete the panel's guard permits).
+    // Left in place it blocks adoption forever and the simulators drive
+    // nothing, so treat it as absent: clear it and its stale token copy, then
+    // let the match below repair the demo if a bundled-shape directory exists.
+    await deleteConfig(env.DB, DEMO_DIRECTORY_ID_KEY);
+    await deleteConfig(env.DB, clientTokenKey(named));
+  }
   const bundled = bundledEndpoints(config);
   const candidates = existing.filter(
     (d) => d.native_url === bundled.native_url && d.workos_url === bundled.workos_url,

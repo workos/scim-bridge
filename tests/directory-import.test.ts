@@ -6,13 +6,20 @@ import { action as overviewAction } from "../app/routes/panel/directory-overview
 import { datastoreContext, demoModeContext } from "../app/context";
 import proxyWorker from "../workers/proxy/index";
 import {
+  getConfig,
   getDirectoryById,
   getDirectoryByToken,
   insertDirectory,
   listDirectories,
+  setConfig,
 } from "../workers/shared/db";
 import { hashProxyToken } from "../workers/shared/crypto";
-import { clientTokenFor } from "../workers/shared/client-tokens";
+import {
+  DEMO_DIRECTORY_ID_KEY,
+  clientTokenFor,
+  clientTokenKey,
+  storeClientToken,
+} from "../workers/shared/client-tokens";
 import type { Directory, PocEnv } from "../workers/shared/types";
 import {
   NATIVE_URL,
@@ -375,10 +382,11 @@ async function postOverview(
   env: PocEnv,
   id: string,
   fields: Record<string, string>,
+  demoMode = false,
 ): Promise<{ error?: string } | Response> {
   const context = new RouterContextProvider();
   context.set(datastoreContext, env.DB);
-  context.set(demoModeContext, false);
+  context.set(demoModeContext, demoMode);
   return (await overviewAction({
     request: new Request(`https://bridge.test/panel/directories/${id}`, {
       method: "POST",
@@ -642,5 +650,89 @@ describe("one directory per native SCIM namespace", () => {
       await seedDirectory(env.DB, { name: "Globex", native_url: "" });
       expect((await loadHome(env)).namespaceWarnings).toEqual([]);
     });
+  });
+});
+
+/**
+ * Deleting the bundled demo directory wedges demo mode: the simulators can only
+ * drive the directory named by `idp.demo_directory_id`, and nothing re-publishes
+ * their plaintext token copy after a delete — every simulator action afterwards
+ * silently no-ops. So the panel refuses that one delete while DEMO_MODE is on.
+ */
+describe("deleting the demo directory", () => {
+  it("is refused in demo mode, and the row and simulator token survive", async () => {
+    const env = await createEnv();
+    const seeded = await seedDirectory(env.DB);
+    await setConfig(env.DB, DEMO_DIRECTORY_ID_KEY, seeded.id);
+    await storeClientToken(env.DB, seeded.id, seeded.proxy_token);
+
+    const result = await postOverview(env, seeded.id, { intent: "delete-directory" }, true);
+
+    expect(result).not.toBeInstanceOf(Response);
+    expect((result as { error?: string }).error).toMatch(/demo directory/i);
+    expect(await getDirectoryById(env.DB, seeded.id)).not.toBeNull();
+    // The persisted row, not clientTokenFor: that helper prefers the in-process
+    // map (which seedDirectory populates), so it returns the token whether or
+    // not the config row survived — this assertion could never go red through it.
+    expect(await getConfig(env.DB, clientTokenKey(seeded.id))).toBe(seeded.proxy_token);
+  });
+
+  it("still deletes an imported (non-demo) directory in demo mode", async () => {
+    const env = await createEnv();
+    const demo = await seedDirectory(env.DB);
+    await setConfig(env.DB, DEMO_DIRECTORY_ID_KEY, demo.id);
+    const imported = await seedDirectory(env.DB, {
+      name: "Imported",
+      native_url: "https://native.example.test/scim/v2",
+    });
+
+    const result = await postOverview(env, imported.id, { intent: "delete-directory" }, true);
+
+    expect(result).toBeInstanceOf(Response);
+    expect((result as Response).status).toBe(302);
+    expect(await getDirectoryById(env.DB, imported.id)).toBeNull();
+  });
+
+  it("does not gate production: with demo mode off the delete proceeds", async () => {
+    // A production database never carries idp.demo_directory_id, but if one did
+    // (say, restored from a demo-mode backup) the key alone must not make a
+    // directory undeletable.
+    const env = await createEnv();
+    const seeded = await seedDirectory(env.DB);
+    await setConfig(env.DB, DEMO_DIRECTORY_ID_KEY, seeded.id);
+
+    const result = await postOverview(env, seeded.id, { intent: "delete-directory" });
+
+    expect(result).toBeInstanceOf(Response);
+    expect(await getDirectoryById(env.DB, seeded.id)).toBeNull();
+  });
+
+  it("takes the demo pointer and token copy with it, so a later demo boot isn't wedged", async () => {
+    // The permitted path (demo mode off) used to leave idp.demo_directory_id
+    // naming the deleted row. Boot adoption bails on a set key, so the next
+    // DEMO_MODE=true start would leave the simulators driving nothing.
+    const env = await createEnv();
+    const seeded = await seedDirectory(env.DB);
+    await setConfig(env.DB, DEMO_DIRECTORY_ID_KEY, seeded.id);
+    await storeClientToken(env.DB, seeded.id, seeded.proxy_token);
+
+    await postOverview(env, seeded.id, { intent: "delete-directory" });
+
+    expect(await getConfig(env.DB, DEMO_DIRECTORY_ID_KEY)).toBeNull();
+    expect(await getConfig(env.DB, clientTokenKey(seeded.id))).toBeNull();
+  });
+
+  it("deleting a non-demo directory leaves the demo pointer alone", async () => {
+    const env = await createEnv();
+    const demo = await seedDirectory(env.DB);
+    await setConfig(env.DB, DEMO_DIRECTORY_ID_KEY, demo.id);
+    const imported = await seedDirectory(env.DB, {
+      name: "Imported",
+      native_url: "https://native.example.test/scim/v2",
+    });
+
+    await postOverview(env, imported.id, { intent: "delete-directory" });
+
+    expect(await getConfig(env.DB, DEMO_DIRECTORY_ID_KEY)).toBe(demo.id);
   });
 });
