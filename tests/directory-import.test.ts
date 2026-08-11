@@ -397,15 +397,21 @@ async function postOverview(
   } as unknown as ActionFunctionArgs)) as { error?: string } | Response;
 }
 
-async function loadHome(env: PocEnv): Promise<{ namespaceWarnings: string[] }> {
+async function loadHome(
+  env: PocEnv,
+  demoMode = false,
+): Promise<{ namespaceWarnings: string[]; demoDirectory: string | null }> {
   const context = new RouterContextProvider();
   context.set(datastoreContext, env.DB);
-  context.set(demoModeContext, false);
+  context.set(demoModeContext, demoMode);
   return (await homeLoader({
     request: new Request("https://bridge.test/panel"),
     context,
     params: {},
-  } as unknown as LoaderFunctionArgs)) as { namespaceWarnings: string[] };
+  } as unknown as LoaderFunctionArgs)) as {
+    namespaceWarnings: string[];
+    demoDirectory: string | null;
+  };
 }
 
 /** This file's `submit`, narrowed to what the namespace assertions read. */
@@ -734,5 +740,29 @@ describe("deleting the demo directory", () => {
     await postOverview(env, imported.id, { intent: "delete-directory" });
 
     expect(await getConfig(env.DB, DEMO_DIRECTORY_ID_KEY)).toBe(demo.id);
+  });
+});
+
+/**
+ * The directories list badges the row the bundled simulators drive. The badge
+ * reads the loader's `demoDirectory`, so what matters is that the field carries
+ * the configured id in demo mode and stays null in production — an operator's
+ * fleet must never show a "Demo" badge because a demo-mode backup left the key.
+ */
+describe("naming the demo directory to the directories list", () => {
+  it("exposes the configured id in demo mode", async () => {
+    const env = await createEnv();
+    const seeded = await seedDirectory(env.DB);
+    await setConfig(env.DB, DEMO_DIRECTORY_ID_KEY, seeded.id);
+
+    expect((await loadHome(env, true)).demoDirectory).toBe(seeded.id);
+  });
+
+  it("stays null with demo mode off, even when the key is set", async () => {
+    const env = await createEnv();
+    const seeded = await seedDirectory(env.DB);
+    await setConfig(env.DB, DEMO_DIRECTORY_ID_KEY, seeded.id);
+
+    expect((await loadHome(env)).demoDirectory).toBeNull();
   });
 });
