@@ -6,6 +6,7 @@ import { action as overviewAction } from "../app/routes/panel/directory-overview
 import { datastoreContext, demoModeContext } from "../app/context";
 import proxyWorker from "../workers/proxy/index";
 import {
+  getConfig,
   getDirectoryById,
   getDirectoryByToken,
   insertDirectory,
@@ -16,6 +17,7 @@ import { hashProxyToken } from "../workers/shared/crypto";
 import {
   DEMO_DIRECTORY_ID_KEY,
   clientTokenFor,
+  clientTokenKey,
   storeClientToken,
 } from "../workers/shared/client-tokens";
 import type { Directory, PocEnv } from "../workers/shared/types";
@@ -669,7 +671,10 @@ describe("deleting the demo directory", () => {
     expect(result).not.toBeInstanceOf(Response);
     expect((result as { error?: string }).error).toMatch(/demo directory/i);
     expect(await getDirectoryById(env.DB, seeded.id)).not.toBeNull();
-    expect(await clientTokenFor(env.DB, seeded.id)).toBe(seeded.proxy_token);
+    // The persisted row, not clientTokenFor: that helper prefers the in-process
+    // map (which seedDirectory populates), so it returns the token whether or
+    // not the config row survived — this assertion could never go red through it.
+    expect(await getConfig(env.DB, clientTokenKey(seeded.id))).toBe(seeded.proxy_token);
   });
 
   it("still deletes an imported (non-demo) directory in demo mode", async () => {
@@ -700,5 +705,34 @@ describe("deleting the demo directory", () => {
 
     expect(result).toBeInstanceOf(Response);
     expect(await getDirectoryById(env.DB, seeded.id)).toBeNull();
+  });
+
+  it("takes the demo pointer and token copy with it, so a later demo boot isn't wedged", async () => {
+    // The permitted path (demo mode off) used to leave idp.demo_directory_id
+    // naming the deleted row. Boot adoption bails on a set key, so the next
+    // DEMO_MODE=true start would leave the simulators driving nothing.
+    const env = await createEnv();
+    const seeded = await seedDirectory(env.DB);
+    await setConfig(env.DB, DEMO_DIRECTORY_ID_KEY, seeded.id);
+    await storeClientToken(env.DB, seeded.id, seeded.proxy_token);
+
+    await postOverview(env, seeded.id, { intent: "delete-directory" });
+
+    expect(await getConfig(env.DB, DEMO_DIRECTORY_ID_KEY)).toBeNull();
+    expect(await getConfig(env.DB, clientTokenKey(seeded.id))).toBeNull();
+  });
+
+  it("deleting a non-demo directory leaves the demo pointer alone", async () => {
+    const env = await createEnv();
+    const demo = await seedDirectory(env.DB);
+    await setConfig(env.DB, DEMO_DIRECTORY_ID_KEY, demo.id);
+    const imported = await seedDirectory(env.DB, {
+      name: "Imported",
+      native_url: "https://native.example.test/scim/v2",
+    });
+
+    await postOverview(env, imported.id, { intent: "delete-directory" });
+
+    expect(await getConfig(env.DB, DEMO_DIRECTORY_ID_KEY)).toBe(demo.id);
   });
 });

@@ -29,7 +29,12 @@ import {
   setDirectoryWorkosDirectoryId,
   withDatastoreRetry,
 } from "../../../workers/shared/db";
-import { demoDirectoryId, publishMintedToken } from "../../../workers/shared/client-tokens";
+import {
+  DEMO_DIRECTORY_ID_KEY,
+  clientTokenKey,
+  demoDirectoryId,
+  publishMintedToken,
+} from "../../../workers/shared/client-tokens";
 import { checkNativeNamespace } from "../../../workers/shared/native-namespace";
 import type { BackfillSummary, Mode, NativeWriteFailure } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
@@ -107,8 +112,7 @@ export async function loader({ context, params }: Route.LoaderArgs) {
     proxyPublicUrl: proxyPublicUrl ?? "",
     nativePublicUrl: nativePublicUrl ?? "",
     nativeWriteFailures: await listNativeWriteFailures(db, directory.id),
-    isDemoDirectory:
-      context.get(demoModeContext) && directory.id === (await demoDirectoryId(db)),
+    isDemoDirectory: context.get(demoModeContext) && directory.id === (await demoDirectoryId(db)),
   };
 }
 
@@ -324,6 +328,14 @@ export async function action({
         db.prepare("DELETE FROM id_mappings WHERE directory_id = ?").bind(directory.id),
         db.prepare("DELETE FROM proxy_log WHERE directory_id = ?").bind(directory.id),
         db.prepare("DELETE FROM native_write_failures WHERE directory_id = ?").bind(directory.id),
+        // The simulator's plaintext token copy, and the demo-directory pointer if
+        // it names this row. Left behind, the pointer wedges the next demo-mode
+        // boot: adoption bails on a set key, so the simulators resolve a
+        // directory that no longer exists and every action silently no-ops.
+        db.prepare("DELETE FROM poc_config WHERE key = ?").bind(clientTokenKey(directory.id)),
+        db
+          .prepare("DELETE FROM poc_config WHERE key = ? AND value = ?")
+          .bind(DEMO_DIRECTORY_ID_KEY, directory.id),
         db.prepare("DELETE FROM scim_directories WHERE id = ?").bind(directory.id),
       ]),
     );
