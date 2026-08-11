@@ -20,11 +20,15 @@ const PAGE_SIZES = [25, 50, 100];
 export function DirectoryTable({
   directories,
   diverged,
+  demoDirectory,
 }: {
   directories: Directory[];
   /** Resources WorkOS holds a write for that native does not, by directory id.
    *  Absent means none. */
   diverged: Record<string, number>;
+  /** The directory the bundled simulators drive — badged so an operator can tell
+   *  it from their own imports. Null (or absent) outside demo mode. */
+  demoDirectory?: string | null;
 }) {
   const fetcher = useFetcher<BulkResult>();
   const [query, setQuery] = useState("");
@@ -277,7 +281,14 @@ export function DirectoryTable({
                   />
                 </Table.Cell>
                 <Table.Cell>
-                  <Link to={`/panel/directories/${d.id}`}>{d.name}</Link>
+                  <Flex align="center" display="inline-flex" gap="2">
+                    <Link to={`/panel/directories/${d.id}`}>{d.name}</Link>
+                    {d.id === demoDirectory && (
+                      <Badge color="amber" variant="soft">
+                        Demo
+                      </Badge>
+                    )}
+                  </Flex>
                 </Table.Cell>
                 <Table.Cell>
                   <Code size="1">{d.id}</Code>
