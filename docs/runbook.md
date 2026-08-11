@@ -192,8 +192,10 @@ only new saves are checked. Repair it by giving each directory its own path (edi
 Open `/panel`.
 
 - **One directory** → *Import directory*: name, your native SCIM base URL + token,
-  and the WorkOS directory endpoint + token (from the WorkOS dashboard). The
-  optional **Existing IdP bearer token** field is the proxy token to use — see
+  and the WorkOS directory endpoint + token (from the credentials sheet WorkOS
+  returns when it provisions your directories — see the
+  [migration guide, Step A](./migration-guide.md#step-a--workos-provisions-your-directories)).
+  The optional **Existing IdP bearer token** field is the proxy token to use — see
   [zero IdP-touch](#zero-idp-touch-deployment) below.
 - **Many** → *Bulk import*: paste CSV
   `name,native_url,native_token,workos_url,workos_token,workos_directory_id,proxy_token`
@@ -203,11 +205,13 @@ Open `/panel`.
   directory already has — refuses the **whole** file: nothing is imported, so
   you never have to work out which half landed.
 
-  The WorkOS half of each row — the directory endpoint and its bearer token —
-  comes from the WorkOS dashboard, one directory at a time. If you are migrating
-  enough directories that doing it by hand is the bottleneck, talk to your WorkOS
-  contact: bulk provisioning is a WorkOS-side operation, not something this tool
-  can do for you.
+  The WorkOS half of each row — `workos_url`, `workos_token`,
+  `workos_directory_id` — is pasted straight from the credentials sheet WorkOS
+  returns at provisioning time
+  ([migration guide, Step A](./migration-guide.md#step-a--workos-provisions-your-directories)).
+  Provisioning is a WorkOS-side operation — imported directories can't be
+  created from the dashboard — so if you don't have that sheet yet, that's the
+  step to do first.
 
 Then copy the directory's **SCIM base URL + proxy token** into your IdP's SCIM
 config. It starts in `passthrough`, so repointing the IdP changes no behavior —

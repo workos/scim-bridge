@@ -114,8 +114,9 @@ Acme — Okta,https://acme.example.com/scim/v2,tok_native,https://api.workos.com
 - `proxy_token` — optional. Supply the bearer token your IdP already presents
   today and the IdP needs no credential change at all
   ([zero IdP-touch](./runbook.md#zero-idp-touch-deployment)); omit it and the
-  bridge mints one, which you copy from the directory page (shown once —
-  [tokens are hashed](./runbook.md#proxy-tokens-are-hashed-so-they-cant-be-read-back)).
+  bridge mints one, which is **not displayed after import** — press **Rotate**
+  on the directory page to mint a token you can copy, shown once
+  ([tokens are hashed](./runbook.md#proxy-tokens-are-hashed-so-they-cant-be-read-back)).
 
 ## Step C — repoint the IdP
 
