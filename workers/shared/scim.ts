@@ -410,6 +410,14 @@ export interface MirrorResult {
   ms: number | null;
   body: string | null;
   error: string | null;
+  /**
+   * Set when the failure is an alias-mint refusal: the id is already another
+   * resource's `workos_id`, so this is a permanent collision, not a transient
+   * WorkOS error. A caller must not tell the IdP to retry — the retry loops
+   * forever — and must not record it as a native-lagging-WorkOS divergence,
+   * because nothing was written to either side.
+   */
+  mintConflict?: boolean;
 }
 
 /** Accumulates the WorkOS-leg timings across the steps of a single mirror. */
@@ -566,6 +574,7 @@ export async function mirrorUpsert(
           ms: acc.ms || null,
           body: null,
           error: mintConflictDetail(kind, nativeId, claimed.native_id),
+          mintConflict: true,
         };
       }
       const put = await putWorkos(directory, kind, nativeId, resource, acc, nativeId);

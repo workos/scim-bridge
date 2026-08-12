@@ -391,4 +391,84 @@ describe("workos-primary id mints across resources", () => {
       strategy: "fallback-post",
     });
   });
+
+  it("tells the IdP a colliding create will not converge, and pollutes no ledger", async () => {
+    // A create with no externalId whose native-minted id happens to be another
+    // resource's WorkOS-side id: mirrorUpsert refuses before writing. The IdP must
+    // not be told to retry — the collision is permanent — and the refusal is not a
+    // native-lagging-WorkOS gap, so nothing belongs in the divergence card.
+    const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+    expect((await createVictim(directory)).status).toBe(201);
+    let title: string | undefined;
+    fake.route("workos", "PUT", /^\/Users\//, (call) => {
+      if (call.path !== "/Users/idp-1") return scimJson(404, { detail: "not found" });
+      title = (call.json() as Record<string, string>).title;
+      return scimJson(200, { id: "idp-1", userName: "ada" });
+    });
+    // Native mints its own id for this create, and it is the victim's WorkOS id.
+    fake.route("native", "POST", "/Users", scimJson(201, { id: "idp-1", userName: "fresh" }), {
+      once: true,
+    });
+
+    const created = await proxyWorker.fetch(
+      proxyRequest(directory, "POST", "/scim/v2/Users", {
+        userName: "fresh@example.com",
+        title: "attacker-owned",
+        active: true,
+      }),
+      env,
+      createCtx(),
+    );
+
+    expect(created.status).toBe(409);
+    const body = (await created.json()) as { detail?: string };
+    // Accurate: names the collision, and never advises the retry that would loop.
+    expect(body.detail).toContain("already the WorkOS-side id");
+    expect(body.detail).not.toContain("will converge");
+    // The victim's WorkOS row was never written, and no ledger row was minted.
+    expect(title).toBeUndefined();
+    expect(await listNativeWriteFailures(env.DB, directory.id)).toEqual([]);
+    // No alias mapping was recorded under the victim's WorkOS id either.
+    expect(await getMapping(env.DB, directory.id, "Users", "idp-1")).toBeNull();
+    expect(await getMapping(env.DB, directory.id, "Users", "nat_9f3c")).toMatchObject({
+      workos_id: "idp-1",
+    });
+  });
+
+  it("refuses a native-raced retry without inverting the divergence card", async () => {
+    // The pre-check resolves native to the claimed resource, but native then
+    // answers the create POST with a third id — a race between the resolve and the
+    // create. Nothing was written to WorkOS, so the two ids never collapsed. The
+    // orphan native row must NOT be logged as a native write failure: that card is
+    // "what WorkOS holds that native is missing", and here native holds the row and
+    // WorkOS holds nothing — the inverse — and a reconcile would sweep it anyway.
+    const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+    expect((await createVictim(directory)).status).toBe(201);
+    routeUpstreams();
+    // The uniqueness lookup resolves the retry to the claimed native id (pre-check
+    // passes), but the create POST mints a different id.
+    fake.route("native", "POST", "/Users", scimJson(201, { id: "nat_race", userName: "ada" }), {
+      once: true,
+    });
+
+    const created = await proxyWorker.fetch(
+      proxyRequest(directory, "POST", "/scim/v2/Users", {
+        userName: "ada@example.com",
+        externalId: "idp-1",
+        active: true,
+      }),
+      env,
+      createCtx(),
+    );
+
+    expect(created.status).toBe(409);
+    const body = (await created.json()) as { detail?: string };
+    expect(body.detail).not.toContain("will converge");
+    // The divergence ledger stays empty, and the raced id earns no mapping.
+    expect(await listNativeWriteFailures(env.DB, directory.id)).toEqual([]);
+    expect(await getMapping(env.DB, directory.id, "Users", "nat_race")).toBeNull();
+    expect(await getMapping(env.DB, directory.id, "Users", "nat_9f3c")).toMatchObject({
+      workos_id: "idp-1",
+    });
+  });
 });

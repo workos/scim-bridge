@@ -793,27 +793,34 @@ async function workosPrimaryCreate(
     return finish(nativeFailureResponse(native));
   }
   if (claimedMint && claimedMint.native_id !== native.id) {
-    // The mint names a resource this create is not, and nothing was written to
-    // WorkOS, which is what keeps the two ids the mapping separates from
-    // collapsing onto one WorkOS row. The claim was resolved against native above,
-    // so reaching this means native answered the create with a third id — nothing
-    // this request can safely take back, since the row may be another request's.
-    // Record it: an unmapped native row is an address a later reconcile replays,
-    // and this refusal is final, so nothing else would ever surface it.
-    log.error = mintConflictDetail(kind, claimedMint.workos_id, claimedMint.native_id);
-    await recordNativeWriteFailure(env.DB, {
-      directory_id: directory.id,
-      resource_type: kind,
-      resource_key: native.id,
-      method: "POST",
-      native_status: native.result?.status ?? null,
-      detail:
-        `${log.error} The create was refused after the native app had answered it with this id, ` +
-        "so the native row has no WorkOS counterpart and no mapping.",
-    });
+    // The claim was resolved against native above and matched, so reaching here
+    // means native then answered the create with a THIRD id — a native-side race
+    // between the resolve and the create. Nothing was written to WorkOS (the
+    // mirror leg resolved to null), so the two ids the mapping separates never
+    // collapsed onto one row: the refusal holds, before either side committed.
+    //
+    // Deliberately not recorded in `native_write_failures`. That card answers
+    // "what did WorkOS accept that native is missing" — the exact opposite of
+    // this, where native accepted the create and WorkOS holds nothing. A row here
+    // would read inverted (a POST with a 2xx `native_status`), point an operator
+    // at a repair that does nothing, and be swept anyway the next time
+    // `reconcileFromWorkos` runs, since no WorkOS row exists to replay onto it.
+    // The orphan native row is surfaced on the proxy log via `log.error` instead.
+    log.error =
+      `${mintConflictDetail(kind, claimedMint.workos_id, claimedMint.native_id)} The native app ` +
+      `answered the create with ${kind}/${native.id}, which now has no WorkOS counterpart and no ` +
+      "mapping; it will not converge on retry.";
     return finish(scimError(409, log.error));
   }
   if (!workosOk) {
+    if (mirror?.mintConflict) {
+      // A create with no externalId whose native-minted id collides with another
+      // resource's WorkOS-side id: `mirrorUpsert` refused before writing anything.
+      // This is permanent, so it must not be dressed as the transient WorkOS
+      // failure below — telling the IdP to retry would loop it forever.
+      log.error = mirror.error;
+      return finish(scimError(409, mirror.error ?? "The create collides with another resource."));
+    }
     return finish(
       scimError(
         mirror && mirror.status !== null && mirror.status >= 400 ? mirror.status : 502,
