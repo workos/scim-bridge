@@ -26,6 +26,7 @@ import {
   seedNativeAppConfig,
   seedNativeAppDirectories,
 } from "./config";
+import { panelCsrfGuard } from "./csrf";
 import { openDatabase, SqliteDatastore, SqliteMigrator } from "./db/sqlite";
 import { inspectStorage } from "./db/storage-durability";
 import { openPostgres, PostgresDatastore, PostgresMigrator } from "./db/postgres";
@@ -201,6 +202,12 @@ async function mountBridge(): Promise<void> {
     });
   });
 
+  // Reject cross-site mutations of the panel. Basic credentials ride along on
+  // cross-site form POSTs, so this is what stops a forged save/mode/backfill.
+  // Self-contained (see server/csrf.ts) so it composes with the auth gate above
+  // without touching it.
+  app.use("*", panelCsrfGuard(config));
+
   app.get("/healthz", (c) => c.json({ ok: true }));
 
   // SCIM data-plane → the migration proxy.
@@ -270,6 +277,14 @@ serve({ fetch: app.fetch, port: config.port, hostname: "0.0.0.0" }, (info) => {
       console.warn(
         "  WARNING: PANEL_AUTH_DISABLED=true — /panel is unauthenticated and serves " +
           "every directory's native and WorkOS bearer tokens to anyone who can reach it.",
+      );
+    }
+    // Same cadence as the panel-auth warning: an operator who turned this off to
+    // script the panel should be reminded every restart until they turn it back on.
+    if (config.panelCsrfDisabled) {
+      console.warn(
+        "  WARNING: PANEL_CSRF_DISABLED=true — panel mutations are not checked for a same-origin " +
+          "initiator, so a logged-in operator's browser can be made to forge them cross-site.",
       );
     }
   }
