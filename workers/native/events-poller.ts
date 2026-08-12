@@ -17,8 +17,10 @@ import { processDsyncEvent, recordEvent } from "./listener";
  * rows, never a double apply.
  *
  * The API key that authenticates this endpoint is environment-wide — a broader
- * credential than anything else the listener holds — which is why it is read
- * from the environment only (WORKOS_API_KEY) and never stored in the database.
+ * credential than anything else the listener holds — which is why it comes
+ * from the environment (WORKOS_API_KEY) first. The demo panel may store one
+ * instead (encrypted at rest — see events-transport.ts), and the env var
+ * always wins over the stored copy.
  */
 
 /** Where the cursor survives a restart: the id of the last event whose
@@ -206,6 +208,10 @@ async function clearRetryState(db: Datastore): Promise<null> {
 
 export interface EventsPoller {
   stop(): void;
+  /** Settles when the immediate first poll finishes (it never rejects — the
+   *  tick logs failures). Awaiting it makes start-then-inspect deterministic:
+   *  the transport controller reports a status the first poll already shaped. */
+  firstPoll: Promise<void>;
 }
 
 /**
@@ -216,7 +222,13 @@ export interface EventsPoller {
  */
 export function startEventsPoller(
   db: Datastore,
-  options: EventsPollerOptions & { intervalMs?: number },
+  options: EventsPollerOptions & {
+    intervalMs?: number;
+    /** Called after each poll that completed without throwing. */
+    onSuccess?: () => void;
+    /** Called with the message of each poll that threw (after it is logged). */
+    onError?: (message: string) => void;
+  },
 ): EventsPoller {
   let inFlight = false;
   const tick = async (): Promise<void> => {
@@ -224,9 +236,11 @@ export function startEventsPoller(
     inFlight = true;
     try {
       await pollDsyncEventsOnce(db, options);
+      options.onSuccess?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`events poller: ${message}; retrying next tick`);
+      options.onError?.(message);
     } finally {
       inFlight = false;
     }
@@ -235,8 +249,8 @@ export function startEventsPoller(
   const timer = setInterval(() => void tick(), options.intervalMs ?? DEFAULT_POLL_INTERVAL_MS);
   // Never the reason the process can't exit (Node timers hold the loop open).
   timer.unref?.();
-  void tick();
   return {
+    firstPoll: tick(),
     stop() {
       clearInterval(timer);
     },
