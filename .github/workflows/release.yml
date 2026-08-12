@@ -164,18 +164,22 @@ jobs:
 
       # A published version tag is a promise: 0.2.2 is the same bits forever.
       # Re-running this workflow on an existing tag would quietly break that for
-      # everyone who pinned it. Moving tags (:latest, :main) are exempt — moving
-      # is what they are for.
+      # everyone who pinned it. Only the exact `X.Y.Z` tag carries that promise;
+      # the rolling tags — :latest, :main, and `{{major}}.{{minor}}` (e.g. :0.3,
+      # which advances to the newest patch) — are meant to move, so a patch
+      # release re-pushing :0.3 is correct, not a clash.
       - name: Refuse to overwrite a published version
         if: env.PUSH == 'true' && !inputs.allow_overwrite
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
+          VERSION: ${{ steps.meta.outputs.version }}
         run: |
           set -euo pipefail
           clash=0
           while IFS= read -r ref; do
             [ -n "$ref" ] || continue
-            case "$ref" in *:latest | *:main) continue ;; esac
+            # Guard only the immutable exact-version tag; skip every moving tag.
+            [ "$ref" = "${IMAGE}:${VERSION}" ] || continue
             if docker buildx imagetools inspect "$ref" > /dev/null 2>&1; then
               echo "::error::$ref already exists in GHCR"
               clash=1
@@ -185,7 +189,7 @@ jobs:
             echo "Re-run with allow_overwrite only if you are repairing a broken publish." >&2
             exit 1
           fi
-          echo "✓ no published version tag would be overwritten"
+          echo "✓ the exact-version tag is not yet published"
 
       - name: Build and push
         id: build
