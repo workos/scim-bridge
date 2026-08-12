@@ -74,7 +74,9 @@ export interface UserReconRow {
   idp: Presence;
   diverged: boolean;
   /** A user WorkOS retains as an inactive SCIM record after a delete the native
-   *  app applied in full. See `isTombstone`. */
+   *  app applied as a data-plane hard delete. The DSync listener's
+   *  deactivate-in-place path never produces this shape — it leaves Inactive on
+   *  both sides, which agree on their own. See `isTombstone`. */
   tombstone: boolean;
 }
 
@@ -86,7 +88,8 @@ export interface GroupMemberReconRow {
   idp: boolean;
   diverged: boolean;
   /** A membership edge WorkOS retains for a user it retains as an inactive SCIM
-   *  record after the native app dropped the row *and* the edge. See `isTombstone`. */
+   *  record after a native hard delete dropped the row *and* the edge — the
+   *  data-plane path; the DSync listener keeps both. See `isTombstone`. */
   tombstone: boolean;
 }
 
@@ -116,7 +119,10 @@ function presence(row: DirRow | undefined): Presence {
  * Post-decoupling, WorkOS keeps SCIM resources and directory users in separate
  * tables (see "The migrated-id contract" in docs/architecture.md). Deleting a
  * user removes the directory user and *retains* the SCIM resource, flipped to
- * `active: false`. The native app has one table, so its row is simply gone.
+ * `active: false`. The native app has one table, and its row is gone when the
+ * delete arrived through the SCIM data plane — the proxy's direct write path
+ * hard-deletes. (The post-cutover DSync listener instead deactivates in place,
+ * leaving Inactive on both sides; that shape agrees without this exclusion.)
  * `fetchWorkosDirectory` reads `GET /Users` — the SCIM table, and the only thing
  * a directory's SCIM token can reach — so every user ever deleted stays in the
  * WorkOS column forever.
@@ -173,7 +179,9 @@ export function reconcileUsers(users: {
  * A deleted user stays in their WorkOS groups too, so membership needs the same
  * exclusion — and gets it from the same signal, not from a guess.
  *
- * A native delete drops the user's row *and* their group-membership edges. WorkOS
+ * A native data-plane delete drops the user's row *and* their group-membership
+ * edges (the DSync listener's deactivate-in-place keeps both, so that path
+ * agrees edge-for-edge and needs no exclusion). WorkOS
  * retains the SCIM resource as `active: false` and keeps it in its groups, so
  * `GET /Groups` reports an inflated member count forever: measured on a real
  * directory, four groups over-counted by exactly one member each, and every one

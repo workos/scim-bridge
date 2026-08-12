@@ -117,13 +117,18 @@ export class ScimStore {
   }
 
   async deleteUser(id: string): Promise<boolean> {
-    await withDatastoreRetry(() =>
-      this.db.prepare(`DELETE FROM ${this.tables.members} WHERE user_id = ?`).bind(id).run(),
-    );
+    await this.clearMemberships(id);
     const result = await withDatastoreRetry(() =>
       this.db.prepare(`DELETE FROM ${this.tables.users} WHERE id = ?`).bind(id).run(),
     );
     return result.meta.changes > 0;
+  }
+
+  async clearMemberships(userId: string): Promise<number> {
+    const result = await withDatastoreRetry(() =>
+      this.db.prepare(`DELETE FROM ${this.tables.members} WHERE user_id = ?`).bind(userId).run(),
+    );
+    return result.meta.changes;
   }
 
   async groupById(id: string): Promise<GroupRow | null> {

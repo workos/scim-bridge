@@ -29,7 +29,12 @@ import {
   setDirectoryWorkosDirectoryId,
   withDatastoreRetry,
 } from "../../../workers/shared/db";
-import { publishMintedToken } from "../../../workers/shared/client-tokens";
+import {
+  DEMO_DIRECTORY_ID_KEY,
+  clientTokenKey,
+  demoDirectoryId,
+  publishMintedToken,
+} from "../../../workers/shared/client-tokens";
 import { checkNativeNamespace } from "../../../workers/shared/native-namespace";
 import type { BackfillSummary, Mode, NativeWriteFailure } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
@@ -107,6 +112,7 @@ export async function loader({ context, params }: Route.LoaderArgs) {
     proxyPublicUrl: proxyPublicUrl ?? "",
     nativePublicUrl: nativePublicUrl ?? "",
     nativeWriteFailures: await listNativeWriteFailures(db, directory.id),
+    isDemoDirectory: context.get(demoModeContext) && directory.id === (await demoDirectoryId(db)),
   };
 }
 
@@ -307,11 +313,29 @@ export async function action({
   }
 
   if (intent === "delete-directory") {
+    // The bundled simulators can only drive the directory named by
+    // idp.demo_directory_id, and nothing re-publishes their plaintext token
+    // after a delete — so deleting it wedges demo mode: every simulator action
+    // afterwards no-ops with nothing to drive. Refuse rather than wedge.
+    if (context.get(demoModeContext) && directory.id === (await demoDirectoryId(db))) {
+      return {
+        error:
+          "This is the bundled demo directory — the built-in IdP and native-app simulators drive it, and deleting it leaves demo mode with nothing to drive. Start the bridge without DEMO_MODE to remove it.",
+      };
+    }
     await withDatastoreRetry(() =>
       db.batch([
         db.prepare("DELETE FROM id_mappings WHERE directory_id = ?").bind(directory.id),
         db.prepare("DELETE FROM proxy_log WHERE directory_id = ?").bind(directory.id),
         db.prepare("DELETE FROM native_write_failures WHERE directory_id = ?").bind(directory.id),
+        // The simulator's plaintext token copy, and the demo-directory pointer if
+        // it names this row. Left behind, the pointer wedges the next demo-mode
+        // boot: adoption bails on a set key, so the simulators resolve a
+        // directory that no longer exists and every action silently no-ops.
+        db.prepare("DELETE FROM poc_config WHERE key = ?").bind(clientTokenKey(directory.id)),
+        db
+          .prepare("DELETE FROM poc_config WHERE key = ? AND value = ?")
+          .bind(DEMO_DIRECTORY_ID_KEY, directory.id),
         db.prepare("DELETE FROM scim_directories WHERE id = ?").bind(directory.id),
       ]),
     );
@@ -666,7 +690,7 @@ function LiveStateCard({ mode }: { mode: Mode }) {
 }
 
 export default function DirectoryOverview() {
-  const { directory, proxyPublicUrl, nativePublicUrl, nativeWriteFailures } =
+  const { directory, proxyPublicUrl, nativePublicUrl, nativeWriteFailures, isDemoDirectory } =
     useLoaderData<typeof loader>();
   const actionData = useActionData() as OverviewActionData | undefined;
   const navigation = useNavigation();
@@ -926,13 +950,16 @@ export default function DirectoryOverview() {
               Danger zone
             </Text>
             <Text color="gray" size="2">
-              Deleting this directory removes its id mappings and invalidates its proxy token
-              immediately.
+              {isDemoDirectory
+                ? "This is the bundled demo directory. The built-in simulators drive it, so it can't be deleted while DEMO_MODE is on."
+                : "Deleting this directory removes its id mappings and invalidates its proxy token immediately."}
             </Text>
           </Flex>
           <AlertDialog.Root>
             <AlertDialog.Trigger>
-              <Button color="red">Delete directory</Button>
+              <Button color="red" disabled={isDemoDirectory}>
+                Delete directory
+              </Button>
             </AlertDialog.Trigger>
             <AlertDialog.Content size="2">
               <Form method="post">

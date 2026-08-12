@@ -3,7 +3,12 @@ import type { Datastore } from "../shared/datastore";
 import type { PocEnv, WorkerHandler } from "../shared/types";
 import { handleDsyncWebhook } from "./listener";
 import { timingSafeEqual } from "../shared/crypto";
-import { captureMockBefore, emitMockEvents, parseMockScimPath } from "./mock-emitter";
+import {
+  captureMockBefore,
+  emitMockEvents,
+  listMockEvents,
+  parseMockScimPath,
+} from "./mock-emitter";
 import { handleScim, scimError } from "./scim-server";
 import { renderStatusPage } from "./status-page";
 import { MOCK_WORKOS_TABLES, NATIVE_TABLES, ScimStore } from "./store";
@@ -44,6 +49,17 @@ const handler: WorkerHandler<PocEnv> = {
       });
     }
 
+    if (pathname === "/mock-workos/events") {
+      if (request.method !== "GET") {
+        return Response.json({ error: "The events endpoint only accepts GET." }, { status: 405 });
+      }
+      // The mock's SCIM token stands in for the environment API key the real
+      // GET https://api.workos.com/events takes.
+      const denied = await requireBearer(request, env.DB, "mock_workos.scim_token");
+      if (denied) return denied;
+      return listMockEvents(env.DB, new URL(request.url).searchParams);
+    }
+
     if (pathname === MOCK_SCIM_BASE || pathname.startsWith(`${MOCK_SCIM_BASE}/`)) {
       const denied = await requireBearer(request, env.DB, "mock_workos.scim_token");
       if (denied) return denied;
@@ -60,17 +76,25 @@ const handler: WorkerHandler<PocEnv> = {
       // against.
       const response = await handleScim(request, subpath, { store, migratedIdMode: "post-create" });
 
-      if (
-        mutating &&
-        response.ok &&
-        (await getConfig(env.DB, "mock_workos.emit_dsync")) !== "false"
-      ) {
+      if (mutating && response.ok) {
         // The mock stands in for a migrated WorkOS directory, so it emits the
-        // DSync events one would. Off when a real WorkOS webhook drives the
-        // listener instead. Never let emission break the SCIM response.
+        // DSync events one would: always into the log its GET /events serves,
+        // and as a webhook delivery only while `mock_workos.emit_dsync` allows
+        // (off when a real WorkOS webhook drives the listener instead). Never
+        // let emission break the SCIM response.
+        const webhook = (await getConfig(env.DB, "mock_workos.emit_dsync")) !== "false";
         const body = method === "DELETE" ? "" : await response.clone().text();
         try {
-          await emitMockEvents(env.DB, store, method, mockPath, before, body, response.status);
+          await emitMockEvents(
+            env.DB,
+            store,
+            method,
+            mockPath,
+            before,
+            body,
+            response.status,
+            webhook,
+          );
         } catch {
           // ignore — the write already succeeded; event emission is best-effort
         }

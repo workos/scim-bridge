@@ -53,7 +53,9 @@ export function forgetClientTokens(): void {
   remembered.clear();
 }
 
-function configKey(directoryId: string): string {
+/** The config row holding a directory's plaintext token copy. Exported so the
+ *  delete path can remove exactly the row this module would have written. */
+export function clientTokenKey(directoryId: string): string {
   return `idp.proxy_token.${directoryId}`;
 }
 
@@ -62,14 +64,14 @@ export async function storeClientToken(
   directoryId: string,
   token: string,
 ): Promise<void> {
-  await setConfig(db, configKey(directoryId), token);
+  await setConfig(db, clientTokenKey(directoryId), token);
 }
 
 /** The token to present for this directory, or null if this process has no copy —
  *  which is the normal state in production and an error only for a caller that was
  *  about to act as a client. */
 export async function clientTokenFor(db: Datastore, directoryId: string): Promise<string | null> {
-  return remembered.get(directoryId) ?? (await getConfig(db, configKey(directoryId)));
+  return remembered.get(directoryId) ?? (await getConfig(db, clientTokenKey(directoryId)));
 }
 
 /**
