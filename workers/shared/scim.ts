@@ -586,21 +586,9 @@ export async function mirrorUpsert(
       // a mapping the replay itself mints. A batching caller's queued rows count —
       // they are claims this run has already made, and a page of them lands after
       // every resource on the page has been mirrored.
-      const claimed =
-        sink?.find(
-          (m) =>
-            m.directory_id === directory.id && m.resource_type === kind && m.workos_id === nativeId,
-        ) ?? (await getMappingByWorkosId(db, directory.id, kind, nativeId));
-      if (claimed && claimed.native_id !== nativeId) {
-        return {
-          ok: false,
-          workosRequest: label,
-          status: 409,
-          ms: acc.ms || null,
-          body: null,
-          error: mintConflictDetail(kind, nativeId, claimed.native_id),
-          mintConflict: true,
-        };
+      const claimed = await claimedByAnother(db, directory, kind, nativeId, nativeId, sink);
+      if (claimed) {
+        return mintConflict(label, kind, nativeId, claimed.native_id, acc);
       }
       const put = await putWorkos(directory, kind, nativeId, resource, acc, nativeId);
       if (isSuccess(put.status)) {
@@ -719,10 +707,22 @@ async function resolveCreateRace(
       // minted id) so it actually syncs, and so the returned body is the resource
       // rather than the search page. Then record the diverging-id mapping.
       const syncLabel = `PUT /${kind}/${workosId} (409 recovery)`;
+      // The recovered id is resolved from a lookup keyed on the resource's own
+      // `userName`/`displayName`, and WorkOS answers that filter with whichever
+      // resource carries the name — including one this directory already records
+      // as another resource's `workos_id`. Adopting it would mint a second
+      // mapping onto that resource's row: two native ids resolving to one WorkOS
+      // row, which is the id-space collapse `mirrorUpsert`'s first touch refuses
+      // on its own id. Refuse here too, and before the sync PUT, so the other
+      // resource's row is never written and there is nothing to take back.
+      const claimed = await claimedByAnother(db, directory, kind, workosId, nativeId, sink);
+      if (claimed) {
+        return mintConflict(syncLabel, kind, workosId, claimed.native_id, acc);
+      }
       const sync = await putWorkos(directory, kind, workosId, resource, acc);
       if (isSuccess(sync.status)) {
-        // This is the one id_mappings mint site with no shared-namespace gate of
-        // its own, and deliberately so. The mapping is keyed on `native_id`, and a
+        // This mint site has no shared-namespace gate of its own, and deliberately
+        // so. The mapping is keyed on `native_id`, and a
         // native_id a tenant can choose would, in a shared namespace, name a
         // neighbour's native row — the attribution hazard the mint sites in
         // backfill.ts (pushToNative, repairDrift) and the proxy legs
@@ -741,7 +741,9 @@ async function resolveCreateRace(
         // only orphan it. So assert the invariant instead: the recorded native id
         // must be the caller-supplied `nativeId`, so a future change that sourced it
         // from the lookup response (making it attacker-influenced) trips here rather
-        // than silently minting a cross-tenant claim.
+        // than silently minting a cross-tenant claim. The other column the recovery
+        // does derive — `workos_id` — is guarded above, where a row another resource
+        // already holds is refused before this write.
         const mapping = mappingRow(directory, kind, nativeId, workosId, "fallback-post");
         if (mapping.native_id !== nativeId) {
           throw new Error(
@@ -761,6 +763,49 @@ async function resolveCreateRace(
     acc,
     `WorkOS POST hit 409 and the ${attribute} lookup did not recover an id`,
   );
+}
+
+/**
+ * The mapping that already holds `workosId` as its WorkOS-side id for a resource
+ * other than `nativeId`, or null when the id is free for this resource to take.
+ *
+ * A batching caller's queued rows count: they are claims this run has already
+ * made, and a page of them lands only after every resource on the page has been
+ * mirrored.
+ */
+async function claimedByAnother(
+  db: Datastore,
+  directory: Directory,
+  kind: ResourceType,
+  workosId: string,
+  nativeId: string,
+  sink: MappingSink | undefined,
+): Promise<NewMapping | IdMapping | null> {
+  const claimed =
+    sink?.find(
+      (m) =>
+        m.directory_id === directory.id && m.resource_type === kind && m.workos_id === workosId,
+    ) ?? (await getMappingByWorkosId(db, directory.id, kind, workosId));
+  return claimed && claimed.native_id !== nativeId ? claimed : null;
+}
+
+/** A mint refused because the id is another resource's. Permanent, not transient. */
+function mintConflict(
+  workosRequest: string,
+  kind: ResourceType,
+  id: string,
+  ownerNativeId: string,
+  acc: Elapsed,
+): MirrorResult {
+  return {
+    ok: false,
+    workosRequest,
+    status: 409,
+    ms: acc.ms || null,
+    body: null,
+    error: mintConflictDetail(kind, id, ownerNativeId),
+    mintConflict: true,
+  };
 }
 
 /**
