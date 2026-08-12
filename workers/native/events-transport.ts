@@ -61,6 +61,10 @@ export interface EventsPollerStatus {
   running: boolean;
   transport: EventsTransport;
   target: EventsPollTarget | null;
+  /** What an absent `native.events_target` resolves to for this boot — the
+   *  actions and the tab must default the same way the controller does, or a
+   *  keyless guard checks one target while the poller runs another. */
+  defaultTarget: EventsPollTarget;
   baseUrl: string | null;
   keySource: EventsKeySource | null;
   envKeyConfigured: boolean;
@@ -73,8 +77,15 @@ export interface EventsPollerStatus {
 
 export interface EventsPollerController {
   /** Re-read the persisted transport choices and start/stop/retarget the poll
-   *  loop to match. When (re)starting, resolves only after the first poll. */
+   *  loop to match. Resolves with the start DECISION — the first poll of a
+   *  (re)started loop settles in the background, because both callers hold
+   *  something open while they wait: boot the health check, a panel action an
+   *  HTTP response, and a first poll drains a whole backlog over a network
+   *  nobody controls. */
   reconcile(): Promise<EventsPollerStatus>;
+  /** Resolves once the current loop's first poll has settled (immediately when
+   *  none runs). Nothing on a request path awaits this; tests do. */
+  settled(): Promise<void>;
   status(): EventsPollerStatus;
   stop(): void;
 }
@@ -112,11 +123,17 @@ async function storedApiKey(db: Datastore): Promise<string | null> {
   return plain && !isEncryptedSecret(plain) ? plain : null;
 }
 
+/** What an absent `native.events_target` means for this boot: the mock when
+ *  the env URL is (or defaulted to) the bundled mock, real WorkOS otherwise. */
+export function defaultPollTarget(
+  boot: Pick<EventsPollerBoot, "envEventsUrl" | "mockEventsUrl">,
+): EventsPollTarget {
+  return boot.envEventsUrl === boot.mockEventsUrl ? "mock" : "workos";
+}
+
 async function resolveDesired(db: Datastore, boot: EventsPollerBoot): Promise<DesiredPoller> {
-  const transport =
-    asTransport(await getConfig(db, EVENTS_TRANSPORT_KEY)) ??
-    (boot.enabledByEnv ? "poll" : "webhook");
-  const off: DesiredPoller = {
+  const envTransport: EventsTransport = boot.enabledByEnv ? "poll" : "webhook";
+  const off = (transport: EventsTransport): DesiredPoller => ({
     transport,
     target: null,
     run: false,
@@ -124,16 +141,17 @@ async function resolveDesired(db: Datastore, boot: EventsPollerBoot): Promise<De
     apiKey: null,
     keySource: null,
     blocked: null,
-  };
-  if (transport !== "poll") return off;
+  });
 
   if (!boot.demoMode) {
-    // No panel exists outside demo mode, so panel-written keys must not steer
-    // a production listener: env is the entire configuration, exactly as when
-    // the poller shipped.
-    if (!boot.enabledByEnv || !boot.envApiKey) return off;
+    // No panel exists outside demo mode, so NO panel-written key — the
+    // transport choice included — may steer a production listener: a datastore
+    // previously driven by a demo panel must not switch off a poller the
+    // environment said to run, when the tab that could undo it isn't there.
+    // Env is the entire configuration, exactly as when the poller shipped.
+    if (!boot.enabledByEnv || !boot.envApiKey) return off(envTransport);
     return {
-      transport,
+      transport: "poll",
       target: null,
       run: true,
       baseUrl: boot.envEventsUrl,
@@ -143,15 +161,16 @@ async function resolveDesired(db: Datastore, boot: EventsPollerBoot): Promise<De
     };
   }
 
-  const target =
-    asTarget(await getConfig(db, EVENTS_TARGET_KEY)) ??
-    (boot.envEventsUrl === boot.mockEventsUrl ? "mock" : "workos");
+  const transport = asTransport(await getConfig(db, EVENTS_TRANSPORT_KEY)) ?? envTransport;
+  if (transport !== "poll") return off(transport);
+
+  const target = asTarget(await getConfig(db, EVENTS_TARGET_KEY)) ?? defaultPollTarget(boot);
   if (target === "mock") {
     // The bundled mock authenticates with its own seeded token — the one
     // target that never needs (and would reject) a WorkOS credential.
     const token = (await getConfig(db, "mock_workos.scim_token")) ?? "";
     if (!token) {
-      return { ...off, target, blocked: "The bundled mock has no seeded token yet." };
+      return { ...off("poll"), target, blocked: "The bundled mock has no seeded token yet." };
     }
     return {
       transport,
@@ -173,7 +192,7 @@ async function resolveDesired(db: Datastore, boot: EventsPollerBoot): Promise<De
     // The panel actions refuse to persist this state; reaching it anyway
     // (hand-edited config, a cleared key) must park the poller with a visible
     // reason, never start it keyless against something that isn't the mock.
-    return { ...off, target, baseUrl, blocked: NEEDS_KEY };
+    return { ...off("poll"), target, baseUrl, blocked: NEEDS_KEY };
   }
   return {
     transport,
@@ -197,6 +216,7 @@ export function createEventsPollerController(
     running: false,
     transport: boot.enabledByEnv ? "poll" : "webhook",
     target: null,
+    defaultTarget: defaultPollTarget(boot),
     baseUrl: null,
     keySource: null,
     envKeyConfigured: Boolean(boot.envApiKey),
@@ -213,6 +233,7 @@ export function createEventsPollerController(
 
   return {
     status: () => ({ ...status }),
+    settled: () => loop?.firstPoll ?? Promise.resolve(),
     stop() {
       stopLoop();
       status = { ...status, running: false };
@@ -252,9 +273,11 @@ export function createEventsPollerController(
             status = { ...status, lastError: message };
           },
         });
-        // The switch is observable the moment the action returns: the first
-        // poll has run and the status reflects its outcome.
-        await loop.firstPoll;
+        // Deliberately NOT awaited: the first poll drains a whole backlog
+        // with network round-trips, and reconcile's callers hold something
+        // open while they wait — boot the health check, a panel action an
+        // HTTP response. The decision is what they need; the poll's outcome
+        // lands in the status via the callbacks above.
       }
       status = { ...status, running: true };
       return { ...status };
@@ -296,6 +319,10 @@ async function anyKeyAvailable(db: Datastore, opts: TransportActionOptions): Pro
   return opts.envKeyConfigured || (await storedApiKey(db)) !== null;
 }
 
+function isLoopback(url: URL): boolean {
+  return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+}
+
 /** Flip which transport the demo relies on. Refuses a flip to polling that
  *  could only produce a dead poller (real-WorkOS target with no key anywhere). */
 export async function setEventsTransport(
@@ -306,7 +333,12 @@ export async function setEventsTransport(
   const transport = asTransport(value);
   if (!transport) return { error: "That transport is not recognized." };
   if (transport === "poll") {
-    const target = asTarget(await getConfig(db, EVENTS_TARGET_KEY)) ?? "mock";
+    // Default the target exactly as the controller will, or this guard checks
+    // "mock" while the poller starts blocked on a keyless real-WorkOS target.
+    const target =
+      asTarget(await getConfig(db, EVENTS_TARGET_KEY)) ??
+      opts.controller?.status().defaultTarget ??
+      "mock";
     if (target === "workos" && !(await anyKeyAvailable(db, opts))) {
       return { error: NEEDS_KEY };
     }
@@ -339,8 +371,16 @@ export async function setEventsPollTarget(
   } catch {
     return { error: "The Events API URL is not a valid URL." };
   }
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    return { error: "The Events API URL must be http(s)." };
+  // The poller presents the API key as a bearer on every tick, so a cleartext
+  // transport would hand the environment-wide credential to the network.
+  // Loopback is the one exemption — it never leaves the host, and it is how
+  // the bundled mock is reached.
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isLoopback(parsed))) {
+    return {
+      error:
+        "The Events API URL must use https — a plain-http target would send the API key " +
+        "in cleartext. (Loopback addresses are exempt.)",
+    };
   }
   if (!(await anyKeyAvailable(db, opts))) return { error: NEEDS_KEY };
   await setConfig(db, EVENTS_URL_KEY, url.replace(/\/+$/, ""));
@@ -371,7 +411,10 @@ export async function clearEventsApiKey(
   opts: TransportActionOptions,
 ): Promise<TransportActionResult> {
   if (!opts.envKeyConfigured) {
-    const transport = asTransport(await getConfig(db, EVENTS_TRANSPORT_KEY)) ?? "poll";
+    const transport =
+      asTransport(await getConfig(db, EVENTS_TRANSPORT_KEY)) ??
+      opts.controller?.status().transport ??
+      "poll";
     const target = asTarget(await getConfig(db, EVENTS_TARGET_KEY)) ?? "mock";
     if (transport === "poll" && target === "workos") {
       return {

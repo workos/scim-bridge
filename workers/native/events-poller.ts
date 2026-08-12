@@ -62,6 +62,11 @@ export const DSYNC_EVENT_TYPES = [
   "dsync.group.user_removed",
 ] as const;
 
+/** How long a single events request may take before it is aborted. A
+ *  black-holed endpoint must cost one failed tick (logged, retried next
+ *  tick), never a poll that hangs forever. */
+export const EVENTS_FETCH_TIMEOUT_MS = 30_000;
+
 export interface EventsPollerOptions {
   /** The environment's API key, from WORKOS_API_KEY. */
   apiKey: string;
@@ -69,6 +74,8 @@ export interface EventsPollerOptions {
   baseUrl?: string;
   /** Page size per request. */
   limit?: number;
+  /** Per-request abort budget; defaults to EVENTS_FETCH_TIMEOUT_MS. */
+  fetchTimeoutMs?: number;
 }
 
 interface EventsPage {
@@ -100,6 +107,7 @@ export async function pollDsyncEventsOnce(
 
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${options.apiKey}` },
+      signal: AbortSignal.timeout(options.fetchTimeoutMs ?? EVENTS_FETCH_TIMEOUT_MS),
     });
     if (response.status === 400 && cursor) {
       // The API no longer recognises the cursor — real WorkOS retains events
@@ -209,8 +217,9 @@ async function clearRetryState(db: Datastore): Promise<null> {
 export interface EventsPoller {
   stop(): void;
   /** Settles when the immediate first poll finishes (it never rejects — the
-   *  tick logs failures). Awaiting it makes start-then-inspect deterministic:
-   *  the transport controller reports a status the first poll already shaped. */
+   *  tick logs failures). Nothing on a request path awaits it: a first poll
+   *  drains a backlog over a network nobody controls, so boot and the panel
+   *  must return while it runs. Tests await it for determinism. */
   firstPoll: Promise<void>;
 }
 

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   EVENTS_API_KEY_CONFIG_KEY,
   EVENTS_TARGET_KEY,
@@ -124,13 +124,15 @@ describe("events transport switcher", () => {
       const started = await controller.reconcile();
 
       // Default in a demo with no persisted choice: the poller runs against
-      // the bundled mock keylessly, and the awaited first poll already drained
-      // the log through the listener.
+      // the bundled mock keylessly. reconcile reports the decision; the first
+      // poll settles in the background and drains the log through the
+      // listener.
       expect(started.running).toBe(true);
       expect(started.transport).toBe("poll");
       expect(started.baseUrl).toBe(MOCK_URL);
       expect(started.keySource).toBe("mock");
-      expect(started.lastPollAt).not.toBeNull();
+      await controller.settled();
+      expect(controller.status().lastPollAt).not.toBeNull();
       expect(await nativeUsers(env.DB)).toHaveLength(1);
 
       // Flip to webhooks: the loop stops, and a later event stays unapplied
@@ -149,7 +151,60 @@ describe("events transport switcher", () => {
       // And back: the restart's first poll catches up on what it missed.
       await setEventsTransport(env.DB, { controller, envKeyConfigured: false }, "poll");
       expect(controller.status().running).toBe(true);
+      await controller.settled();
       expect(await nativeUsers(env.DB)).toHaveLength(2);
+    });
+
+    it("returns from reconcile while the first poll is still in flight", async () => {
+      // Boot awaits reconcile before serve(), and panel actions await it while
+      // holding an HTTP response open — so reconcile must report the start
+      // DECISION and let the first poll (a whole backlog drain, on a network
+      // it doesn't control) settle in the background.
+      const env = await seedTransportEnv();
+      let release: ((res: Response) => void) | undefined;
+      globalThis.fetch = ((): Promise<Response> =>
+        new Promise((resolve) => {
+          release = resolve;
+        })) as typeof fetch;
+
+      controller = createEventsPollerController(env.DB, demoBoot());
+      const status = await controller.reconcile();
+
+      // Resolved while the poll request still hangs: running, nothing polled.
+      expect(status.running).toBe(true);
+      expect(controller.status().lastPollAt).toBeNull();
+      // The background tick does reach the network — it just doesn't gate the
+      // reconcile that started it.
+      await vi.waitFor(() => expect(release).toBeDefined());
+      expect(controller.status().lastPollAt).toBeNull();
+
+      release?.(Response.json({ data: [], list_metadata: { before: null, after: null } }));
+      await controller.settled();
+      expect(controller.status().lastPollAt).not.toBeNull();
+    });
+
+    it("runs on env alone outside demo mode even when a demo-era transport choice says webhook", async () => {
+      // The tab that could undo native.events_transport does not exist outside
+      // demo mode, so a datastore previously driven by a demo panel must not
+      // be able to switch off a poller the environment said to run.
+      const env = await seedTransportEnv();
+      const real = installTransportFetch(env);
+      await setConfig(env.DB, EVENTS_TRANSPORT_KEY, "webhook");
+
+      controller = createEventsPollerController(env.DB, {
+        demoMode: false,
+        envApiKey: "sk_env_123",
+        envEventsUrl: REAL_URL,
+        mockEventsUrl: "http://127.0.0.1:8080/__demo/native/mock-workos",
+        enabledByEnv: true,
+        intervalMs: 60_000,
+      });
+      const status = await controller.reconcile();
+      await controller.settled();
+
+      expect(status.running).toBe(true);
+      expect(status.keySource).toBe("env");
+      expect(real.auths).toEqual(["Bearer sk_env_123"]);
     });
 
     it("stays off outside demo mode without the env rule, whatever config says", async () => {
@@ -191,6 +246,7 @@ describe("events transport switcher", () => {
         intervalMs: 60_000,
       });
       const status = await controller.reconcile();
+      await controller.settled();
 
       expect(status.running).toBe(true);
       expect(status.baseUrl).toBe(REAL_URL);
@@ -237,6 +293,55 @@ describe("events transport switcher", () => {
       expect(result.error).toMatch(/API key/);
       expect(await getConfig(env.DB, EVENTS_TRANSPORT_KEY)).toBe("webhook");
       expect(controller.status().running).toBe(false);
+    });
+
+    it("guards the flip to poll with the resolved default target, not an assumed mock", async () => {
+      // A demo started with a non-mock WORKOS_EVENTS_URL and no key resolves
+      // its default target to "workos" — the flip must be refused at the
+      // control, not accepted and then parked on a blocked poller.
+      const env = await seedTransportEnv();
+      installTransportFetch(env);
+      await setConfig(env.DB, EVENTS_TRANSPORT_KEY, "webhook");
+      controller = createEventsPollerController(
+        env.DB,
+        demoBoot({ envEventsUrl: REAL_URL, enabledByEnv: false }),
+      );
+      await controller.reconcile();
+      expect(controller.status().defaultTarget).toBe("workos");
+
+      const result = await setEventsTransport(
+        env.DB,
+        { controller, envKeyConfigured: false },
+        "poll",
+      );
+
+      expect(result.error).toMatch(/API key/);
+      expect(await getConfig(env.DB, EVENTS_TRANSPORT_KEY)).toBe("webhook");
+      expect(controller.status().running).toBe(false);
+    });
+
+    it("refuses a plain-http URL for any non-loopback target", async () => {
+      // The poller presents the environment API key as a bearer on every
+      // tick, so a cleartext transport would broadcast it. Loopback stays
+      // exempt — that is how the bundled mock is reached.
+      const env = await seedTransportEnv();
+      controller = createEventsPollerController(env.DB, demoBoot());
+
+      const refused = await setEventsPollTarget(
+        env.DB,
+        { controller, envKeyConfigured: true },
+        { target: "workos", url: "http://api.evil.example/events-proxy" },
+      );
+      expect(refused.error).toMatch(/https/);
+      expect(await getConfig(env.DB, EVENTS_URL_KEY)).toBeNull();
+
+      const loopback = await setEventsPollTarget(
+        env.DB,
+        { controller, envKeyConfigured: true },
+        { target: "workos", url: "http://127.0.0.1:9999/mock-workos" },
+      );
+      expect(loopback.error).toBeUndefined();
+      expect(await getConfig(env.DB, EVENTS_URL_KEY)).toBe("http://127.0.0.1:9999/mock-workos");
     });
 
     it("rejects an unparseable target URL", async () => {
@@ -295,6 +400,7 @@ describe("events transport switcher", () => {
         { target: "workos", url: REAL_URL },
       );
       expect(target.error).toBeUndefined();
+      await controller.settled();
 
       const status = controller.status();
       expect(status.running).toBe(true);
@@ -311,6 +417,7 @@ describe("events transport switcher", () => {
 
       controller = createEventsPollerController(env.DB, demoBoot({ envApiKey: "sk_env_123" }));
       const status = await controller.reconcile();
+      await controller.settled();
 
       expect(status.running).toBe(true);
       expect(status.keySource).toBe("env");
@@ -325,6 +432,7 @@ describe("events transport switcher", () => {
       await setConfig(env.DB, EVENTS_URL_KEY, REAL_URL);
       controller = createEventsPollerController(env.DB, demoBoot());
       await controller.reconcile();
+      await controller.settled();
       expect(real.auths).toEqual(["Bearer sk_stored"]);
 
       const refused = await clearEventsApiKey(env.DB, { controller, envKeyConfigured: false });

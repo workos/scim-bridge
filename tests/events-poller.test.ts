@@ -390,6 +390,27 @@ describe("events api poller", () => {
     warn.mockRestore();
   });
 
+  it("aborts a poll fetch that never answers instead of wedging the tick", async () => {
+    // A black-holed endpoint must cost one failed tick (logged, retried), not
+    // a poll that never settles — a wedged first poll is what once kept a
+    // container from answering its health check.
+    const env = await seedPollerEnv();
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("The operation was aborted.", "AbortError")),
+        );
+      })) as typeof fetch;
+
+    await expect(
+      pollDsyncEventsOnce(env.DB, {
+        apiKey: MOCK_TOKEN,
+        baseUrl: EVENTS_BASE,
+        fetchTimeoutMs: 25,
+      }),
+    ).rejects.toThrow(/abort/i);
+  });
+
   describe("the polling loop", () => {
     /** An always-empty datastore. The loop tests assert timer arithmetic, and a
      *  real driver's socket round-trips cannot complete while the clock is

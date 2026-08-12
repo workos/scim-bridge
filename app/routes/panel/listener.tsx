@@ -97,7 +97,14 @@ export async function loader({ context }: Route.LoaderArgs) {
       transportChoice === "webhook" || transportChoice === "poll"
         ? transportChoice
         : (poller?.transport ?? "poll"),
-    pollTarget: targetChoice === "workos" ? "workos" : "mock",
+    // The controller's resolved target when it is actually polling, then the
+    // persisted choice, then the boot default — never a bare "mock", which
+    // could show the wrong selection on a demo whose env URL isn't the mock.
+    pollTarget:
+      poller?.target ??
+      (targetChoice === "workos" || targetChoice === "mock"
+        ? targetChoice
+        : (poller?.defaultTarget ?? "mock")),
     eventsUrl: eventsUrl ?? "https://api.workos.com",
     // Presence only — the stored key itself is never sent to the page.
     storedKeyConfigured: Boolean(storedKey),
@@ -187,9 +194,11 @@ export default function PanelListener() {
       ? String(transportFetcher.formData.get("target"))
       : pollTarget;
   // Toggle errors arrive on the fetcher; the URL/key form posts navigate, so
-  // theirs arrive as action data. Either way the refusal is shown in place.
+  // theirs arrive as action data. The fetcher's LATEST result wins whenever it
+  // has one — a successful toggle returns {} and must clear a stale navigation
+  // error, which `??` would resurrect.
   const actionData = useActionData<typeof action>();
-  const transportError = transportFetcher.data?.error ?? actionData?.error;
+  const transportError = transportFetcher.data ? transportFetcher.data.error : actionData?.error;
   const webhookUrl = `${trimTrailingSlash(nativePublicUrl || "http://localhost:8788")}/webhooks/dsync`;
   const keyBadge = envKeyConfigured
     ? { color: "green" as const, label: "Configured (env)" }
