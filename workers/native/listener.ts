@@ -55,6 +55,33 @@ export async function handleDsyncWebhook(request: Request, db: Datastore): Promi
   } catch {
     envelope = null;
   }
+  await processDsyncEvent(db, envelope, rawBody);
+  return Response.json({ received: true });
+}
+
+/** What processing one event amounted to — enough for the Events API poller to
+ *  decide whether its cursor may move past it. */
+export interface ProcessedDsyncEvent {
+  action: Outcome["action"];
+  /** True when the apply itself threw. The event is recorded without its id so
+   *  a redelivery can repair it — which for the poller means NOT advancing the
+   *  cursor past it, or the failure would be acknowledged forever. */
+  handlerError: boolean;
+}
+
+/**
+ * Process one WorkOS DSync event envelope (`{ id, event, data, created_at }` —
+ * the shape webhooks deliver and the Events API returns) through the
+ * per-directory handle-vs-ignore instruction, the replay guards, and the event
+ * log. Shared by the webhook route and the Events API poller so the two
+ * transports cannot drift.
+ */
+export async function processDsyncEvent(
+  db: Datastore,
+  envelope: Json | null,
+  rawBody?: string,
+): Promise<ProcessedDsyncEvent> {
+  const payload = rawBody ?? JSON.stringify(envelope);
   const eventType = envelope ? asString(envelope.event) : null;
   if (!envelope || !eventType) {
     await recordEvent(db, {
@@ -63,9 +90,9 @@ export async function handleDsyncWebhook(request: Request, db: Datastore): Promi
       idpId: null,
       action: "ignored",
       detail: "payload is not a WorkOS webhook envelope",
-      payload: rawBody,
+      payload,
     });
-    return Response.json({ received: true });
+    return { action: "ignored", handlerError: false };
   }
 
   const eventId = asString(envelope.id);
@@ -95,12 +122,13 @@ export async function handleDsyncWebhook(request: Request, db: Datastore): Promi
       idpId: asString(data.idp_id),
       action: "ignored",
       detail: `listener inactive in ${instruction.mode ?? "pre-cutover"} mode — the proxy writes the native app directly until cutover`,
-      payload: rawBody,
+      payload,
     });
-    return Response.json({ received: true });
+    return { action: "ignored", handlerError: false };
   }
 
   let outcome: Outcome;
+  let handlerError = false;
   // The recorded event_id is nulled on the handler-error path so a redelivery is
   // not mistaken for a duplicate and can repair the failure.
   let recordEventId: string | null = eventId;
@@ -111,6 +139,7 @@ export async function handleDsyncWebhook(request: Request, db: Datastore): Promi
       outcome = await dispatch(db, new ScimStore(db, NATIVE_TABLES), eventType, data, eventAt);
     } catch (error) {
       recordEventId = null;
+      handlerError = true;
       const message = error instanceof Error ? error.message : String(error);
       outcome = {
         action: "ignored",
@@ -127,9 +156,9 @@ export async function handleDsyncWebhook(request: Request, db: Datastore): Promi
     idpId: outcome.idpId ?? null,
     action: outcome.action,
     detail: outcome.detail,
-    payload: rawBody,
+    payload,
   });
-  return Response.json({ received: true });
+  return { action: outcome.action, handlerError };
 }
 
 /**

@@ -448,6 +448,17 @@ unreachable it falls back to the seeded row, which stays at `passthrough` —
 events are logged as ignored rather than applied, so a cutover that looks inert
 is the first thing to check there.
 
+Instead of (or alongside) the webhook, the stand-in can **poll the WorkOS
+Events API**, which returns events in order — eliminating the out-of-order
+delivery hazard webhooks have. Set `WORKOS_API_KEY` to turn it on (and
+optionally `WORKOS_EVENTS_URL` / `WORKOS_EVENTS_POLL_INTERVAL_MS`); polled
+events run through exactly the same handling as webhook deliveries, and
+duplicates across the two transports are dropped by event id. The key is the
+environment-wide WorkOS credential, so keep it in your secret manager — it is
+read from the environment only, never stored. See
+[listener-status.md](./listener-status.md#events-api-instead-of-webhooks) for
+the trade.
+
 ## Self-contained demo
 
 `DEMO_MODE=true` mounts a simulated IdP + native app and seeds a pre-wired "Demo

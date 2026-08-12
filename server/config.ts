@@ -79,6 +79,13 @@ export interface AppConfig {
   webhookSecret: string | null;
   /** `native-app` role: base URL of the BRIDGE, which serves the status endpoint. */
   bridgeStatusUrl: string | null;
+  /** WorkOS API key for the Events API polling transport. Environment-wide
+   *  credential, so it lives in env only — never seeded into the database. */
+  workosApiKey: string | null;
+  /** Base URL of the Events API; the demo points this at the bundled mock. */
+  workosEventsUrl: string;
+  /** How often the events poller asks for new events. */
+  eventsPollIntervalMs: number;
   /** Directories declared by env. Only the `native-app` role seeds them; the
    *  bridge imports its own through the control panel. */
   directories: EnvDirectory[];
@@ -173,6 +180,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     );
   }
 
+  const workosApiKey = env.WORKOS_API_KEY?.trim() || null;
+  const workosEventsUrl = trimTrailingSlash(
+    env.WORKOS_EVENTS_URL?.trim() || "https://api.workos.com",
+  );
+  const eventsPollIntervalMs = Number(env.WORKOS_EVENTS_POLL_INTERVAL_MS ?? "5000");
+  if (!Number.isFinite(eventsPollIntervalMs) || eventsPollIntervalMs <= 0) {
+    throw new Error(
+      "WORKOS_EVENTS_POLL_INTERVAL_MS must be a positive number of milliseconds; " +
+        `received "${env.WORKOS_EVENTS_POLL_INTERVAL_MS}".`,
+    );
+  }
+
   // Parsed before the policy check below so a malformed value reports itself
   // rather than being masked by "you also have not set panel credentials".
   const envDirectories = directories(env.DIRECTORIES_JSON);
@@ -232,8 +251,30 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     nativeScimToken: env.NATIVE_SCIM_TOKEN?.trim() || null,
     webhookSecret,
     bridgeStatusUrl: bridgeStatusUrl ? trimTrailingSlash(bridgeStatusUrl) : null,
+    workosApiKey,
+    workosEventsUrl,
+    eventsPollIntervalMs,
     directories: envDirectories,
   };
+}
+
+/**
+ * Whether boot starts the Events API poller — the ordered alternative to
+ * webhook delivery for the bundled DSync listener.
+ *
+ * Off without WORKOS_API_KEY, unconditionally: the poller needs the
+ * environment-wide API key, and a deployment that has not provided one keeps
+ * webhooks as the transport with zero change in behavior. And only where the
+ * listener it feeds is actually mounted: the native-app role, or a bridge
+ * running the demo simulators (whose mock WorkOS serves the /events endpoint
+ * WORKOS_EVENTS_URL can point at). A plain bridge has no native app for polled
+ * events to converge into.
+ */
+export function eventsPollerEnabled(
+  config: Pick<AppConfig, "role" | "demoMode" | "workosApiKey">,
+): boolean {
+  if (!config.workosApiKey) return false;
+  return config.role === "native-app" || config.demoMode;
 }
 
 /** Loopback base the in-process demo mounts are reachable at. */

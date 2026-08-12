@@ -10,8 +10,10 @@ import proxyWorker from "../workers/proxy/index";
 import nativeWorker from "../workers/native/index";
 import idpWorker from "../workers/idp/index";
 import type { PocEnv } from "../workers/shared/types";
+import { startEventsPoller } from "../workers/native/events-poller";
 import {
   decidePanelAuth,
+  eventsPollerEnabled,
   loadConfig,
   panelAuthExempt,
   reportNativeNamespaceDuplicates,
@@ -71,6 +73,24 @@ if (config.role === "native-app") {
 } else {
   await seedConfig(env, config);
   await seedDemoDirectory(env, config);
+}
+// Events API polling: the ordered alternative to webhook delivery for the
+// bundled DSync listener. Gated on WORKOS_API_KEY so existing deployments —
+// which have not handed this container an environment-wide credential — see no
+// change at all. Both transports may run at once: every polled event goes
+// through the same dispatch path as a webhook, so overlap costs "skipped
+// duplicate" rows, never a double apply.
+if (eventsPollerEnabled(config)) {
+  startEventsPoller(store, {
+    apiKey: config.workosApiKey as string,
+    baseUrl: config.workosEventsUrl,
+    intervalMs: config.eventsPollIntervalMs,
+  });
+  console.log(
+    `Events API poller: reading ${config.workosEventsUrl}/events every ` +
+      `${config.eventsPollIntervalMs}ms (ordered transport; overlapping webhook ` +
+      "deliveries are deduplicated by event id)",
+  );
 }
 // One directory per native SCIM namespace is enforced when a directory is saved,
 // but a database written before that could already violate it. Say so
