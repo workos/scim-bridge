@@ -174,16 +174,44 @@ function isTombstone(native: Presence, workos: Presence): boolean {
  *  - idp must be *absent*. Inactive-in-native and absent-from-workos but still
  *    present in the IdP is a real anomaly (the IdP still knows this user), not a
  *    clean tombstone, so it keeps diverging.
+ *
+ * Two caveats about what "absent" can mean, both the caller's responsibility:
+ *  - This orientation reads WorkOS-absence as a deletion, so it must trust the
+ *    absence. When the WorkOS listing failed to load it comes back empty, which is
+ *    indistinguishable by content from a genuinely absent user — so the callers
+ *    only apply this predicate when WorkOS was actually reached (the
+ *    `workosReachable` gate in `reconcileUsers`/`reconcileMembers`). The
+ *    WorkOS-side `isTombstone` has no such hole: an empty listing can't produce
+ *    the `inactive` it requires. The IdP listing is a local, authoritative DB
+ *    read, so its absence is always trustworthy and needs no gate.
+ *  - The panel fetches a single `count=200` page, so a user past that page also
+ *    reads as absent. That single-page truncation is a pre-existing limitation of
+ *    the whole Live-state comparison — every divergence count already assumes the
+ *    page is complete — not specific to this predicate.
  */
 function isNativeTombstone(native: Presence, workos: Presence, idp: Presence): boolean {
   return native === "inactive" && workos === "absent" && idp === "absent";
 }
 
-export function reconcileUsers(users: {
-  native: DirRow[];
-  workos: DirRow[];
-  idp: DirRow[];
-}): UserReconRow[] {
+/** Options the reconciliation needs beyond the three listings. */
+export interface ReconcileOptions {
+  /** Whether the WorkOS listing was actually fetched. `false` means the WorkOS
+   *  arrays are an outage placeholder (empty, `reachable: false`), so the
+   *  native-side tombstone must not fire — an unreachable WorkOS is not a
+   *  deletion. Defaults `true` so a caller that always has real data (and every
+   *  existing test) needs no change. */
+  workosReachable?: boolean;
+}
+
+export function reconcileUsers(
+  users: {
+    native: DirRow[];
+    workos: DirRow[];
+    idp: DirRow[];
+  },
+  options: ReconcileOptions = {},
+): UserReconRow[] {
+  const { workosReachable = true } = options;
   const byName = (rows: DirRow[]) => new Map(rows.map((r) => [r.name, r]));
   const n = byName(users.native);
   const w = byName(users.workos);
@@ -193,7 +221,8 @@ export function reconcileUsers(users: {
     const native = presence(n.get(name));
     const workos = presence(w.get(name));
     const idp = presence(i.get(name));
-    const tombstone = isTombstone(native, workos) || isNativeTombstone(native, workos, idp);
+    const tombstone =
+      isTombstone(native, workos) || (workosReachable && isNativeTombstone(native, workos, idp));
     return {
       name,
       native,
@@ -253,7 +282,9 @@ export function reconcileGroups(
     workos: DirRow[];
     idp: DirRow[];
   },
+  options: ReconcileOptions = {},
 ): GroupReconRow[] {
+  const { workosReachable = true } = options;
   const byName = (rows: GroupRow[]) => new Map(rows.map((r) => [r.name, r.members]));
   const n = byName(groups.native);
   const w = byName(groups.workos);
@@ -266,7 +297,13 @@ export function reconcileGroups(
     const native = n.get(name);
     const workos = w.get(name);
     const idp = i.get(name);
-    const members = reconcileMembers({ native, workos, idp }, nativeUsers, workosUsers, idpUsers);
+    const members = reconcileMembers(
+      { native, workos, idp },
+      nativeUsers,
+      workosUsers,
+      idpUsers,
+      workosReachable,
+    );
     return {
       name,
       native: native ? native.length : null,
@@ -287,6 +324,7 @@ function reconcileMembers(
   nativeUsers: Map<string, DirRow>,
   workosUsers: Map<string, DirRow>,
   idpUsers: Map<string, DirRow>,
+  workosReachable: boolean,
 ): GroupMemberReconRow[] {
   const n = new Set(edges.native ?? []);
   const w = new Set(edges.workos ?? []);
@@ -305,7 +343,7 @@ function reconcileMembers(
     const iUser = presence(idpUsers.get(name));
     const tombstone =
       (workos && !native && isTombstone(nUser, wUser)) ||
-      (native && !workos && isNativeTombstone(nUser, wUser, iUser));
+      (workosReachable && native && !workos && isNativeTombstone(nUser, wUser, iUser));
     return {
       name,
       native,

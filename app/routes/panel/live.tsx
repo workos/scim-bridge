@@ -460,8 +460,12 @@ export default function PanelLive() {
 
   const { directory, users, groups, workosReachable, workosConfigured, auto, events } = data;
   const mode = directory.mode as Mode;
-  const userRows = reconcileUsers(users);
-  const groupRows = reconcileGroups(groups, users);
+  // Gate the native-side tombstone exclusion on WorkOS having actually
+  // responded: an unreachable WorkOS returns an empty listing, and reading that
+  // as genuine absence would reclassify every native-inactive/idp-absent user as
+  // a deleted tombstone during the outage, hiding real drift.
+  const userRows = reconcileUsers(users, { workosReachable });
+  const groupRows = reconcileGroups(groups, users, { workosReachable });
   const userDiffs = userRows.filter((r) => r.diverged).length;
   const groupDiffs = groupRows.filter((r) => r.diverged).length;
   // Split tombstones by orientation so the headline describes each accurately:

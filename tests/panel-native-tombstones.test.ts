@@ -169,6 +169,67 @@ describe("native tombstones in the groups reconciliation", () => {
 });
 
 /**
+ * The exclusion reads WorkOS-absence as a deletion, so it must trust that
+ * absence. When the WorkOS listing failed to load, `fetchWorkosDirectory` returns
+ * an empty list with `reachable: false` — indistinguishable, by content, from a
+ * directory that genuinely holds no such user. Reading that empty list as
+ * absence would silently reclassify every native-inactive/idp-absent user as a
+ * deleted tombstone during a WorkOS outage, masking real drift. So the
+ * native-side exclusion only fires when WorkOS was actually reached.
+ */
+describe("the native tombstone requires WorkOS to have been reached", () => {
+  it("does not tombstone a native-inactive row when WorkOS was unreachable", () => {
+    const rows = reconcileUsers(
+      { native: [user("ada.lovelace@acme.test", 0)], workos: [], idp: [] },
+      { workosReachable: false },
+    );
+
+    expect(rows[0]).toMatchObject({
+      native: "inactive",
+      workos: "absent",
+      idp: "absent",
+      diverged: true,
+      tombstone: false,
+    });
+  });
+
+  it("tombstones the same row once WorkOS was reached and the user is genuinely absent", () => {
+    const rows = reconcileUsers(
+      { native: [user("ada.lovelace@acme.test", 0)], workos: [], idp: [] },
+      { workosReachable: true },
+    );
+
+    expect(rows[0]).toMatchObject({ diverged: false, tombstone: true });
+  });
+
+  it("does not tombstone a native-only membership edge when WorkOS was unreachable", () => {
+    const rows = reconcileGroups(
+      {
+        native: [group("Engineering", ["ada.lovelace@acme.test"])],
+        workos: [group("Engineering", [])],
+        idp: [group("Engineering", [])],
+      },
+      {
+        native: [user("ada.lovelace@acme.test", 0)],
+        workos: [],
+        idp: [],
+      },
+      { workosReachable: false },
+    );
+
+    expect(rows[0]).toMatchObject({ diverged: true, tombstones: 0 });
+    expect(rows[0]?.members).toContainEqual({
+      name: "ada.lovelace@acme.test",
+      native: true,
+      workos: false,
+      idp: false,
+      diverged: true,
+      tombstone: false,
+    });
+  });
+});
+
+/**
  * The headline splits the tombstone count by orientation so it can describe each
  * accurately instead of attributing both to WorkOS. `tombstoneSummary` reads the
  * split back off the reconciled rows.
