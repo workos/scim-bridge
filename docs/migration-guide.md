@@ -60,17 +60,18 @@ them as migrated, which is what enables the
 [migrated-id contract](../README.md#how-workos-handles-each-scim-request) and —
 critically — **suspension soft-delete semantics**:
 
-> **Why soft-delete matters.** On an imported directory, deactivating a user
-> (`active: false`, which is how Okta and Entra offboard) emits
-> `dsync.user.updated` with the user retained as Inactive — so
-> `dsync.user.deleted` means the user is actually gone. Without this, a
-> deactivation emits `dsync.user.deleted` while WorkOS quietly keeps the user
-> and their group memberships; a listener that honors the event by deleting its
-> row then loses the user's id and memberships on every **rehire**
-> (deactivate → reactivate), and no later event ever re-announces them. If you
-> are migrating a directory that was *not* provisioned through this flow, ask
-> WorkOS to confirm suspension soft-delete is enabled for your environment
-> before cutover.
+> **Why soft-delete matters.** With suspension soft-delete on, deactivating a
+> user (`active: false`, which is how Okta and Entra offboard) emits
+> `dsync.user.updated` with the user retained as Inactive. With it off, the
+> same deactivation emits `dsync.user.deleted` — while WorkOS quietly keeps the
+> user and their group memberships. The flag is customer-configurable per
+> environment, and **both settings are safe** as long as your listener
+> deactivates in place on `user.deleted` instead of deleting the row — which is
+> exactly why the reference listener does
+> ([applying events](./listener-status.md#applying-events)). A listener that
+> honors the event by deleting its row instead loses the user's id and
+> memberships on every **rehire** (deactivate → reactivate), and no later event
+> ever re-announces them.
 
 ## Step B — deploy the bridge and import the directories
 

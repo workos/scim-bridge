@@ -262,20 +262,72 @@ async function upsertUserFromEvent(store: ScimStore, data: Json): Promise<Outcom
     JSON.stringify(resource) === existing.resource;
   if (unchanged) return { action: "skipped", detail: "no transition", idpId };
 
+  // The userName fallback can match a row that belonged to a different identity:
+  // deletes leave tombstones, so a new hire provisioned with a departed user's
+  // recycled address adopts that tombstone — and reactivating it as-is would
+  // hand them the previous occupant's group memberships. Clear the edges when
+  // the row's external id changes hands; the adopter's real memberships arrive
+  // as their own group.user_added events (WorkOS announces them for new users),
+  // so this converges whether it is a new occupant or the same person under a
+  // changed externalId. A null external_id is exempt: that row is a stub minted
+  // by this user's own membership event, and clearing it would erase the very
+  // edge that created it.
+  let membershipNote = "";
+  if (existing.external_id !== null && existing.external_id !== idpId) {
+    await store.clearMemberships(existing.id);
+    membershipNote = "; inherited memberships cleared";
+  }
+
   await store.upsertUser({ id: existing.id, userName, externalId: idpId, active, resource });
   const detail =
     !wasActive && active ? "onboard()" : wasActive && !active ? "offboard()" : "attributes updated";
-  return { action: "applied", detail, idpId };
+  return { action: "applied", detail: detail + membershipNote, idpId };
 }
 
+/**
+ * Deactivate in place — never hard-delete. Two reasons, both learned live:
+ *
+ * Delivery is at-least-once and unordered, and the replay ledger is per scope
+ * (`user:`, `group:`, `member:…`) on purpose. A `user.deleted` that is newest on
+ * the user's own timeline can still be DELIVERED after a newer membership event
+ * it was emitted before; a hard delete then cascades away `native_group_members`
+ * edges owned by a different scope, and nothing ever re-delivers them — a stale
+ * delete for judy erased a Finance membership this way, permanently. Widening
+ * the guard instead (membership events advancing the `user:` timeline) would
+ * just trade the loss: a late-arriving legitimate `user.updated` — a rename
+ * emitted before the membership change — would become skippable. Deactivating
+ * in place keeps every scope's own guard sufficient: the destructive cross-scope
+ * cascade is gone, so any interleaving of judy's sequence converges.
+ *
+ * And `user.deleted` does not always mean "purge": with the environment's
+ * suspension soft-delete flag off (it is customer-configurable), a plain
+ * deactivation arrives as this event while WorkOS keeps the user and their
+ * memberships — a rehire re-activates them without re-announcing either. The
+ * inactive row is a tombstone; an actual purge is a retention-policy decision,
+ * not an event handler's.
+ */
 async function deleteUserFromEvent(store: ScimStore, data: Json): Promise<Outcome> {
   const idpId = asString(data.idp_id);
   if (!idpId) return { action: "ignored", detail: "user event carries no idp_id" };
   const userName = userNameFromEvent(data);
   const existing = await findUser(store, idpId, userName);
   if (!existing) return { action: "skipped", detail: "no-op: user already absent", idpId };
-  await store.deleteUser(existing.id);
-  return { action: "applied", detail: "offboard()", idpId };
+  const resource = userResourceFromEvent(
+    existing.id,
+    idpId,
+    existing.user_name,
+    false,
+    data,
+    parseResource(existing.resource),
+  );
+  await store.upsertUser({
+    id: existing.id,
+    userName: existing.user_name,
+    externalId: idpId,
+    active: false,
+    resource,
+  });
+  return { action: "applied", detail: "offboard() — deactivated in place", idpId };
 }
 
 async function upsertGroupFromEvent(store: ScimStore, data: Json): Promise<Outcome> {
