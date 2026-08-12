@@ -192,8 +192,10 @@ only new saves are checked. Repair it by giving each directory its own path (edi
 Open `/panel`.
 
 - **One directory** → *Import directory*: name, your native SCIM base URL + token,
-  and the WorkOS directory endpoint + token (from the WorkOS dashboard). The
-  optional **Existing IdP bearer token** field is the proxy token to use — see
+  and the WorkOS directory endpoint + token (from the credentials sheet WorkOS
+  returns when it provisions your directories — see the
+  [migration guide, Step A](./migration-guide.md#step-a--workos-provisions-your-directories)).
+  The optional **Existing IdP bearer token** field is the proxy token to use — see
   [zero IdP-touch](#zero-idp-touch-deployment) below.
 - **Many** → *Bulk import*: paste CSV
   `name,native_url,native_token,workos_url,workos_token,workos_directory_id,proxy_token`
@@ -203,11 +205,13 @@ Open `/panel`.
   directory already has — refuses the **whole** file: nothing is imported, so
   you never have to work out which half landed.
 
-  The WorkOS half of each row — the directory endpoint and its bearer token —
-  comes from the WorkOS dashboard, one directory at a time. If you are migrating
-  enough directories that doing it by hand is the bottleneck, talk to your WorkOS
-  contact: bulk provisioning is a WorkOS-side operation, not something this tool
-  can do for you.
+  The WorkOS half of each row — `workos_url`, `workos_token`,
+  `workos_directory_id` — is pasted straight from the credentials sheet WorkOS
+  returns at provisioning time
+  ([migration guide, Step A](./migration-guide.md#step-a--workos-provisions-your-directories)).
+  Provisioning is a WorkOS-side operation — imported directories can't be
+  created from the dashboard — so if you don't have that sheet yet, that's the
+  step to do first.
 
 Then copy the directory's **SCIM base URL + proxy token** into your IdP's SCIM
 config. It starts in `passthrough`, so repointing the IdP changes no behavior —
@@ -255,15 +259,17 @@ Constraints worth knowing before you plan a swap:
   A native app that issued **one shared token to every enterprise customer**
   therefore cannot be token-routed at all — that needs a different routing key
   (hostname or path per tenant) and is not supported today.
-- **Imported tokens are stored as-is**, like minted ones: `APP_ENCRYPTION_KEY`
-  covers the native/WorkOS upstream tokens, not the routing key the proxy must
-  look up on every request.
+- **Imported tokens are hashed at rest**, like minted ones — the proxy stores
+  only a digest and routes by it, so the token cannot be read back later
+  ([recovery paths](#proxy-tokens-are-hashed-so-they-cant-be-read-back)).
+  `APP_ENCRYPTION_KEY` covers the native/WorkOS upstream tokens, which the
+  proxy must present, not this routing key, which it only verifies.
 - A too-short value is rejected at import (a truncated paste would 401 every
   SCIM request instead of failing here).
-- **The token is set at import only.** The directory page shows it read-only;
-  there is no in-place rotation, and re-importing means deleting the directory
-  (which drops its id mappings). Get it right while the directory is being
-  created.
+- **Rotation is in place, and immediate.** **Rotate** on the directory page
+  mints a new token and shows it once; the previous token stops authenticating
+  the moment it returns, so on a live directory rotate only when you can paste
+  the new token into the IdP straight away.
 
 ## Run the migration
 
@@ -442,12 +448,29 @@ unreachable it falls back to the seeded row, which stays at `passthrough` —
 events are logged as ignored rather than applied, so a cutover that looks inert
 is the first thing to check there.
 
+Instead of (or alongside) the webhook, the stand-in can **poll the WorkOS
+Events API**, which returns events in order — eliminating the out-of-order
+delivery hazard webhooks have. Set `WORKOS_API_KEY` to turn it on (and
+optionally `WORKOS_EVENTS_URL` / `WORKOS_EVENTS_POLL_INTERVAL_MS`); polled
+events run through exactly the same handling as webhook deliveries, and
+duplicates across the two transports are dropped by event id. The key is the
+environment-wide WorkOS credential, so keep it in your secret manager — it is
+read from the environment only, never stored. See
+[listener-status.md](./listener-status.md#events-api-instead-of-webhooks) for
+the trade.
+
 ## Self-contained demo
 
 `DEMO_MODE=true` mounts a simulated IdP + native app and seeds a pre-wired "Demo
 directory", so you can drive the whole loop with no real IdP or WorkOS account.
 Use the panel's **Live state** and **IdP simulator** tabs to seed and churn the
 directory and watch it converge.
+
+The Events API poller self-wires here too: in demo mode it starts with no
+`WORKOS_API_KEY`, polling the mock WorkOS the demo itself mounts
+(`/__demo/native/mock-workos/events`, authenticated with the mock's seeded
+token). Keyless polling works only against that bundled mock — set
+`WORKOS_EVENTS_URL` to anything else and the real key is required again.
 
 ## Troubleshooting
 

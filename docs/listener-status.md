@@ -205,3 +205,96 @@ endpoint the same way via `workers/native/status-client.ts` — it reads
 against the endpoint before committing to it — falling back to its shared
 database only when the endpoint isn't mounted (`npm run dev`), and to
 `mode === "workos-only"` when the bridge is old enough not to send the field.
+
+## Applying events
+
+What each event means on a directory provisioned for migration (an **imported**
+directory — see the [migration guide, Step A](./migration-guide.md#step-a--workos-provisions-your-directories)),
+and the two mistakes that silently lose data:
+
+- **`dsync.user.created` / `dsync.user.updated`** — upsert the user. A payload
+  with an inactive `state` is an **offboard**: revoke access, keep the row.
+  With the environment's suspension soft-delete flag on, this — not
+  `user.deleted` — is how a deactivation (Okta unassign, Entra soft delete)
+  arrives.
+- **`dsync.user.deleted`** — **deactivate the row in place. Always.** Do not
+  assume the suspension soft-delete flag is on — it is a per-environment choice
+  ([migration guide: deletion semantics](./migration-guide.md#choose-your-deletion-semantics-suspension-soft-delete)),
+  and with it off a plain deactivation arrives as this event while WorkOS keeps
+  the user and their memberships. Delivery is also at-least-once and unordered,
+  so a `user.deleted` can be delivered *after* a newer membership event it was
+  emitted before; a hard delete cascades the membership edge away and no later
+  event ever rebuilds it. Keep the inactive row as a tombstone — an actual
+  purge is a retention-policy decision, not something to do on webhook receipt.
+- **`dsync.group.user_added` / `user_removed`** — membership edges. WorkOS
+  emits them only when a membership *changes*: state your app dropped on its
+  own is never re-announced. A stale add that lands on an inactive tombstone is
+  fine — WorkOS retains memberships on its inactive records too, so the edge is
+  convergent, and a **Reconcile from WorkOS** clears any residue left after a
+  genuine purge.
+
+**The rehire trap.** A listener that deletes its row on any offboard signal —
+an inactive `state` *or* a `user.deleted` — loses the user's id and group
+memberships the moment that user is reactivated: WorkOS kept both, considers
+nothing changed, and emits no event that would rebuild them — the drift is
+permanent until a **Reconcile from WorkOS** repairs it. This is why the
+reference listener (`workers/native/listener.ts`) deactivates in place on
+*both* signals: it makes a `user.deleted` non-destructive whether it is a
+deactivation surfacing under a soft-delete flag that is off, or a stale
+delivery arriving after newer events it was emitted before.
+
+**Keep resource ids stable.** Locate an existing user by identity attributes —
+`idp_id` first, then `userName` — and only when nothing matches create the row
+**adopting the event's `data.id`**. On an imported directory that value is the
+shared migrated id — the same id WorkOS, the bridge's mappings, reconcile, and
+rollback all address — which is exactly why the reference listener
+(`workers/native/listener.ts`) adopts it rather than minting its own or using
+`idp_id`. The lookup-first order is what keeps a rehire landing on the existing
+row instead of creating a duplicate.
+
+> **Diagnostic:** if the `data.id` on your user events looks like
+> `directory_user_…`, the directory was **not** provisioned as imported
+> (migration guide, Step A) — that is WorkOS's internal id, adopting it produces
+> rows the bridge's reconcile cannot attribute, and the migration contract this
+> document assumes is not in effect. Stop and get the directory provisioned
+> correctly before cutover.
+
+## Events API instead of webhooks
+
+Webhooks carry no ordering guarantee, and the timestamp guards above can only
+order events whose `created_at` differ — a stale `dsync.user.deleted` delivered
+31 seconds late once destroyed state a newer event had already established. The
+WorkOS **Events API** (`GET https://api.workos.com/events`) serves the same
+envelopes **in order** behind a cursor, so a listener that polls it and applies
+each page front to back needs no timestamps to be safe from that hazard. It
+also needs no publicly routable endpoint: the listener dials out instead of
+being dialed.
+
+The trade is the credential and the transport model. The Events API
+authenticates with the environment's **API key** — an environment-wide secret,
+far broader than the per-directory webhook signing secret — so it belongs in a
+secret manager and in the process environment only. And polling swaps webhook
+push latency for an interval (a few seconds is typical).
+
+The bundled reference listener implements this transport in
+`workers/native/events-poller.ts`: set `WORKOS_API_KEY` to turn it on (see
+`.env.example`). It requests only `dsync.*` event types, persists its cursor
+after each applied page so a restart resumes without gaps or replays, and feeds
+every event through the **same** dispatch path as a webhook delivery — the
+`apply_dsync_events` instruction above gates polled events identically, and the
+event-id dedup means running both transports at once costs "skipped duplicate"
+log rows, never a double apply.
+
+Two failure modes are handled rather than left to wedge the stream. An event
+whose handler keeps throwing is retried a bounded number of times and then
+**abandoned loudly** — a listener_events row names the event id and the repair
+(Reconcile from WorkOS) — because one poison event must not block every event
+behind it forever. And a persisted cursor the API no longer recognises (real
+WorkOS retains events for a bounded window) is cleared with a warning and the
+retained history replayed, the dedup absorbing whatever was already applied.
+
+In `DEMO_MODE` the poller is zero-config: `WORKOS_EVENTS_URL` defaults to the
+mock WorkOS the demo bridge itself mounts (which serves the same `GET /events`
+contract), and no API key is needed — the mock authenticates with its own
+seeded token. Keyless polling works only against that bundled mock; pointing
+the poller anywhere else still requires `WORKOS_API_KEY`.
