@@ -129,19 +129,27 @@ Verify traffic in the **Activity** tab before going further.
 ## Step D — prepare your DSync listener
 
 One listener serves every directory: each event carries `data.directory_id`,
-so a single webhook endpoint resolves the directory per event and asks the
-bridge whether to apply it. You register **one** webhook in WorkOS, not two
-hundred.
+so a single consumer resolves the directory per event and asks the bridge
+whether to apply it. One integration in WorkOS, not two hundred.
 
 Before cutover your app must consume Directory Sync events:
 
-1. Point a WorkOS webhook endpoint (dashboard → Webhooks, `dsync.*` events) at
-   your listener, and verify every delivery against its signing secret.
+1. **Choose the transport — prefer the Events API.** Polling
+   `GET /events` with a persisted cursor delivers events **in order**, which
+   webhooks do not guarantee: deliveries are at-least-once and can arrive
+   out of order, and we have watched a stale `user.deleted` delivered 31
+   seconds late land after a newer membership event. The trade is that the
+   poller holds your environment's API key (keep it in your secret manager)
+   — see [listener-status.md: Events API instead of webhooks](./listener-status.md#events-api-instead-of-webhooks).
+   If you use webhooks instead, register one endpoint (dashboard → Webhooks,
+   `dsync.*` events), verify every delivery against its signing secret, and
+   apply the ordering defenses the reference listener shows (per-scope replay
+   guards, deactivate-in-place).
 2. Gate event application on the bridge's status endpoint —
    `GET /status/directories/{id}` → `apply_dsync_events` — so the listener
    stays inert until cutover flips it. [listener-status.md](./listener-status.md)
    specifies the contract; `workers/native/listener.ts` is a reference
-   implementation, and `APP_ROLE=native-app`
+   implementation of both transports, and `APP_ROLE=native-app`
    ([runbook](./runbook.md#run-the-image-as-the-customer-app-stand-in)) runs it
    as a rehearsal stand-in.
 3. Apply events with the semantics an imported directory guarantees —
