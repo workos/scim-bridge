@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import proxyWorker from "../workers/proxy/index";
-import { listNativeWriteFailures, recordNativeWriteFailure } from "../workers/shared/db";
+import {
+  listNativeWriteFailures,
+  recordNativeWriteFailure,
+  upsertMapping,
+} from "../workers/shared/db";
 import type { PocEnv } from "../workers/shared/types";
 import {
   createCtx,
@@ -141,6 +145,74 @@ describe("dual-write DELETE already-gone: scope of the divergence clear", () => 
     expect(
       (await listNativeWriteFailures(env.DB, directory.id)).map((row) => row.resource_key),
     ).toEqual(["victim@acme.test"]);
+  });
+
+  it("keeps a standing DELETE gap when the path only decodes to its resource id", async () => {
+    // Same id-space split `workos-primary` was corroborated against in PR #84: the
+    // already-gone clear keys off `scimPath.id` (decoded), while the native leg is
+    // forwarded `scimPath.rest` (the raw, still-encoded bytes). A proxy-token
+    // holder can exploit the gap — `DELETE /Users/%6Eat_victim` decodes to the key
+    // of a standing DELETE gap while the native leg addresses bytes native never
+    // held, so native's 404 both erases the deprovisioning record AND lets the
+    // mirror delete the real WorkOS row the id maps to. Neither may happen: an
+    // encoded alias does not spell the resource, so the 404 is not convergence.
+    const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+    // The gap the cutover-safety signal exists to preserve: WorkOS committed a
+    // deprovision native never took, so `nat_victim` is still live in the app.
+    await recordNativeWriteFailure(env.DB, {
+      directory_id: directory.id,
+      resource_type: "Users",
+      resource_key: "nat_victim",
+      method: "DELETE",
+      native_status: 500,
+      detail: "WorkOS committed this write; native did not: native returned 500",
+    });
+    // The id still maps to a live WorkOS row — what the mirror would delete.
+    await upsertMapping(env.DB, {
+      directory_id: directory.id,
+      resource_type: "Users",
+      native_id: "nat_victim",
+      workos_id: "wos_victim",
+      strategy: "migrated-id",
+    });
+
+    // Native resolves the raw bytes it is sent, so the encoded alias matches
+    // nothing there while the real row stays live.
+    let nativeStillHasVictim = true;
+    fake.route("native", "DELETE", /^\/Users\//, (call) => {
+      if (call.path !== "/Users/nat_victim") return scimJson(404, { detail: "no such user" });
+      nativeStillHasVictim = false;
+      return new Response(null, { status: 204 });
+    });
+    // If the mirror leg runs it would drop the real WorkOS row — the side effect.
+    let workosStillHasVictim = true;
+    fake.route("workos", "DELETE", /^\/Users\//, (call) => {
+      if (call.path !== "/Users/wos_victim") return scimJson(404, { detail: "no such user" });
+      workosStillHasVictim = false;
+      return new Response(null, { status: 204 });
+    });
+
+    const ctx = createCtx();
+    const res = await proxyWorker.fetch(
+      proxyRequest(directory, "DELETE", "/scim/v2/Users/%6Eat_victim"),
+      env,
+      ctx,
+    );
+    await ctx.drain();
+
+    expect(res.status).toBe(404);
+    // The native leg was handed the encoded bytes and matched nothing.
+    expect(fake.callsTo("native").map((c) => `${c.method} ${c.path}`)).toEqual([
+      "DELETE /Users/%6Eat_victim",
+    ]);
+    // No WorkOS leg ran, so the real row was never deleted as a side effect.
+    expect(fake.callsTo("workos")).toEqual([]);
+    expect(nativeStillHasVictim).toBe(true);
+    expect(workosStillHasVictim).toBe(true);
+    // The deprovisioning gap — the only record the account is still live — stands.
+    expect(await listNativeWriteFailures(env.DB, directory.id)).toMatchObject([
+      { resource_key: "nat_victim", method: "DELETE" },
+    ]);
   });
 
   it("keeps the row when the mirror leg fails to drop the resource from WorkOS", async () => {

@@ -720,7 +720,19 @@ export async function clearReplayedDivergences(
 
 /** Stamp a directory's current divergence rows so a reconcile that ends clean can
  *  tell them apart from anything recorded while it ran. Called before the snapshot;
- *  every later write to the ledger leaves the row stamp-less. */
+ *  every later write to the ledger leaves the row stamp-less.
+ *
+ *  Only stamp-less rows are stamped (`sweep_token IS NULL`). `claimReconcileRun` is
+ *  the primary guard — it keeps one reconcile per directory in flight, so on the
+ *  normal path every row is stamp-less here and all are stamped. This predicate is
+ *  the second line for the case the claim is meant to close but the 30-min lease
+ *  TTL leaves open: a run that overran and was superseded must not have the
+ *  superseding run re-stamp — and so make clearable under a fresh token — the rows
+ *  it already claimed while its own stale snapshot is still replaying, which is the
+ *  sweep-laundering primitive. The stamp writers stay consistent with this:
+ *  `recordNativeWriteFailure` re-NULLs a row's token on a live failure, correctly
+ *  re-opening it to the next run's window, and `clearReplayedDivergenceForResource`
+ *  deletes a repaired row rather than leaving a stamp behind to be re-taken. */
 export async function markDivergencesForSweep(
   db: Datastore,
   directoryId: string,
@@ -728,7 +740,10 @@ export async function markDivergencesForSweep(
 ): Promise<void> {
   await withDatastoreRetry(() =>
     db
-      .prepare("UPDATE native_write_failures SET sweep_token = ? WHERE directory_id = ?")
+      .prepare(
+        "UPDATE native_write_failures SET sweep_token = ? WHERE directory_id = ? " +
+          "AND sweep_token IS NULL",
+      )
       .bind(sweepToken, directoryId)
       .run(),
   );

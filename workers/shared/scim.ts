@@ -652,11 +652,35 @@ async function resolveCreateRace(
       const syncLabel = `PUT /${kind}/${workosId} (409 recovery)`;
       const sync = await putWorkos(directory, kind, workosId, resource, acc);
       if (isSuccess(sync.status)) {
-        await recordMapping(
-          db,
-          mappingRow(directory, kind, nativeId, workosId, "fallback-post"),
-          sink,
-        );
+        // This is the one id_mappings mint site with no shared-namespace gate of
+        // its own, and deliberately so. The mapping is keyed on `native_id`, and a
+        // native_id a tenant can choose would, in a shared namespace, name a
+        // neighbour's native row — the attribution hazard the mint sites in
+        // backfill.ts (pushToNative, repairDrift) and the proxy legs
+        // (workosPrimaryCreate, workosCreate, and the PUT-mirror / replace legs in
+        // workers/proxy/index.ts) each guard with `nativeNamespaceIsShared`. Here
+        // `nativeId` is the value THIS function received, and every caller supplies
+        // it already safe: a random UUID in a shared namespace, or a native-echoed
+        // / namespace-gated id otherwise — never a tenant-chosen one. The 409
+        // recovery derives only `workosId` (from WorkOS's own per-directory,
+        // authenticated listing) and the filter value (from the resource); neither
+        // feeds `native_id`. A `nativeNamespaceIsShared` refusal cannot be added
+        // here without being wrong: the shared-namespace create path mints a random,
+        // as-yet-unmapped `nativeId` on purpose, so a `!mapping && shared` gate
+        // would refuse exactly the creates it is designed to make safe — and by this
+        // point the WorkOS write has already committed, so refusing to record would
+        // only orphan it. So assert the invariant instead: the recorded native id
+        // must be the caller-supplied `nativeId`, so a future change that sourced it
+        // from the lookup response (making it attacker-influenced) trips here rather
+        // than silently minting a cross-tenant claim.
+        const mapping = mappingRow(directory, kind, nativeId, workosId, "fallback-post");
+        if (mapping.native_id !== nativeId) {
+          throw new Error(
+            "resolveCreateRace: the recovered mapping's native_id must be the caller-supplied " +
+              "nativeId, never a value derived from the 409 recovery lookup",
+          );
+        }
+        await recordMapping(db, mapping, sink);
         return mirrorOk(syncLabel, sync, acc);
       }
       return mirrorFail(syncLabel, sync, acc, `WorkOS 409-recovery PUT returned ${sync.status}`);
