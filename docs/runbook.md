@@ -15,6 +15,16 @@ Health: `GET /healthz` → `{"ok":true}`. Migrations apply on boot. Put the pane
 behind auth (`PANEL_AUTH_USER`/`PANEL_AUTH_PASSWORD`, or your own reverse proxy)
 and set `APP_ENCRYPTION_KEY` so per-directory tokens are encrypted at rest.
 
+Panel mutations (save endpoints, change mode, run backfill, delete a directory)
+are accepted only from same-origin requests — the browser's `Origin` /
+`Sec-Fetch-Site` prove the request came from the panel itself, not a cross-site
+page forging it with the operator's cached Basic credentials. This is on by
+default and needs no configuration. If you drive the panel from a script or
+another origin, set `PANEL_CSRF_DISABLED=true` to turn it off; the bridge warns
+at every boot while it is off, the same as `PANEL_AUTH_DISABLED`. The
+token-authenticated `/scim` and `/status` endpoints are unaffected — the IdP
+posts to them cross-origin legitimately.
+
 ## Durable storage
 
 The database holds every directory's configuration, its migration mode, **and its
