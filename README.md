@@ -196,6 +196,13 @@ them would make `DEMO_MODE` and `PANEL_AUTH_*` mutually exclusive. Nothing real
 is behind them — a fake IdP and a fake customer app — and they do not exist
 unless `DEMO_MODE` is set.
 
+After a post-cutover delete, the Live state panes will disagree on purpose: the
+mock WorkOS removes the record (as real WorkOS does on a SCIM DELETE), while
+the native pane keeps the user as an Inactive tombstone with its memberships.
+That is the reference listener's deactivate-in-place semantic working — not
+drift. Whether and when to purge tombstones is a retention-policy decision the
+listener deliberately does not make.
+
 > The **proxy handles many directories** — each imported directory is routed by
 > its own proxy token. The **bundled simulator**, though, models a **single**
 > directory (its mock WorkOS and native app share one store), so the demo runs
