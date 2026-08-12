@@ -300,7 +300,22 @@ async function dualWrite(
   // already treats a WorkOS 404 as convergence when it prunes the id mapping, and
   // `workosPrimary` reads a WorkOS 404 on DELETE the same way; this is the same
   // rule applied to the native side.
-  const deleteAlreadyGone = method === "DELETE" && native.status === 404;
+  //
+  // Read only off a path that spells the resource's id the one way the native leg
+  // was sent it. `scimPath.id` is decoded while the native leg is forwarded
+  // `scimPath.rest` verbatim, so on a percent-encoded alias ('%6E' for 'n') a 404
+  // is equally consistent with two facts: native decoded and the resource is
+  // gone, or native did not decode and the bytes addressed nothing while the
+  // resource is still there. Without `pathSpellsId` the alias decodes to the key
+  // of an unrelated standing gap and clears it, and the mirror deletes the WorkOS
+  // row that id maps to — so a proxy-token holder erases a deprovisioning record
+  // and the account it tracks. `workos-primary`'s equivalent read was gated the
+  // same way in PR #84.
+  const deleteAlreadyGone =
+    method === "DELETE" &&
+    native.status === 404 &&
+    scimPath.kind !== null &&
+    pathSpellsId(scimPath, scimPath.kind);
   ctx.waitUntil(
     (async () => {
       if (isSuccess(native.status) || deleteAlreadyGone) {
