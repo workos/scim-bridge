@@ -17,6 +17,8 @@ import {
 const T1 = "2026-07-31T10:00:00.000Z";
 const T2 = "2026-07-31T11:00:00.000Z";
 const T3 = "2026-07-31T12:00:00.000Z";
+const T4 = "2026-07-31T13:00:00.000Z";
+const T5 = "2026-07-31T14:00:00.000Z";
 
 let eventSeq = 0;
 
@@ -778,14 +780,15 @@ describe("dsync listener", () => {
       });
 
       // Offboard then rehire (delete then re-create) — the sequence that used to
-      // diverge the id by adopting idp_id on the second create.
+      // diverge the id by adopting idp_id on the second create. The delete
+      // deactivates in place, so the shared id survives on the tombstone row.
       await deliver(env, envelope("dsync.user.deleted", migrated, { at: T2 }));
-      expect(await nativeUsers(env.DB)).toHaveLength(0);
+      expect((await nativeUsers(env.DB))[0]).toMatchObject({ id: "shared-uuid-1", active: 0 });
 
       await deliver(env, envelope("dsync.user.created", migrated, { at: T3 }));
       const users = await nativeUsers(env.DB);
       expect(users).toHaveLength(1);
-      expect(users[0]).toMatchObject({ id: "shared-uuid-1", external_id: "idp-user-1" });
+      expect(users[0]).toMatchObject({ id: "shared-uuid-1", external_id: "idp-user-1", active: 1 });
       expect(JSON.parse(users[0].resource)).toMatchObject({ id: "shared-uuid-1" });
     });
 
@@ -833,7 +836,7 @@ describe("dsync listener", () => {
       expect(event.detail).toBe("no transition");
     });
 
-    it("deletes a user and its membership edges", async () => {
+    it("deactivates in place on user.deleted, keeping the tombstone row and its edges through a rehire", async () => {
       const { env } = await seedListenerEnv();
       await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
       await deliver(
@@ -841,13 +844,59 @@ describe("dsync listener", () => {
         envelope("dsync.group.user_added", { user: ada, group: engineering }, { at: T1 }),
       );
 
+      // A genuinely-newest delete offboards, but the row is a tombstone: the id
+      // and the membership edges survive so a rehire has something to land on.
       await deliver(env, envelope("dsync.user.deleted", ada, { at: T2 }));
 
-      expect(await nativeUsers(env.DB)).toHaveLength(0);
-      expect(await memberEdges(env.DB)).toHaveLength(0);
+      const offboarded = await nativeUsers(env.DB);
+      expect(offboarded).toHaveLength(1);
+      expect(offboarded[0]).toMatchObject({ id: "idp-user-1", active: 0 });
+      expect(await memberEdges(env.DB)).toEqual([{ group_id: "grp-eng", user_id: "idp-user-1" }]);
       const event = await lastEvent(env.DB);
       expect(event.action).toBe("applied");
-      expect(event.detail).toBe("offboard()");
+      expect(event.detail).toBe("offboard() — deactivated in place");
+
+      // Rehire: the same row reactivates with its memberships intact — WorkOS
+      // considers the memberships unchanged and never re-announces them.
+      await deliver(env, envelope("dsync.user.created", ada, { at: T3 }));
+      const rehired = await nativeUsers(env.DB);
+      expect(rehired).toHaveLength(1);
+      expect(rehired[0]).toMatchObject({ id: "idp-user-1", active: 1 });
+      expect(await memberEdges(env.DB)).toEqual([{ group_id: "grp-eng", user_id: "idp-user-1" }]);
+    });
+
+    it("survives the judy replay: a stale user.deleted delivered after a newer membership event", async () => {
+      // Live incident: judy was deactivated (the environment's suspension
+      // soft-delete flag was off, so it emitted user.deleted), reactivated, then
+      // added to Finance. Emission order was correct, but delivery was not: the
+      // user.deleted arrived after the newer group.user_added had been applied.
+      // The per-scope replay guard correctly let it through (t3 is the newest
+      // event on the user's own timeline), and the old hard delete then cascaded
+      // away the membership edge owned by the member: scope — which nothing ever
+      // re-delivers. Deactivate-in-place makes the stale delete non-destructive.
+      const { env } = await seedListenerEnv();
+      const judy = {
+        idp_id: "idp-judy",
+        email: "judy@example.com",
+        first_name: "Judy",
+        state: "active",
+      };
+      const finance = { name: "Finance", raw_attributes: { externalId: "grp-fin" } };
+
+      // Arrival order; the { at } timestamps are the emission order.
+      await deliver(env, envelope("dsync.user.created", judy, { at: T1 }));
+      await deliver(env, envelope("dsync.user.updated", judy, { at: T2 }));
+      await deliver(
+        env,
+        envelope("dsync.group.user_added", { user: judy, group: finance }, { at: T5 }),
+      );
+      await deliver(env, envelope("dsync.user.deleted", judy, { at: T3 }));
+      await deliver(env, envelope("dsync.user.created", judy, { at: T4 }));
+
+      const users = await nativeUsers(env.DB);
+      expect(users).toHaveLength(1);
+      expect(users[0]).toMatchObject({ id: "idp-judy", active: 1 });
+      expect(await memberEdges(env.DB)).toEqual([{ group_id: "grp-fin", user_id: "idp-judy" }]);
     });
 
     it("skips deleting a user that is already absent", async () => {
@@ -1061,9 +1110,13 @@ describe("dsync listener", () => {
       expect(event.detail).toBe("no-op: user not present");
     });
 
-    it("does not resurrect a deleted user via a stale membership event", async () => {
+    it("does not stub a user whose timeline a newer event already ended", async () => {
+      // user.deleted deactivates in place, so a row that ever existed keeps
+      // existing and stale membership adds land on the inactive tombstone. The
+      // stub guard still matters when there is no row at all: here the delete
+      // out-ran the create, so nothing exists and the user's own timeline says
+      // T3 — a stale T2 membership must not conjure an active stub.
       const { env } = await seedListenerEnv();
-      await deliver(env, envelope("dsync.user.created", grace, { at: T1 }));
       await deliver(env, envelope("dsync.user.deleted", grace, { at: T3 }));
 
       await deliver(

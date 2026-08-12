@@ -214,23 +214,30 @@ and the two mistakes that silently lose data:
 
 - **`dsync.user.created` / `dsync.user.updated`** — upsert the user. A payload
   with an inactive `state` is an **offboard**: revoke access, keep the row.
-  Imported directories run with suspension soft-delete, so this — not
+  With the environment's suspension soft-delete flag on, this — not
   `user.deleted` — is how a deactivation (Okta unassign, Entra soft delete)
   arrives.
-- **`dsync.user.deleted`** — the user is actually gone from the directory.
-  Deprovision, and only then consider removing data — actual purging is a
-  retention-policy decision, not something to do on webhook receipt.
+- **`dsync.user.deleted`** — **deactivate the row in place. Always.** Do not
+  assume the suspension soft-delete flag is on — it is customer-configurable,
+  and with it off a plain deactivation arrives as this event while WorkOS keeps
+  the user and their memberships. Delivery is also at-least-once and unordered,
+  so a `user.deleted` can be delivered *after* a newer membership event it was
+  emitted before; a hard delete cascades the membership edge away and no later
+  event ever rebuilds it. Keep the inactive row as a tombstone — an actual
+  purge is a retention-policy decision, not something to do on webhook receipt.
 - **`dsync.group.user_added` / `user_removed`** — membership edges. WorkOS
   emits them only when a membership *changes*: state your app dropped on its
   own is never re-announced.
 
-**The rehire trap.** A listener that deletes its row on any deactivation signal
-loses the user's id and group memberships the moment that user is reactivated:
-WorkOS kept both, considers nothing changed, and emits no event that would
-rebuild them — the drift is permanent until a **Reconcile from WorkOS** repairs
-it. This is why offboard must keep the row, and why a directory whose
-environment lacks suspension soft-delete must not cut over until WorkOS confirms
-it is enabled.
+**The rehire trap.** A listener that deletes its row on any offboard signal —
+an inactive `state` *or* a `user.deleted` — loses the user's id and group
+memberships the moment that user is reactivated: WorkOS kept both, considers
+nothing changed, and emits no event that would rebuild them — the drift is
+permanent until a **Reconcile from WorkOS** repairs it. This is why the
+reference listener (`workers/native/listener.ts`) deactivates in place on
+*both* signals: it makes a `user.deleted` non-destructive whether it is a
+deactivation surfacing under a soft-delete flag that is off, or a stale
+delivery arriving after newer events it was emitted before.
 
 **Keep resource ids stable.** Locate an existing user by identity attributes —
 `idp_id` first, then `userName` — and only when nothing matches create the row
