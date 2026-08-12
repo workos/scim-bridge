@@ -83,7 +83,23 @@ export function parseJson(text: string | null): Record<string, unknown> | null {
 }
 
 export function joinScimUrl(base: string, path: string): string {
-  return base.replace(/\/+$/, "") + path;
+  let url: URL;
+  try {
+    url = new URL(base);
+  } catch {
+    // An unparseable base was already broken; keep the old total behaviour
+    // rather than start throwing here.
+    return base.replace(/\/+$/, "") + path;
+  }
+  // Append to the pathname, not the raw string. A base that carries a query or
+  // fragment (`https://host/scim?x` or a stored `http://169.254.169.254/…?`)
+  // would otherwise fold the forced `/Users` suffix into the query string
+  // (`…?x/Users`), letting an operator-supplied URL divert the request path past
+  // host validation. The base names an endpoint, not a query, so drop both.
+  url.search = "";
+  url.hash = "";
+  url.pathname = url.pathname.replace(/\/+$/, "") + path;
+  return url.toString();
 }
 
 /**

@@ -36,6 +36,7 @@ import {
   publishMintedToken,
 } from "../../../workers/shared/client-tokens";
 import { checkNativeNamespace } from "../../../workers/shared/native-namespace";
+import { validateUpstreamUrl } from "../../../workers/shared/upstream-url";
 import type { BackfillSummary, Mode, NativeWriteFailure } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
 import { Callout, Card, Code, Flex, Grid, RadioCards, Text, TextField } from "@radix-ui/themes";
@@ -208,6 +209,10 @@ export async function action({
 
   if (intent === "save-native") {
     const nativeUrl = String(form.get("native_url") ?? "").trim();
+    const urlError = validateUpstreamUrl(nativeUrl);
+    if (urlError) {
+      return { error: urlError };
+    }
     // This intent can *move* a directory onto an endpoint another already uses,
     // which is the same hazard as creating it there. Every other
     // directory is a candidate; this one is excluded, or re-saving an unchanged
@@ -227,10 +232,15 @@ export async function action({
   }
 
   if (intent === "save-workos") {
+    const workosUrl = String(form.get("workos_url") ?? "").trim();
+    const urlError = validateUpstreamUrl(workosUrl);
+    if (urlError) {
+      return { error: urlError };
+    }
     await setDirectoryWorkos(
       db,
       directory.id,
-      String(form.get("workos_url") ?? "").trim(),
+      workosUrl,
       String(form.get("workos_token") ?? "").trim(),
     );
     return {};
