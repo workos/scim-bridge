@@ -316,3 +316,49 @@ function reconcileMembers(
     };
   });
 }
+
+/** Tombstones split by which side is left holding the inactive record, so the
+ *  panel headline can describe each accurately instead of attributing both to
+ *  WorkOS. The two orientations are mutually exclusive per row/edge. */
+export interface TombstoneCounts {
+  /** WorkOS keeps an inactive SCIM record the native app dropped (workos
+   *  inactive, native absent) — the WorkOS-side tombstone. */
+  workos: number;
+  /** The native app keeps an Inactive row after WorkOS and the IdP dropped the
+   *  user (native inactive, workos + idp absent) — the deactivate-in-place
+   *  tombstone. */
+  native: number;
+}
+
+export interface TombstoneSummary {
+  users: TombstoneCounts;
+  members: TombstoneCounts;
+}
+
+/**
+ * Count tombstones by orientation across the reconciled rows. A tombstone row is
+ * WorkOS-side exactly when native is absent (the record only WorkOS still has)
+ * and native-side otherwise (native is the inactive holder); a tombstone edge is
+ * WorkOS-side when WorkOS is the one carrying it and native-side when native is —
+ * the same split the two exclusion branches already made, read back off the row.
+ */
+export function tombstoneSummary(
+  userRows: UserReconRow[],
+  groupRows: GroupReconRow[],
+): TombstoneSummary {
+  const users: TombstoneCounts = { workos: 0, native: 0 };
+  for (const row of userRows) {
+    if (!row.tombstone) continue;
+    if (row.native === "absent") users.workos += 1;
+    else users.native += 1;
+  }
+  const members: TombstoneCounts = { workos: 0, native: 0 };
+  for (const group of groupRows) {
+    for (const member of group.members) {
+      if (!member.tombstone) continue;
+      if (member.workos) members.workos += 1;
+      else members.native += 1;
+    }
+  }
+  return { users, members };
+}

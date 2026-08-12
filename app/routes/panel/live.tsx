@@ -20,6 +20,7 @@ import { FieldLabel } from "./ui";
 import {
   reconcileGroups,
   reconcileUsers,
+  tombstoneSummary,
   workosGroupRows,
   type DirRow,
   type GroupMemberReconRow,
@@ -463,9 +464,26 @@ export default function PanelLive() {
   const groupRows = reconcileGroups(groups, users);
   const userDiffs = userRows.filter((r) => r.diverged).length;
   const groupDiffs = groupRows.filter((r) => r.diverged).length;
-  const tombstones = userRows.filter((r) => r.tombstone).length;
-  const memberTombstones = groupRows.reduce((total, r) => total + r.tombstones, 0);
+  // Split tombstones by orientation so the headline describes each accurately:
+  // WorkOS keeps the inactive record after native dropped it, vs the native app
+  // keeps it (deactivate-in-place) after WorkOS and the IdP dropped it.
+  const tombs = tombstoneSummary(userRows, groupRows);
+  const tombstones = tombs.users.workos + tombs.users.native;
   const liveUsers = userRows.length - tombstones;
+  const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+  const userTombClauses = [
+    tombs.users.workos > 0 &&
+      `${tombs.users.workos} deleted ${plural(tombs.users.workos, "user", "users")} WorkOS keeps as inactive SCIM ${plural(tombs.users.workos, "record", "records")}`,
+    tombs.users.native > 0 &&
+      `${tombs.users.native} ${plural(tombs.users.native, "user", "users")} the native app keeps as inactive after WorkOS and the IdP dropped ${plural(tombs.users.native, "it", "them")}`,
+  ].filter(Boolean);
+  const memberTombClauses = [
+    tombs.members.workos > 0 &&
+      `${tombs.members.workos} group ${plural(tombs.members.workos, "membership", "memberships")} WorkOS still holds`,
+    tombs.members.native > 0 &&
+      `${tombs.members.native} group ${plural(tombs.members.native, "membership", "memberships")} the native app still holds`,
+  ].filter(Boolean);
+  const excludedText = [...userTombClauses, ...memberTombClauses].join(", and ");
   const converged = userDiffs === 0 && groupDiffs === 0;
   const showDiff = workosConfigured && workosReachable;
   const settingMode = navigation.formData?.get("intent") === "set-mode";
@@ -589,12 +607,7 @@ export default function PanelLive() {
             Native app and WorkOS hold the same directory — {liveUsers}{" "}
             {liveUsers === 1 ? "user" : "users"}, {groupRows.length}{" "}
             {groupRows.length === 1 ? "group" : "groups"}, fully converged.
-            {tombstones > 0
-              ? ` Not counted: ${tombstones} deleted ${tombstones === 1 ? "user" : "users"} WorkOS keeps as inactive SCIM ${tombstones === 1 ? "record" : "records"}, listed below.`
-              : ""}
-            {memberTombstones > 0
-              ? ` Nor the ${memberTombstones} group ${memberTombstones === 1 ? "membership" : "memberships"} WorkOS still holds for ${tombstones === 1 ? "that user" : "them"}.`
-              : ""}
+            {excludedText ? ` Not counted: ${excludedText}, listed below.` : ""}
           </Callout.Text>
         </Callout.Root>
       ) : (
@@ -602,15 +615,10 @@ export default function PanelLive() {
           <Callout.Text>
             Native app and WorkOS differ on {userDiffs} {userDiffs === 1 ? "user" : "users"} and{" "}
             {groupDiffs} {groupDiffs === 1 ? "group" : "groups"}
-            {tombstones > 0
-              ? `, excluding ${tombstones} deleted ${tombstones === 1 ? "user" : "users"} WorkOS keeps as inactive SCIM ${tombstones === 1 ? "record" : "records"} after the native app dropped ${tombstones === 1 ? "its" : "their"} row`
-              : ""}
-            {memberTombstones > 0
-              ? ` and ${memberTombstones} group ${memberTombstones === 1 ? "membership" : "memberships"} WorkOS still holds for ${tombstones === 1 ? "that user" : "those users"}`
-              : ""}
-            . That is expected mid-migration — dual-write plus a backfill converges them, and
-            workos-primary keeps them converged because the proxy writes both sides; workos-only
-            diverges them until the listener catches native up.
+            {excludedText ? `, excluding ${excludedText}` : ""}. That is expected mid-migration —
+            dual-write plus a backfill converges them, and workos-primary keeps them converged
+            because the proxy writes both sides; workos-only diverges them until the listener
+            catches native up.
           </Callout.Text>
         </Callout.Root>
       )}

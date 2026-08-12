@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reconcileGroups, reconcileUsers } from "../app/routes/panel/reconcile";
+import { reconcileGroups, reconcileUsers, tombstoneSummary } from "../app/routes/panel/reconcile";
 
 /**
  * The mirror of the WorkOS-tombstone exclusion (see panel-workos-tombstones.test.ts).
@@ -165,5 +165,56 @@ describe("native tombstones in the groups reconciliation", () => {
     );
 
     expect(rows[0]).toMatchObject({ diverged: true, tombstones: 0 });
+  });
+});
+
+/**
+ * The headline splits the tombstone count by orientation so it can describe each
+ * accurately instead of attributing both to WorkOS. `tombstoneSummary` reads the
+ * split back off the reconciled rows.
+ */
+describe("splitting tombstones by orientation for the headline", () => {
+  it("counts WorkOS-side and native-side user and member tombstones separately", () => {
+    const userRows = reconcileUsers({
+      // ada: WorkOS retains inactive, native dropped it — WorkOS-side.
+      // bob: native retains inactive, WorkOS + IdP dropped it — native-side.
+      // carol: a living user on both sides, not a tombstone.
+      native: [user("bob@acme.test", 0), user("carol@acme.test", 1)],
+      workos: [user("ada@acme.test", 0), user("carol@acme.test", 1)],
+      idp: [user("carol@acme.test", 1)],
+    });
+    const groupRows = reconcileGroups(
+      {
+        // WorkOS's group still carries ada (WorkOS-side edge tombstone); native's
+        // group still carries bob (native-side edge tombstone).
+        native: [group("Engineering", ["bob@acme.test", "carol@acme.test"])],
+        workos: [group("Engineering", ["ada@acme.test", "carol@acme.test"])],
+        idp: [group("Engineering", ["carol@acme.test"])],
+      },
+      {
+        native: [user("bob@acme.test", 0), user("carol@acme.test", 1)],
+        workos: [user("ada@acme.test", 0), user("carol@acme.test", 1)],
+        idp: [user("carol@acme.test", 1)],
+      },
+    );
+
+    expect(tombstoneSummary(userRows, groupRows)).toEqual({
+      users: { workos: 1, native: 1 },
+      members: { workos: 1, native: 1 },
+    });
+  });
+
+  it("counts nothing when a native-only row is active or the IdP still has it", () => {
+    // Neither shape is a tombstone, so neither orientation is counted.
+    const userRows = reconcileUsers({
+      native: [user("erin@acme.test", 1), user("ada@acme.test", 0)],
+      workos: [],
+      idp: [user("ada@acme.test", 1)],
+    });
+
+    expect(tombstoneSummary(userRows, [])).toEqual({
+      users: { workos: 0, native: 0 },
+      members: { workos: 0, native: 0 },
+    });
   });
 });
