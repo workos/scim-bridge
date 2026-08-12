@@ -36,6 +36,8 @@ import {
   publishMintedToken,
 } from "../../../workers/shared/client-tokens";
 import { checkNativeNamespace } from "../../../workers/shared/native-namespace";
+import { joinScimUrl } from "../../../workers/shared/scim";
+import { validateUpstreamUrl } from "../../../workers/shared/upstream-url";
 import type { BackfillSummary, Mode, NativeWriteFailure } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
 import { Callout, Card, Code, Flex, Grid, RadioCards, Text, TextField } from "@radix-ui/themes";
@@ -130,8 +132,11 @@ async function checkEndpoint(
     };
   }
   try {
-    const response = await fetch(`${trimTrailingSlash(url)}/Users?count=1`, {
+    const response = await fetch(`${joinScimUrl(url, "/Users")}?count=1`, {
       headers: { Authorization: `Bearer ${token}` },
+      // Same reason as scimFetch: don't let a saved endpoint redirect this
+      // bearer-token probe to a metadata address after host validation.
+      redirect: "manual",
     });
     return { target, status: response.status, ok: response.ok };
   } catch (error) {
@@ -151,9 +156,10 @@ async function countUsers(url: string, token: string): Promise<EndpointCount> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
   try {
-    const response = await fetch(`${trimTrailingSlash(url)}/Users?count=1`, {
+    const response = await fetch(`${joinScimUrl(url, "/Users")}?count=1`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: controller.signal,
+      redirect: "manual",
     });
     if (!response.ok) return { reachable: false, count: null };
     const body = (await response.json()) as { totalResults?: unknown };
@@ -208,6 +214,10 @@ export async function action({
 
   if (intent === "save-native") {
     const nativeUrl = String(form.get("native_url") ?? "").trim();
+    const urlError = validateUpstreamUrl(nativeUrl);
+    if (urlError) {
+      return { error: urlError };
+    }
     // This intent can *move* a directory onto an endpoint another already uses,
     // which is the same hazard as creating it there. Every other
     // directory is a candidate; this one is excluded, or re-saving an unchanged
@@ -227,10 +237,15 @@ export async function action({
   }
 
   if (intent === "save-workos") {
+    const workosUrl = String(form.get("workos_url") ?? "").trim();
+    const urlError = validateUpstreamUrl(workosUrl);
+    if (urlError) {
+      return { error: urlError };
+    }
     await setDirectoryWorkos(
       db,
       directory.id,
-      String(form.get("workos_url") ?? "").trim(),
+      workosUrl,
       String(form.get("workos_token") ?? "").trim(),
     );
     return {};

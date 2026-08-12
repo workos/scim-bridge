@@ -23,6 +23,7 @@ import {
   unparseableNativeUrlMessage,
 } from "../../../workers/shared/native-namespace";
 import { nativeNamespaceKey } from "../../../workers/shared/scim";
+import { validateUpstreamUrl } from "../../../workers/shared/upstream-url";
 import { MODES, type Mode } from "../../../workers/shared/types";
 import {
   Callout,
@@ -143,10 +144,24 @@ function csvNamespaceRefusals(
   // first rather than both being compared only against the database.
   const accepted: (NamespaceDirectory & { line: number })[] = [];
   for (const { row, line } of candidates) {
+    // The WorkOS leg has no namespace rule but is dialled the same way, so an
+    // unsafe scheme or a metadata host is refused here too — whole-file, like the
+    // native checks below, never a partial import.
+    const workosUrlError = validateUpstreamUrl(row.workos_url);
+    if (workosUrlError) {
+      refusals.push(`Row ${line} (${row.name}): ${workosUrlError}`);
+      continue;
+    }
     const url = row.native_url.trim();
     if (url === "") continue;
     if (nativeNamespaceKey(url) === null) {
       refusals.push(`Row ${line} (${row.name}): ${unparseableNativeUrlMessage(url)}`);
+      continue;
+    }
+    // Parseable, but pointed somewhere it must not be (file:, a metadata IP).
+    const nativeUrlError = validateUpstreamUrl(url);
+    if (nativeUrlError) {
+      refusals.push(`Row ${line} (${row.name}): ${nativeUrlError}`);
       continue;
     }
     const twin = findNativeNamespaceConflict(url, accepted);
@@ -216,6 +231,11 @@ export async function action({ context, request }: Route.ActionArgs) {
     if (tokenError) {
       return { error: tokenError };
     }
+    const urlError =
+      validateUpstreamUrl(field("native_url")) ?? validateUpstreamUrl(field("workos_url"));
+    if (urlError) {
+      return { error: urlError };
+    }
     // One directory per native namespace, checked here rather than
     // defended at every write path downstream.
     const namespaceError = checkNativeNamespace(field("native_url"), await listDirectories(db));
@@ -265,16 +285,17 @@ export async function action({ context, request }: Route.ActionArgs) {
       }
       candidates.push({ row: r, line: i + 1 });
     }
-    // Whole-file gate, before any insert. A namespace collision is the one import
-    // failure that must not be partial: half an import leaves directories sharing
-    // an id space with no record of which rows landed.
+    // Whole-file gate, before any insert. A namespace collision or an unusable
+    // endpoint URL is the kind of failure that must not be partial: half an
+    // import leaves directories sharing an id space, or dialling a bad endpoint,
+    // with no record of which rows landed.
     const refusals = csvNamespaceRefusals(candidates, await listDirectories(db));
     if (refusals.length > 0) {
       return {
         error: [
-          "Nothing was imported. Two directories cannot share one native SCIM endpoint, and " +
-            "this CSV would create that — so the whole import was refused rather than applied " +
-            "in part.",
+          "Nothing was imported. A row would either share a native SCIM endpoint with another " +
+            "directory or carry an endpoint URL the bridge refuses, so the whole import was " +
+            "refused rather than applied in part.",
           ...refusals,
           ...importErrors,
         ].join(" "),

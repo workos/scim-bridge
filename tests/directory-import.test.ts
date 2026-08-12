@@ -766,3 +766,97 @@ describe("naming the demo directory to the directories list", () => {
     expect((await loadHome(env)).demoDirectory).toBeNull();
   });
 });
+
+/**
+ * The panel save actions are the URL-acceptance boundary — and the one reachable
+ * by a forged cross-site request — so a `file:` or cloud-metadata upstream URL
+ * must be refused here, before it is stored and dialled. Conservative on purpose:
+ * loopback and private/internal http endpoints (the demo, a self-hosted native
+ * app) still go through. Unit coverage of the validator is in
+ * tests/upstream-url.test.ts; these pin that the actions actually call it.
+ */
+describe("save actions reject a dangerous upstream URL", () => {
+  const METADATA_URL = "http://169.254.169.254/latest/meta-data/";
+
+  it("refuses save-workos with a file:// URL and stores nothing", async () => {
+    const env = await createEnv();
+    const dir = await seedDirectory(env.DB, { workos_token: "before" });
+
+    const result = await postOverview(env, dir.id, {
+      intent: "save-workos",
+      workos_url: "file:///etc/passwd",
+      workos_token: "after",
+    });
+
+    expect((result as { error?: string }).error).toMatch(/must use http or https/);
+    const stored = await getDirectoryById(env.DB, dir.id);
+    // The row is untouched — neither the URL nor the token was written.
+    expect(stored?.workos_url).toBe(dir.workos_url);
+    expect(stored?.workos_token).toBe(dir.workos_token);
+  });
+
+  it("refuses save-native pointed at the metadata IP", async () => {
+    const env = await createEnv();
+    const dir = await seedDirectory(env.DB, { native_url: "https://native.example/scim/v2" });
+
+    const result = await postOverview(env, dir.id, {
+      intent: "save-native",
+      native_url: METADATA_URL,
+      native_token: "x",
+    });
+
+    expect((result as { error?: string }).error).toMatch(/metadata address/);
+    expect((await getDirectoryById(env.DB, dir.id))?.native_url).toBe(dir.native_url);
+  });
+
+  it("refuses create-directory with a file:// native URL and creates nothing", async () => {
+    const env = await createEnv();
+
+    const result = (await submit(env, {
+      intent: "create-directory",
+      name: "Acme",
+      native_url: "file:///etc/passwd",
+    })) as ImportResult;
+
+    expect(result.error).toMatch(/must use http or https/);
+    expect(await listDirectories(env.DB)).toHaveLength(0);
+  });
+
+  it("refuses a bulk-import row whose URL is a metadata address, importing nothing", async () => {
+    const env = await createEnv();
+
+    const result = await bulkImport(
+      env,
+      `Acme,${METADATA_URL},tok,https://api.workos.com/scim/v2.0/d,wtok,,`,
+    );
+
+    // A bad URL is a whole-file refusal, not a per-row skip: nothing is imported.
+    expect(result.error).toMatch(/metadata address/);
+    expect(await listDirectories(env.DB)).toHaveLength(0);
+  });
+
+  it("accepts an ordinary https save-workos and a loopback http save-native", async () => {
+    const env = await createEnv();
+    const dir = await seedDirectory(env.DB);
+
+    const workos = await postOverview(env, dir.id, {
+      intent: "save-workos",
+      workos_url: "https://api.workos.com/scim/v2.0/directory_01NEW",
+      workos_token: "wtok",
+    });
+    expect((workos as { error?: string }).error).toBeUndefined();
+    expect((await getDirectoryById(env.DB, dir.id))?.workos_url).toBe(
+      "https://api.workos.com/scim/v2.0/directory_01NEW",
+    );
+
+    const native = await postOverview(env, dir.id, {
+      intent: "save-native",
+      native_url: "http://127.0.0.1:8788/scim/v2",
+      native_token: "ntok",
+    });
+    expect((native as { error?: string }).error).toBeUndefined();
+    expect((await getDirectoryById(env.DB, dir.id))?.native_url).toBe(
+      "http://127.0.0.1:8788/scim/v2",
+    );
+  });
+});

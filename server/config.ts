@@ -73,6 +73,10 @@ export interface AppConfig {
    *  — because something in front of it authenticates, or because nothing
    *  reachable matters. Without it a bridge with no credentials refuses to boot. */
   panelAuthDisabled: boolean;
+  /** Operator's explicit opt-out of the cross-site (CSRF) guard on panel
+   *  mutations — for scripting the panel from another origin. Off by default,
+   *  and mirrors `panelAuthDisabled`: consent, logged loudly at boot. */
+  panelCsrfDisabled: boolean;
   /** `native-app` role: bearer token the bridge presents to this app's /scim/v2. */
   nativeScimToken: string | null;
   /** `native-app` role: HMAC secret of the WorkOS webhook endpoint feeding /webhooks/dsync. */
@@ -203,6 +207,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const panelAuthUser = env.PANEL_AUTH_USER?.trim() || null;
   const panelAuthPassword = env.PANEL_AUTH_PASSWORD || null;
   const panelAuthDisabled = bool(env.PANEL_AUTH_DISABLED);
+  const panelCsrfDisabled = bool(env.PANEL_CSRF_DISABLED);
   // Refuse to boot rather than serve the panel to anyone who can reach the port.
   //
   // /panel is not a dashboard of read-only status: the directory page renders
@@ -252,6 +257,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     panelAuthUser,
     panelAuthPassword,
     panelAuthDisabled,
+    panelCsrfDisabled,
     nativeScimToken: env.NATIVE_SCIM_TOKEN?.trim() || null,
     webhookSecret,
     bridgeStatusUrl: bridgeStatusUrl ? trimTrailingSlash(bridgeStatusUrl) : null,

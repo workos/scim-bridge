@@ -89,7 +89,23 @@ export function parseJson(text: string | null): Record<string, unknown> | null {
 }
 
 export function joinScimUrl(base: string, path: string): string {
-  return base.replace(/\/+$/, "") + path;
+  let url: URL;
+  try {
+    url = new URL(base);
+  } catch {
+    // An unparseable base was already broken; keep the old total behaviour
+    // rather than start throwing here.
+    return base.replace(/\/+$/, "") + path;
+  }
+  // Append to the pathname, not the raw string. A base that carries a query or
+  // fragment (`https://host/scim?x` or a stored `http://169.254.169.254/…?`)
+  // would otherwise fold the forced `/Users` suffix into the query string
+  // (`…?x/Users`), letting an operator-supplied URL divert the request path past
+  // host validation. The base names an endpoint, not a query, so drop both.
+  url.search = "";
+  url.hash = "";
+  url.pathname = url.pathname.replace(/\/+$/, "") + path;
+  return url.toString();
 }
 
 /**
@@ -273,10 +289,19 @@ export async function scimFetch(url: string, options: ScimFetchOptions): Promise
     headers.set(name, value);
   }
   const started = Date.now();
+  // Never follow a redirect on an upstream SCIM call. Host validation happens
+  // when a native_url/workos_url is saved, but a redirect would move the target
+  // AFTER that check — a legitimate-looking upstream could 302 the bearer token
+  // to 169.254.169.254 or any internal address. SCIM endpoints don't redirect,
+  // so treat a 3xx as a failure (fail closed) rather than allow-listing hops:
+  // "manual" returns the redirect response without issuing the second request,
+  // and its non-2xx status flows through the same failure handling every caller
+  // already applies to a bad status.
   const response = await fetch(url, {
     method: options.method,
     headers,
     body: options.body ?? undefined,
+    redirect: "manual",
   });
   const text = await response.text();
   return {

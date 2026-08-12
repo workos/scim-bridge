@@ -13,9 +13,10 @@ import {
   withDatastoreRetry,
 } from "../../../workers/shared/db";
 import { runBackfill } from "../../../workers/shared/backfill";
+import { joinScimUrl } from "../../../workers/shared/scim";
 import { callIdpSimulator } from "./idp-simulator";
 import { FlowRail } from "./flow-rail";
-import { FieldLabel, trimTrailingSlash } from "./ui";
+import { FieldLabel } from "./ui";
 import {
   reconcileGroups,
   reconcileUsers,
@@ -81,12 +82,13 @@ async function fetchWorkosDirectory(
   token: string,
 ): Promise<{ reachable: boolean; users: DirRow[]; groups: GroupRow[] }> {
   if (!url || !token) return { reachable: false, users: [], groups: [] };
-  const base = trimTrailingSlash(url);
   const headers = { Authorization: `Bearer ${token}` };
   try {
+    // joinScimUrl + redirect:"manual": a saved base can neither fold the path into
+    // a query nor bounce this bearer-token read to an internal/metadata host.
     const [uRes, gRes] = await Promise.all([
-      fetch(`${base}/Users?count=200`, { headers }),
-      fetch(`${base}/Groups?count=200`, { headers }),
+      fetch(`${joinScimUrl(url, "/Users")}?count=200`, { headers, redirect: "manual" }),
+      fetch(`${joinScimUrl(url, "/Groups")}?count=200`, { headers, redirect: "manual" }),
     ]);
     if (!uRes.ok || !gRes.ok) return { reachable: false, users: [], groups: [] };
     const uBody = (await uRes.json()) as { Resources?: ScimResource[] };
@@ -113,12 +115,11 @@ async function cleanWorkosDirectory(
   token: string,
 ): Promise<{ ok: boolean; deleted: number; failed: number }> {
   if (!url || !token) return { ok: false, deleted: 0, failed: 0 };
-  const base = trimTrailingSlash(url);
   const headers = { Authorization: `Bearer ${token}` };
   try {
     const [uRes, gRes] = await Promise.all([
-      fetch(`${base}/Users?count=200`, { headers }),
-      fetch(`${base}/Groups?count=200`, { headers }),
+      fetch(`${joinScimUrl(url, "/Users")}?count=200`, { headers, redirect: "manual" }),
+      fetch(`${joinScimUrl(url, "/Groups")}?count=200`, { headers, redirect: "manual" }),
     ]);
     if (!uRes.ok || !gRes.ok) return { ok: false, deleted: 0, failed: 0 };
     const uBody = (await uRes.json()) as { Resources?: ScimResource[] };
@@ -130,9 +131,10 @@ async function cleanWorkosDirectory(
     let deleted = 0;
     let failed = 0;
     for (const [kind, id] of targets) {
-      const res = await fetch(`${base}/${kind}/${encodeURIComponent(id)}`, {
+      const res = await fetch(joinScimUrl(url, `/${kind}/${encodeURIComponent(id)}`), {
         method: "DELETE",
         headers,
+        redirect: "manual",
       });
       if (res.ok || res.status === 404) deleted += 1;
       else failed += 1;
