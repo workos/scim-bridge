@@ -10,9 +10,13 @@ import proxyWorker from "../workers/proxy/index";
 import nativeWorker from "../workers/native/index";
 import idpWorker from "../workers/idp/index";
 import type { PocEnv } from "../workers/shared/types";
-import { startEventsPoller } from "../workers/native/events-poller";
+import {
+  createEventsPollerController,
+  registerEventsPollerController,
+} from "../workers/native/events-transport";
 import {
   decidePanelAuth,
+  demoEventsUrl,
   eventsPollerEnabled,
   loadConfig,
   panelAuthExempt,
@@ -26,7 +30,7 @@ import { openDatabase, SqliteDatastore, SqliteMigrator } from "./db/sqlite";
 import { inspectStorage } from "./db/storage-durability";
 import { openPostgres, PostgresDatastore, PostgresMigrator } from "./db/postgres";
 import { runMigrations } from "./db/migrate";
-import { backfillProxyTokenHashes, getConfig } from "../workers/shared/db";
+import { backfillProxyTokenHashes } from "../workers/shared/db";
 import type { Datastore, DatastoreMigrator } from "../workers/shared/datastore";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -80,22 +84,28 @@ if (config.role === "native-app") {
 // change at all. Both transports may run at once: every polled event goes
 // through the same dispatch path as a webhook, so overlap costs "skipped
 // duplicate" rows, never a double apply.
-if (eventsPollerEnabled(config)) {
-  // Keyless is only reachable in demo mode against the bundled mock (see
-  // eventsPollerEnabled), whose /events takes the same seeded token as its
-  // SCIM endpoint — never a WorkOS credential.
-  const apiKey =
-    config.workosApiKey ?? ((await getConfig(store, "mock_workos.scim_token")) as string);
-  startEventsPoller(store, {
-    apiKey,
-    baseUrl: config.workosEventsUrl,
-    intervalMs: config.eventsPollIntervalMs,
-  });
+// The poller now lives behind a controller so the demo panel's listener tab
+// (same process, but a separate module graph — hence the global registry) can
+// stop, start and retarget it at runtime; the persisted transport choice is
+// read here at boot. Outside demo mode the env-only contract is unchanged.
+const eventsPoller = createEventsPollerController(store, {
+  demoMode: config.demoMode,
+  envApiKey: config.workosApiKey,
+  envEventsUrl: config.workosEventsUrl,
+  mockEventsUrl: demoEventsUrl(config),
+  enabledByEnv: eventsPollerEnabled(config),
+  intervalMs: config.eventsPollIntervalMs,
+});
+registerEventsPollerController(eventsPoller);
+const pollerStatus = await eventsPoller.reconcile();
+if (pollerStatus.running) {
   console.log(
-    `Events API poller: reading ${config.workosEventsUrl}/events every ` +
-      `${config.eventsPollIntervalMs}ms (ordered transport; overlapping webhook ` +
+    `Events API poller: reading ${pollerStatus.baseUrl}/events every ` +
+      `${pollerStatus.intervalMs}ms (ordered transport; overlapping webhook ` +
       "deliveries are deduplicated by event id)",
   );
+} else if (pollerStatus.lastError) {
+  console.warn(`Events API poller: not running — ${pollerStatus.lastError}`);
 }
 // One directory per native SCIM namespace is enforced when a directory is saved,
 // but a database written before that could already violate it. Say so
