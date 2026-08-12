@@ -570,7 +570,14 @@ describe("workos-primary", () => {
 
       // The retry, against upstreams that now hold what the first attempt left.
       fake.route("native", "POST", "/Users", scimJson(409, { detail: "userName exists" }));
-      fake.route("native", "GET", "/Users?filter=", scimJson(200, { Resources: [{ id: "n-1" }] }));
+      fake.route(
+        "native",
+        "GET",
+        "/Users?filter=",
+        // The row native resolves the 409 to must carry the userName we filtered
+        // on; the lookup now verifies it before adopting the id (VULN-3084).
+        scimJson(200, { Resources: [{ id: "n-1", userName: ada.userName }] }),
+      );
       fake.route("workos", "PUT", "/Users/idp-1", scimJson(200, { id: "idp-1", ...ada }));
 
       const second = await proxyWorker.fetch(

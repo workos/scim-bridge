@@ -39,11 +39,11 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4",
+    "@cloudflare/workers-types": "^5",
     "@react-router/dev": "^8.3.0",
     "@tailwindcss/vite": "^4",
     "@types/better-sqlite3": "^9.6.0",
-    "@types/node": "^22",
+    "@types/node": "^26",
     "@types/pg": "^8.21.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
