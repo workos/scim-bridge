@@ -541,6 +541,7 @@ export default function PanelLive() {
             counts={{
               idp: recordCount(users.idp),
               native: recordCount(users.native),
+              nativeActive: activeCount(users.native),
               workos: recordCount(users.workos),
               workosActive: activeCount(users.workos),
             }}

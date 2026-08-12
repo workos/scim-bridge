@@ -144,6 +144,12 @@ export function FlowRail({
   counts: {
     idp?: number | null;
     native: number | null;
+    /** How many of `native` are not deactivated. The deactivate-in-place listener
+     *  keeps a deleted user as an inactive row, so `native` is inflated by those
+     *  tombstones exactly as `workos` is — showing the active count on both nodes
+     *  lets an operator read the living sets straight across and see the totals
+     *  differ only by each side's retained tombstones. See `activeSuffix`. */
+    nativeActive?: number | null;
     workos: number | null;
     /** How many of `workos` are not deactivated. Optional: the per-directory
      *  view reads a count without the per-user detail, and a box that cannot
@@ -220,6 +226,7 @@ export function FlowRail({
           <NativeApp
             flow={withBridge ? flow : BEFORE_FLOW}
             databaseValue={usersLabel(counts.native)}
+            databaseSub={activeSuffix(counts.nativeActive)}
             showListener={withBridge}
           />
         </Flex>
@@ -286,10 +293,12 @@ const BEFORE_CAPTION =
 function NativeApp({
   flow,
   databaseValue,
+  databaseSub,
   showListener,
 }: {
   flow: FlowSpec;
   databaseValue: string;
+  databaseSub?: string;
   /** Hidden in the "before" topology: the listener exists to consume WorkOS
    *  events, so in an architecture with no WorkOS there is nothing for it to
    *  be, and drawing it greyed out would imply the customer already has one. */
@@ -335,7 +344,7 @@ function NativeApp({
             </Flex>
           )}
         </Flex>
-        <Node label="Database" value={databaseValue} tone="store" stretch />
+        <Node label="Database" value={databaseValue} sub={databaseSub} tone="store" stretch />
       </Flex>
     </Box>
   );
