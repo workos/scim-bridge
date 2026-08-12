@@ -227,7 +227,10 @@ and the two mistakes that silently lose data:
   purge is a retention-policy decision, not something to do on webhook receipt.
 - **`dsync.group.user_added` / `user_removed`** — membership edges. WorkOS
   emits them only when a membership *changes*: state your app dropped on its
-  own is never re-announced.
+  own is never re-announced. A stale add that lands on an inactive tombstone is
+  fine — WorkOS retains memberships on its inactive records too, so the edge is
+  convergent, and a **Reconcile from WorkOS** clears any residue left after a
+  genuine purge.
 
 **The rehire trap.** A listener that deletes its row on any offboard signal —
 an inactive `state` *or* a `user.deleted` — loses the user's id and group

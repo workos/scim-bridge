@@ -899,6 +899,48 @@ describe("dsync listener", () => {
       expect(await memberEdges(env.DB)).toEqual([{ group_id: "grp-fin", user_id: "idp-judy" }]);
     });
 
+    it("does not let a recycled userName inherit the tombstone's memberships", async () => {
+      const { env } = await seedListenerEnv();
+      await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
+      await deliver(
+        env,
+        envelope("dsync.group.user_added", { user: ada, group: engineering }, { at: T1 }),
+      );
+      await deliver(env, envelope("dsync.user.deleted", ada, { at: T2 }));
+
+      // A different person provisioned with the departed user's address: the
+      // external-id lookup misses (new idp_id) and the userName fallback adopts
+      // the tombstone. Reactivating it as-is would hand the new hire the
+      // predecessor's groups; their real memberships arrive as their own
+      // group.user_added events.
+      const successor = {
+        idp_id: "idp-user-2",
+        email: "ada@example.com",
+        first_name: "Adele",
+        state: "active",
+      };
+      await deliver(env, envelope("dsync.user.created", successor, { at: T3 }));
+
+      const users = await nativeUsers(env.DB);
+      expect(users).toHaveLength(1);
+      expect(users[0]).toMatchObject({ id: "idp-user-1", external_id: "idp-user-2", active: 1 });
+      expect(await memberEdges(env.DB)).toHaveLength(0);
+      expect((await lastEvent(env.DB)).detail).toBe("onboard(); inherited memberships cleared");
+
+      // The contrast that pins the judy property: a genuine rehire — same
+      // idp_id — must keep its edges, or the fix above re-opens the rehire trap.
+      const grace = { idp_id: "idp-user-9", email: "grace@example.com", state: "active" };
+      await deliver(env, envelope("dsync.user.created", grace, { at: T1 }));
+      await deliver(
+        env,
+        envelope("dsync.group.user_added", { user: grace, group: engineering }, { at: T1 }),
+      );
+      await deliver(env, envelope("dsync.user.deleted", grace, { at: T2 }));
+      await deliver(env, envelope("dsync.user.created", grace, { at: T3 }));
+
+      expect(await memberEdges(env.DB)).toEqual([{ group_id: "grp-eng", user_id: "idp-user-9" }]);
+    });
+
     it("skips deleting a user that is already absent", async () => {
       const { env } = await seedListenerEnv();
 

@@ -262,10 +262,26 @@ async function upsertUserFromEvent(store: ScimStore, data: Json): Promise<Outcom
     JSON.stringify(resource) === existing.resource;
   if (unchanged) return { action: "skipped", detail: "no transition", idpId };
 
+  // The userName fallback can match a row that belonged to a different identity:
+  // deletes leave tombstones, so a new hire provisioned with a departed user's
+  // recycled address adopts that tombstone — and reactivating it as-is would
+  // hand them the previous occupant's group memberships. Clear the edges when
+  // the row's external id changes hands; the adopter's real memberships arrive
+  // as their own group.user_added events (WorkOS announces them for new users),
+  // so this converges whether it is a new occupant or the same person under a
+  // changed externalId. A null external_id is exempt: that row is a stub minted
+  // by this user's own membership event, and clearing it would erase the very
+  // edge that created it.
+  let membershipNote = "";
+  if (existing.external_id !== null && existing.external_id !== idpId) {
+    await store.clearMemberships(existing.id);
+    membershipNote = "; inherited memberships cleared";
+  }
+
   await store.upsertUser({ id: existing.id, userName, externalId: idpId, active, resource });
   const detail =
     !wasActive && active ? "onboard()" : wasActive && !active ? "offboard()" : "attributes updated";
-  return { action: "applied", detail, idpId };
+  return { action: "applied", detail: detail + membershipNote, idpId };
 }
 
 /**
