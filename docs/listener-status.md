@@ -282,6 +282,18 @@ after each applied page so a restart resumes without gaps or replays, and feeds
 every event through the **same** dispatch path as a webhook delivery — the
 `apply_dsync_events` instruction above gates polled events identically, and the
 event-id dedup means running both transports at once costs "skipped duplicate"
-log rows, never a double apply. `WORKOS_EVENTS_URL` can point at the bundled
-mock WorkOS (`…/mock-workos`), which serves the same `GET /events` contract, to
-rehearse the whole loop without a real WorkOS environment.
+log rows, never a double apply.
+
+Two failure modes are handled rather than left to wedge the stream. An event
+whose handler keeps throwing is retried a bounded number of times and then
+**abandoned loudly** — a listener_events row names the event id and the repair
+(Reconcile from WorkOS) — because one poison event must not block every event
+behind it forever. And a persisted cursor the API no longer recognises (real
+WorkOS retains events for a bounded window) is cleared with a warning and the
+retained history replayed, the dedup absorbing whatever was already applied.
+
+In `DEMO_MODE` the poller is zero-config: `WORKOS_EVENTS_URL` defaults to the
+mock WorkOS the demo bridge itself mounts (which serves the same `GET /events`
+contract), and no API key is needed — the mock authenticates with its own
+seeded token. Keyless polling works only against that bundled mock; pointing
+the poller anywhere else still requires `WORKOS_API_KEY`.

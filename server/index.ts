@@ -26,7 +26,7 @@ import { openDatabase, SqliteDatastore, SqliteMigrator } from "./db/sqlite";
 import { inspectStorage } from "./db/storage-durability";
 import { openPostgres, PostgresDatastore, PostgresMigrator } from "./db/postgres";
 import { runMigrations } from "./db/migrate";
-import { backfillProxyTokenHashes } from "../workers/shared/db";
+import { backfillProxyTokenHashes, getConfig } from "../workers/shared/db";
 import type { Datastore, DatastoreMigrator } from "../workers/shared/datastore";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -81,8 +81,13 @@ if (config.role === "native-app") {
 // through the same dispatch path as a webhook, so overlap costs "skipped
 // duplicate" rows, never a double apply.
 if (eventsPollerEnabled(config)) {
+  // Keyless is only reachable in demo mode against the bundled mock (see
+  // eventsPollerEnabled), whose /events takes the same seeded token as its
+  // SCIM endpoint — never a WorkOS credential.
+  const apiKey =
+    config.workosApiKey ?? ((await getConfig(store, "mock_workos.scim_token")) as string);
   startEventsPoller(store, {
-    apiKey: config.workosApiKey as string,
+    apiKey,
     baseUrl: config.workosEventsUrl,
     intervalMs: config.eventsPollIntervalMs,
   });

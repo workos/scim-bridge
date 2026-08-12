@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { eventsPollerEnabled, loadConfig } from "../server/config";
 import {
   EVENTS_CURSOR_KEY,
+  EVENTS_RETRY_KEY,
+  MAX_EVENT_ATTEMPTS,
   pollDsyncEventsOnce,
   startEventsPoller,
 } from "../workers/native/events-poller";
@@ -282,6 +284,112 @@ describe("events api poller", () => {
     expect(results).toHaveLength(1);
   });
 
+  it("abandons a poison event after bounded attempts instead of halting the stream forever", async () => {
+    // A deterministically failing event must not block the cursor forever —
+    // and must not write a listener_events row per 5s retry while it does.
+    const env = await seedPollerEnv();
+    installAppFetch(env);
+    await appendEnvelope(env.DB, "evt_1", "dsync.user.created", {
+      idp_id: "idp-user-1",
+      email: "ada@example.com",
+      state: "active",
+    });
+    await appendEnvelope(env.DB, "evt_2", "dsync.group.created", {
+      name: "Engineering",
+      raw_attributes: { externalId: "grp-eng" },
+    });
+    await appendEnvelope(env.DB, "evt_3", "dsync.user.created", {
+      idp_id: "idp-user-9",
+      email: "grace@example.com",
+      state: "active",
+    });
+    // The poison: the groups table is gone for the whole test, so evt_2 fails
+    // on every attempt.
+    await env.DB.prepare("ALTER TABLE native_groups RENAME TO native_groups_hidden").run();
+
+    const opts = { apiKey: MOCK_TOKEN, baseUrl: EVENTS_BASE };
+    for (let attempt = 1; attempt < MAX_EVENT_ATTEMPTS; attempt += 1) {
+      await pollDsyncEventsOnce(env.DB, opts);
+    }
+    // Still retrying: the cursor waits on the poison event, nothing beyond it.
+    expect(await getConfig(env.DB, EVENTS_CURSOR_KEY)).toBe("evt_1");
+    expect(await nativeUsers(env.DB)).toHaveLength(1);
+
+    // The final attempt gives up, says so loudly, and the stream moves on.
+    await pollDsyncEventsOnce(env.DB, opts);
+
+    expect(await getConfig(env.DB, EVENTS_CURSOR_KEY)).toBe("evt_3");
+    expect((await nativeUsers(env.DB)).map((u) => u.external_id)).toEqual([
+      "idp-user-1",
+      "idp-user-9",
+    ]);
+    const rows = await listenerEvents(env.DB);
+    // One row per outcome, not one per retry: applied, the first failure, the
+    // abandonment, applied.
+    expect(rows.map((r) => r.action)).toEqual(["applied", "ignored", "ignored", "applied"]);
+    expect(rows[1].detail).toMatch(/^handler error \(event evt_2\)/);
+    const abandoned = rows.filter((r) => (r.detail ?? "").includes("abandoned"));
+    expect(abandoned).toHaveLength(1);
+    expect(abandoned[0]).toMatchObject({ event_id: "evt_2", event_type: "dsync.group.created" });
+    expect(abandoned[0].detail).toContain(`${MAX_EVENT_ATTEMPTS} attempts`);
+    expect(await getConfig(env.DB, EVENTS_RETRY_KEY)).toBeNull();
+
+    // Behind the cursor now: further polls never resurrect or re-log it.
+    await pollDsyncEventsOnce(env.DB, opts);
+    expect(await listenerEvents(env.DB)).toHaveLength(4);
+
+    // Postgres reuses the schema across tests, so put the table back.
+    await env.DB.prepare("ALTER TABLE native_groups_hidden RENAME TO native_groups").run();
+  });
+
+  it("clears the retry count when the failing event finally applies", async () => {
+    const env = await seedPollerEnv();
+    installAppFetch(env);
+    await appendEnvelope(env.DB, "evt_1", "dsync.group.created", {
+      name: "Engineering",
+      raw_attributes: { externalId: "grp-eng" },
+    });
+    await env.DB.prepare("ALTER TABLE native_groups RENAME TO native_groups_hidden").run();
+
+    const opts = { apiKey: MOCK_TOKEN, baseUrl: EVENTS_BASE };
+    await pollDsyncEventsOnce(env.DB, opts);
+    expect(await getConfig(env.DB, EVENTS_RETRY_KEY)).toContain("evt_1");
+
+    // A transient failure: the table is back before the attempt limit.
+    await env.DB.prepare("ALTER TABLE native_groups_hidden RENAME TO native_groups").run();
+    await pollDsyncEventsOnce(env.DB, opts);
+
+    const rows = await listenerEvents(env.DB);
+    expect(rows.map((r) => r.action)).toEqual(["ignored", "applied"]);
+    expect(rows.filter((r) => (r.detail ?? "").includes("abandoned"))).toHaveLength(0);
+    // The count does not leak into the next failure's budget.
+    expect(await getConfig(env.DB, EVENTS_RETRY_KEY)).toBeNull();
+  });
+
+  it("recovers from a cursor the API no longer recognises", async () => {
+    // Real WorkOS retains events for a bounded window, so a poller off for
+    // long enough holds a cursor the API rejects. That must not wedge it: the
+    // cursor is cleared, the retained history replays (the event-id dedup
+    // absorbs anything already applied), and polling continues.
+    const env = await seedPollerEnv();
+    installAppFetch(env);
+    await setConfig(env.DB, EVENTS_CURSOR_KEY, "evt_expired");
+    await appendEnvelope(env.DB, "evt_1", "dsync.user.created", {
+      idp_id: "idp-user-1",
+      email: "ada@example.com",
+      state: "active",
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await pollDsyncEventsOnce(env.DB, { apiKey: MOCK_TOKEN, baseUrl: EVENTS_BASE });
+
+    expect(result.processed).toBe(1);
+    expect(await nativeUsers(env.DB)).toHaveLength(1);
+    expect(await getConfig(env.DB, EVENTS_CURSOR_KEY)).toBe("evt_1");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("evt_expired"));
+    warn.mockRestore();
+  });
+
   describe("the polling loop", () => {
     /** An always-empty datastore. The loop tests assert timer arithmetic, and a
      *  real driver's socket round-trips cannot complete while the clock is
@@ -437,6 +545,45 @@ describe("events api poller", () => {
       expect(
         eventsPollerEnabled(loadConfig({ PANEL_AUTH_DISABLED: "true", DEMO_MODE: "true", ...key })),
       ).toBe(true);
+    });
+
+    it("self-wires the demo: keyless polling, against the bundled mock only", () => {
+      // DEMO_MODE is the zero-config rehearsal, so the poller joins it the way
+      // the other simulators do: the events URL defaults to the mock the demo
+      // bridge itself mounts, and no environment API key is demanded — the
+      // mock authenticates with its own seeded token, not a WorkOS credential.
+      const demo = loadConfig({ PANEL_AUTH_DISABLED: "true", DEMO_MODE: "true" });
+      expect(demo.workosEventsUrl).toBe("http://127.0.0.1:8080/__demo/native/mock-workos");
+      expect(eventsPollerEnabled(demo)).toBe(true);
+
+      // The default follows the port the demo actually listens on.
+      const ported = loadConfig({ PANEL_AUTH_DISABLED: "true", DEMO_MODE: "true", PORT: "9090" });
+      expect(ported.workosEventsUrl).toBe("http://127.0.0.1:9090/__demo/native/mock-workos");
+      expect(eventsPollerEnabled(ported)).toBe(true);
+
+      // Keyless is a demo-mock privilege, never a way to reach real WorkOS: an
+      // explicit URL that is not the bundled mock still demands the key.
+      const real = loadConfig({
+        PANEL_AUTH_DISABLED: "true",
+        DEMO_MODE: "true",
+        WORKOS_EVENTS_URL: "https://api.workos.com",
+      });
+      expect(eventsPollerEnabled(real)).toBe(false);
+      expect(
+        eventsPollerEnabled(
+          loadConfig({
+            PANEL_AUTH_DISABLED: "true",
+            DEMO_MODE: "true",
+            WORKOS_EVENTS_URL: "https://api.workos.com",
+            WORKOS_API_KEY: "sk_test_123",
+          }),
+        ),
+      ).toBe(true);
+
+      // And outside demo mode a real deployment still requires the env var.
+      const plain = loadConfig({ APP_ROLE: "native-app", WEBHOOK_SECRET: "w" });
+      expect(plain.workosEventsUrl).toBe("https://api.workos.com");
+      expect(eventsPollerEnabled(plain)).toBe(false);
     });
 
     it("reads the key from the environment only, defaulting the endpoint and interval", () => {

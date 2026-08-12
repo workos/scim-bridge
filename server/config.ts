@@ -180,9 +180,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     );
   }
 
+  const demoMode = bool(env.DEMO_MODE);
   const workosApiKey = env.WORKOS_API_KEY?.trim() || null;
+  // In demo mode the poller self-wires like the other simulators: unset, the
+  // events URL is the mock WorkOS this same process mounts under /__demo.
   const workosEventsUrl = trimTrailingSlash(
-    env.WORKOS_EVENTS_URL?.trim() || "https://api.workos.com",
+    env.WORKOS_EVENTS_URL?.trim() ||
+      (demoMode ? demoEventsUrl({ port }) : "https://api.workos.com"),
   );
   const eventsPollIntervalMs = Number(env.WORKOS_EVENTS_POLL_INTERVAL_MS ?? "5000");
   if (!Number.isFinite(eventsPollIntervalMs) || eventsPollIntervalMs <= 0) {
@@ -243,7 +247,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port,
     databasePath,
     publicUrl,
-    demoMode: bool(env.DEMO_MODE),
+    demoMode,
     encryptionKey: env.APP_ENCRYPTION_KEY?.trim() || null,
     panelAuthUser,
     panelAuthPassword,
@@ -258,23 +262,33 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   };
 }
 
+/** The bundled mock WorkOS events base a demo bridge serves itself — where the
+ *  poller points when DEMO_MODE is on and WORKOS_EVENTS_URL says nothing. */
+export function demoEventsUrl(config: Pick<AppConfig, "port">): string {
+  return `http://127.0.0.1:${config.port}/__demo/native/mock-workos`;
+}
+
 /**
  * Whether boot starts the Events API poller — the ordered alternative to
  * webhook delivery for the bundled DSync listener.
  *
- * Off without WORKOS_API_KEY, unconditionally: the poller needs the
- * environment-wide API key, and a deployment that has not provided one keeps
- * webhooks as the transport with zero change in behavior. And only where the
- * listener it feeds is actually mounted: the native-app role, or a bridge
- * running the demo simulators (whose mock WorkOS serves the /events endpoint
- * WORKOS_EVENTS_URL can point at). A plain bridge has no native app for polled
- * events to converge into.
+ * With WORKOS_API_KEY set: on wherever the listener it feeds is actually
+ * mounted — the native-app role, or a bridge running the demo simulators. A
+ * plain bridge has no native app for polled events to converge into.
+ *
+ * Without the key: off, with one deliberate exception — a demo bridge polling
+ * its own bundled mock, which authenticates with the seeded
+ * `mock_workos.scim_token` rather than a WorkOS credential, so the demo stays
+ * zero-config. The exception is scoped to exactly that loopback URL: keyless
+ * polling must never be a way to dial real WorkOS (or anything else), and a
+ * deployment that points WORKOS_EVENTS_URL elsewhere still requires the env
+ * var. Everything else keeps webhooks as the transport with zero change.
  */
 export function eventsPollerEnabled(
-  config: Pick<AppConfig, "role" | "demoMode" | "workosApiKey">,
+  config: Pick<AppConfig, "role" | "demoMode" | "workosApiKey" | "workosEventsUrl" | "port">,
 ): boolean {
-  if (!config.workosApiKey) return false;
-  return config.role === "native-app" || config.demoMode;
+  if (config.workosApiKey) return config.role === "native-app" || config.demoMode;
+  return config.demoMode && config.workosEventsUrl === demoEventsUrl(config);
 }
 
 /** Loopback base the in-process demo mounts are reachable at. */

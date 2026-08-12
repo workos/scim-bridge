@@ -80,6 +80,13 @@ export async function processDsyncEvent(
   db: Datastore,
   envelope: Json | null,
   rawBody?: string,
+  options?: {
+    /** `false` keeps a handler error out of listener_events. The poller passes
+     *  it on the retries of an event whose first failure is already logged —
+     *  one row per 5s tick would bury the log without adding information. Only
+     *  the failure record is suppressed; a retry that succeeds records normally. */
+    recordHandlerError?: boolean;
+  },
 ): Promise<ProcessedDsyncEvent> {
   const payload = rawBody ?? JSON.stringify(envelope);
   const eventType = envelope ? asString(envelope.event) : null;
@@ -150,14 +157,16 @@ export async function processDsyncEvent(
     }
   }
 
-  await recordEvent(db, {
-    eventId: recordEventId,
-    eventType,
-    idpId: outcome.idpId ?? null,
-    action: outcome.action,
-    detail: outcome.detail,
-    payload,
-  });
+  if (!handlerError || (options?.recordHandlerError ?? true)) {
+    await recordEvent(db, {
+      eventId: recordEventId,
+      eventType,
+      idpId: outcome.idpId ?? null,
+      action: outcome.action,
+      detail: outcome.detail,
+      payload,
+    });
+  }
   return { action: outcome.action, handlerError };
 }
 
@@ -821,7 +830,9 @@ async function isDuplicate(db: Datastore, eventId: string): Promise<boolean> {
   return row !== null;
 }
 
-async function recordEvent(
+/** Exported for the Events API poller, whose abandonment record must land in
+ *  the same log an operator already watches. */
+export async function recordEvent(
   db: Datastore,
   entry: {
     eventId: string | null;

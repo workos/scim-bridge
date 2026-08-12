@@ -466,6 +466,12 @@ directory", so you can drive the whole loop with no real IdP or WorkOS account.
 Use the panel's **Live state** and **IdP simulator** tabs to seed and churn the
 directory and watch it converge.
 
+The Events API poller self-wires here too: in demo mode it starts with no
+`WORKOS_API_KEY`, polling the mock WorkOS the demo itself mounts
+(`/__demo/native/mock-workos/events`, authenticated with the mock's seeded
+token). Keyless polling works only against that bundled mock — set
+`WORKOS_EVENTS_URL` to anything else and the real key is required again.
+
 ## Troubleshooting
 
 | Symptom | Check |
