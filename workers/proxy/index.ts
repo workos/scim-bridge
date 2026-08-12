@@ -18,6 +18,7 @@ import {
   authorizationToken,
   conditionalRequestHeaders,
   errorMessage,
+  isRecord,
   isSuccess,
   joinScimUrl,
   loadIdMaps,
@@ -939,12 +940,17 @@ async function findNativeByUniqueAttribute(
   }
   const listing = parseJson(lookup.bodyText);
   const resources = listing && Array.isArray(listing.Resources) ? listing.Resources : [];
-  for (const entry of resources) {
-    if (entry && typeof entry === "object" && typeof (entry as { id?: unknown }).id === "string") {
-      return (entry as { id: string }).id;
-    }
-  }
-  return null;
+  // Confirm the returned row actually carries the value we filtered on: a native
+  // app that ignores an unsupported ?filter answers with its whole first page, and
+  // adopting Resources[0] on faith would map this directory onto an unrelated row.
+  // Mirrors findNativeIdByAttr in shared/backfill.ts (VULN-3084).
+  const match = resources.find(
+    (entry) =>
+      isRecord(entry) &&
+      typeof entry[attribute] === "string" &&
+      (entry[attribute] as string).toLowerCase() === value.toLowerCase(),
+  );
+  return isRecord(match) && typeof match.id === "string" ? match.id : null;
 }
 
 function uniqueAttributeValue(
