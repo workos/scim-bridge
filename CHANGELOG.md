@@ -13,11 +13,39 @@ Container images for each version:
 
 ## [Unreleased]
 
-The next release is **0.3.0**: it adds a datastore choice and changes how
-credentials are stored, both of which are worth a minor bump.
+## [0.3.1]
+
+A single security fix on top of 0.3.0.
+
+### Security
+
+- **A 409-recovery no longer records a mapping onto another resource's WorkOS
+  row.** When a create raced and the proxy recovered by resolving the resource
+  through a `userName`/`displayName` filter, it adopted whatever row WorkOS
+  returned — including one this directory already mirrors under a different id.
+  A holder of a directory's proxy token could use that to make one resource's id
+  alias another's, and a later `DELETE` would then remove the other resource's
+  WorkOS row while the native side reported nothing wrong. The recovery now
+  refuses to record a mapping onto a WorkOS id already claimed by a different
+  resource, closing the last of the id-aliasing write paths.
+
+## [0.3.0]
+
+The first 0.3 release: it adds an ordered event transport and a Postgres
+datastore option, changes how a deleted user is handled after cutover, and
+hardens the control panel — a minor bump on several fronts.
 
 ### Added
 
+- **Events API transport for the DSync listener.** The reference listener can
+  poll `GET /events` with a persisted cursor instead of receiving webhooks. The
+  Events API delivers events **in order**, which webhooks do not — the
+  recommended transport for a migration, because out-of-order delivery is a
+  source of drift between your app and WorkOS. Set `WORKOS_API_KEY` to turn it
+  on; webhooks remain supported. See `docs/listener-status.md`.
+- **End-to-end migration guide** (`docs/migration-guide.md`): the whole path
+  from the directories WorkOS provisions for you, through import, IdP
+  repointing, and the mode ladder with lossless rollback.
 - **Postgres datastore.** `DATABASE_DRIVER=postgres` with `DATABASE_URL` runs
   the bridge against RDS/Aurora or any Postgres instead of a SQLite file — for
   operators who would rather point at a managed database than mount a volume.
@@ -25,12 +53,26 @@ credentials are stored, both of which are worth a minor bump.
 - **Per-directory status endpoint** (`GET /status/directories/{id}`) so your
   DSync listener can ask, per directory, whether WorkOS is authoritative yet
   instead of hardcoding the cutover moment.
+- **Control-panel affordances** for the demo: switch the listener between
+  webhooks and the Events API, set a per-directory Events API key, and choose
+  whether the native app hard-deletes or deactivates in place on a delete.
 - **Boot warning when the database is on a disk that will not survive**, which
   is the failure that loses every id mapping in the migration.
 - **Cloudflare Containers deployment template** under `deploy/`.
 
 ### Changed
 
+- **The reference listener deactivates a user in place on `dsync.user.deleted`
+  instead of hard-deleting.** With suspension soft-delete off, a deactivation
+  arrives as `user.deleted`; keeping the row (and its group memberships) as
+  inactive makes a rehire round-trip cleanly and makes an out-of-order or stale
+  delivery non-destructive. Deactivate-in-place is the recommended app behavior;
+  actual purging is a retention-policy decision, not an event handler's.
+- **The Live-state diff distinguishes a retained-inactive tombstone from real
+  drift** on both sides — a user one system keeps inactive after the other
+  removed it no longer counts as divergence — and the native Database node now
+  shows its active-user count alongside WorkOS, so the living sets read straight
+  across.
 - **Proxy tokens are hashed at rest.** Existing plaintext tokens are converted
   on first boot; the tokens themselves keep working, they are just no longer
   readable from the database. No action required.
@@ -64,6 +106,21 @@ credentials are stored, both of which are worth a minor bump.
   `PANEL_AUTH_PASSWORD` is set. Previously a half-configured panel served
   unauthenticated; it now refuses to start. Check both are set before upgrading.
 - Panel credentials are compared in constant time.
+- **The control panel rejects cross-site state-changing requests.** Panel
+  mutations are validated against `Sec-Fetch-Site`/`Origin`, so a forged
+  cross-site request can no longer ride a cached Basic-auth session to
+  reconfigure or exfiltrate a directory. Scripted/non-browser use can opt out
+  with `PANEL_CSRF_DISABLED=true`. The `/scim/v2` data plane is unaffected.
+- **Operator-supplied upstream URLs are validated.** Saving a native or WorkOS
+  endpoint is restricted to `http`/`https`, blocks cloud-metadata addresses, and
+  upstream SCIM calls no longer follow redirects — so a mistyped or hostile URL
+  cannot turn the bridge into a request relay into its own network.
+- **Closed id-aliasing write paths.** A holder of a directory's proxy token
+  could record a second mapping onto a resource the directory already mirrors,
+  which a later `DELETE` could use to remove that resource's WorkOS row
+  undetected. The create and replace mint sites now refuse to adopt an id
+  already claimed by another resource. (One further recovery path is closed in
+  0.3.1.)
 
 ## [0.2.2] - 2026-07-15
 
