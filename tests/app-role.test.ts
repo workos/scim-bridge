@@ -12,6 +12,7 @@ import {
   type AppConfig,
 } from "../server/config";
 import { getConfig, insertDirectory, listDirectories, setConfig } from "../workers/shared/db";
+import { clientTokenKey } from "../workers/shared/client-tokens";
 import { hashProxyToken } from "../workers/shared/crypto";
 import nativeWorker from "../workers/native/index";
 import type { PocEnv } from "../workers/shared/types";
@@ -610,6 +611,22 @@ describe("naming the directory the unauthenticated simulator may drive", () => {
     expect(await getConfig(env.DB, "idp.demo_directory_id")).toBe(id);
   });
 
+  it("clears a pointer left naming a deleted directory, and re-adopts", async () => {
+    // A delete on an older build (or with demo mode off) left the key dangling.
+    // Adoption used to bail on any set key, wedging the simulators forever; a
+    // dangling key is treated as absent so the boot can repair the demo.
+    const env = await createEnv();
+    const config = demoConfig();
+    const { id } = await insertDirectory(env.DB, { name: "Demo directory", ...bundled(config) });
+    await setConfig(env.DB, "idp.demo_directory_id", "dir_00000000deadbeef");
+    await setConfig(env.DB, clientTokenKey("dir_00000000deadbeef"), "stale-token-copy");
+
+    await seedDemoDirectory(env, config);
+
+    expect(await getConfig(env.DB, "idp.demo_directory_id")).toBe(id);
+    expect(await getConfig(env.DB, clientTokenKey("dir_00000000deadbeef"))).toBeNull();
+  });
+
   it("does not adopt a directory whose WorkOS leg is real", async () => {
     // The endpoints are operator-settable, so matching a prefix of the native leg
     // would adopt this row: its native leg points at the bundled fake, but its
@@ -653,15 +670,22 @@ describe("naming the directory the unauthenticated simulator may drive", () => {
     expect(await getConfig(env.DB, "idp.demo_directory_id")).toBeNull();
   });
 
-  it("leaves an already-recorded id alone", async () => {
+  it("leaves an already-recorded id alone when that directory still exists", async () => {
+    // The recorded directory need not match the bundled shape to be respected —
+    // only to be *alive*. A key naming a deleted directory is repaired instead
+    // (the dangling-pointer case above).
     const env = await createEnv();
     const config = demoConfig();
-    await setConfig(env.DB, "idp.demo_directory_id", "dir_already_chosen");
+    const chosen = await insertDirectory(env.DB, {
+      name: "Chosen earlier",
+      native_url: "https://acme.example.com/scim/v2",
+    });
+    await setConfig(env.DB, "idp.demo_directory_id", chosen.id);
     await insertDirectory(env.DB, { name: "Demo directory", ...bundled(config) });
 
     await seedDemoDirectory(env, config);
 
-    expect(await getConfig(env.DB, "idp.demo_directory_id")).toBe("dir_already_chosen");
+    expect(await getConfig(env.DB, "idp.demo_directory_id")).toBe(chosen.id);
   });
 
   it("records nothing outside demo mode", async () => {

@@ -69,6 +69,12 @@ export async function setConfig(db: Datastore, key: string, value: string): Prom
   );
 }
 
+export async function deleteConfig(db: Datastore, key: string): Promise<void> {
+  await withDatastoreRetry(() =>
+    db.prepare("DELETE FROM poc_config WHERE key = ?").bind(key).run(),
+  );
+}
+
 /**
  * Set a config value only if the key is absent, and return the value that is
  * actually stored — which may be another instance's, not the one passed in.

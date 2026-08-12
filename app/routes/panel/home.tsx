@@ -12,7 +12,7 @@ import {
   setDirectoryMode,
 } from "../../../workers/shared/db";
 import { datastoreContext, demoModeContext } from "../../context";
-import { publishMintedToken } from "../../../workers/shared/client-tokens";
+import { demoDirectoryId, publishMintedToken } from "../../../workers/shared/client-tokens";
 import {
   checkNativeNamespace,
   duplicateNativeNamespaces,
@@ -193,6 +193,9 @@ export async function loader({ context }: Route.LoaderArgs) {
     nativePublicUrl: nativePublicUrl ?? "",
     nativeScimToken: nativeScimToken ?? "",
     mockWorkosToken: mockWorkosToken ?? "",
+    /** The directory the bundled simulators drive, badged in the list so an
+     *  operator can tell it from their own imports. Null outside demo mode. */
+    demoDirectory: context.get(demoModeContext) ? await demoDirectoryId(db) : null,
   };
 }
 
@@ -401,6 +404,7 @@ export default function PanelHome() {
     nativePublicUrl,
     nativeScimToken,
     mockWorkosToken,
+    demoDirectory,
   } = useLoaderData<typeof loader>();
   const actionData = useActionData() as HomeActionData | undefined;
   const navigation = useNavigation();
@@ -538,7 +542,7 @@ export default function PanelHome() {
         </Callout.Root>
       )}
 
-      <DirectoryTable directories={directories} diverged={diverged} />
+      <DirectoryTable directories={directories} diverged={diverged} demoDirectory={demoDirectory} />
 
       <Card size="3">
         <Flex direction="column" gap="5">
