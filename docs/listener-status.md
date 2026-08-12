@@ -218,7 +218,8 @@ and the two mistakes that silently lose data:
   `user.deleted` — is how a deactivation (Okta unassign, Entra soft delete)
   arrives.
 - **`dsync.user.deleted`** — **deactivate the row in place. Always.** Do not
-  assume the suspension soft-delete flag is on — it is customer-configurable,
+  assume the suspension soft-delete flag is on — it is a per-environment choice
+  ([migration guide: deletion semantics](./migration-guide.md#choose-your-deletion-semantics-suspension-soft-delete)),
   and with it off a plain deactivation arrives as this event while WorkOS keeps
   the user and their memberships. Delivery is also at-least-once and unordered,
   so a `user.deleted` can be delivered *after* a newer membership event it was

@@ -57,21 +57,36 @@ org_01HXAMPLE1,Acme — Okta,directory_01HX…,https://api.workos.com/scim/v2.0/
 
 Directories provisioned this way are **imported directories**: WorkOS marks
 them as migrated, which is what enables the
-[migrated-id contract](../README.md#how-workos-handles-each-scim-request) and —
-critically — **suspension soft-delete semantics**:
+[migrated-id contract](../README.md#how-workos-handles-each-scim-request).
 
-> **Why soft-delete matters.** With suspension soft-delete on, deactivating a
-> user (`active: false`, which is how Okta and Entra offboard) emits
-> `dsync.user.updated` with the user retained as Inactive. With it off, the
-> same deactivation emits `dsync.user.deleted` — while WorkOS quietly keeps the
-> user and their group memberships. The flag is customer-configurable per
-> environment, and **both settings are safe** as long as your listener
-> deactivates in place on `user.deleted` instead of deleting the row — which is
-> exactly why the reference listener does
-> ([applying events](./listener-status.md#applying-events)). A listener that
-> honors the event by deleting its row instead loses the user's id and
-> memberships on every **rehire** (deactivate → reactivate), and no later event
-> ever re-announces them.
+### Choose your deletion semantics: suspension soft-delete
+
+Your WorkOS environment carries a setting — **user suspension soft-delete** —
+that decides what a deactivation looks like on the event stream. It is a real
+choice with both options supported, and you should decide it **with** WorkOS
+during Step A, because it shapes how your listener interprets one event:
+
+| | Soft-delete **on** | Soft-delete **off** |
+| --- | --- | --- |
+| IdP deactivates a user (`active: false` — how Okta and Entra offboard) | `dsync.user.updated`, user retained as Inactive | `dsync.user.deleted` — while WorkOS still retains the user and their memberships |
+| User actually removed from the directory | `dsync.user.deleted` | `dsync.user.deleted` |
+| What `dsync.user.deleted` therefore means | The user is really gone | Ambiguous: deactivated *or* gone |
+
+Points to be aware of:
+
+- **The setting is per environment**, covers every directory in it, and is not
+  self-service today — ask your WorkOS contact which way your environment is
+  set, and to change it if you want the other behavior. Don't assume: an
+  environment can run with soft-delete **disabled**, and several do.
+- **Most migrating customers want it on**, because "deactivation ≠ deletion"
+  is how most home-grown SCIM implementations already behave — matching your
+  current semantics means your app's existing assumptions keep holding.
+- **Both settings are safe** as long as your listener deactivates in place on
+  `dsync.user.deleted` instead of deleting the row — which is exactly what the
+  reference listener does ([applying events](./listener-status.md#applying-events)).
+  A listener that honors the event by deleting its row loses the user's id and
+  memberships on every **rehire** (deactivate → reactivate) when the flag is
+  off — WorkOS retains both and no later event re-announces them.
 
 ## Step B — deploy the bridge and import the directories
 
