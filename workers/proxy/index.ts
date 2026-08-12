@@ -23,6 +23,7 @@ import {
   joinScimUrl,
   loadIdMaps,
   makeTranslator,
+  mintConflictDetail,
   mirrorUpsert,
   nativeNamespaceIsShared,
   parseJson,
@@ -722,19 +723,50 @@ async function workosPrimaryCreate(
       ? crypto.randomUUID()
       : externalId;
 
+  // A mint this directory already records as another resource's WorkOS-side id
+  // cannot be written concurrently: WorkOS answers the mirror's PUT for whatever
+  // resource sits under the id, so the leg would land on that resource's row
+  // before native has said which resource this create is. Serialise on it
+  // instead — the native-first path a create without an externalId already takes
+  // — and let the id through only once native's own id proves this create is the
+  // claimed resource's, which is what an IdP retry of a completed create is.
+  // (`mirrorUpsert` refuses the same collision on its own id; this is what keeps
+  // the refusal from arriving after the neighbour's row has been written.)
+  const claimedMint = workosMintId
+    ? await getMappingByWorkosId(env.DB, directory.id, kind, workosMintId)
+    : null;
+  // The one create a claimed mint can legitimately be: the IdP retrying a create
+  // this directory already completed, whose resource native therefore still holds
+  // under the id the claimed mapping names. Anything else is refused here, before
+  // either leg is written — asking native what it holds rather than reading the
+  // answer out of a write of our own is what keeps a refusal from having to be
+  // walked back. A refusal after the native leg could only be walked back by
+  // deleting the row it reports, and a 2xx is not proof the row is this request's:
+  // a native app may answer a duplicate POST with the row it already had, or with
+  // one a concurrent create just made.
+  if (claimedMint) {
+    const priorNativeId = uniqueAttributeValue(kind, parsed)
+      ? await findNativeByUniqueAttribute(directory, kind, parsed)
+      : null;
+    if (priorNativeId !== claimedMint.native_id) {
+      log.error = mintConflictDetail(kind, claimedMint.workos_id, claimedMint.native_id);
+      return finish(scimError(409, log.error));
+    }
+  }
   const nativeCreatePromise = nativeCreate(env, directory, kind, requestBody, contentType, url);
   // The mappings mirrorUpsert would write are collected instead of written: the
   // row has to be keyed on the id NATIVE reports, which is not known until its
   // leg finishes, and a mapping keyed on the minted id would claim a native row
   // that does not exist.
   const sink: MappingSink = [];
-  const mirrorPromise = workosMintId
-    ? mirrorUpsert(env.DB, directory, kind, workosMintId, workosBody, sink)
-    : nativeCreatePromise.then((native) =>
-        native.id === null
-          ? null
-          : mirrorUpsert(env.DB, directory, kind, native.id, workosBody, sink),
-      );
+  const mirrorPromise =
+    workosMintId && !claimedMint
+      ? mirrorUpsert(env.DB, directory, kind, workosMintId, workosBody, sink)
+      : nativeCreatePromise.then((native) =>
+          native.id === null || (claimedMint && claimedMint.native_id !== native.id)
+            ? null
+            : mirrorUpsert(env.DB, directory, kind, native.id, workosBody, sink),
+        );
   const [native, mirror] = await Promise.all([nativeCreatePromise, mirrorPromise]);
 
   if (mirror) applyMirrorResult(log, mirror);
@@ -759,6 +791,27 @@ async function workosPrimaryCreate(
       });
     }
     return finish(nativeFailureResponse(native));
+  }
+  if (claimedMint && claimedMint.native_id !== native.id) {
+    // The mint names a resource this create is not, and nothing was written to
+    // WorkOS, which is what keeps the two ids the mapping separates from
+    // collapsing onto one WorkOS row. The claim was resolved against native above,
+    // so reaching this means native answered the create with a third id — nothing
+    // this request can safely take back, since the row may be another request's.
+    // Record it: an unmapped native row is an address a later reconcile replays,
+    // and this refusal is final, so nothing else would ever surface it.
+    log.error = mintConflictDetail(kind, claimedMint.workos_id, claimedMint.native_id);
+    await recordNativeWriteFailure(env.DB, {
+      directory_id: directory.id,
+      resource_type: kind,
+      resource_key: native.id,
+      method: "POST",
+      native_status: native.result?.status ?? null,
+      detail:
+        `${log.error} The create was refused after the native app had answered it with this id, ` +
+        "so the native row has no WorkOS counterpart and no mapping.",
+    });
+    return finish(scimError(409, log.error));
   }
   if (!workosOk) {
     return finish(
