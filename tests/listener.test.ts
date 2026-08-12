@@ -865,6 +865,60 @@ describe("dsync listener", () => {
       expect(await memberEdges(env.DB)).toEqual([{ group_id: "grp-eng", user_id: "idp-user-1" }]);
     });
 
+    describe("native delete policy on user.deleted", () => {
+      // Seed a user who is a member of a group, so the test can watch both the
+      // row and its membership edge across the delete.
+      async function seedUserInGroup(env: PocEnv): Promise<void> {
+        await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
+        await deliver(
+          env,
+          envelope("dsync.group.user_added", { user: ada, group: engineering }, { at: T1 }),
+        );
+      }
+
+      it("hard-deletes the row and its membership edges when the policy is hard", async () => {
+        const { env } = await seedListenerEnv();
+        await setConfig(env.DB, "native.delete_policy", "hard");
+        await seedUserInGroup(env);
+
+        await deliver(env, envelope("dsync.user.deleted", ada, { at: T2 }));
+
+        // Pre-#116 semantics: the row is gone and so is its group edge.
+        expect(await nativeUsers(env.DB)).toHaveLength(0);
+        expect(await memberEdges(env.DB)).toHaveLength(0);
+        const event = await lastEvent(env.DB);
+        expect(event.action).toBe("applied");
+        expect(event.detail).toBe("offboard() — hard-deleted");
+      });
+
+      it("keeps the inactive tombstone and its edges when the policy is soft", async () => {
+        const { env } = await seedListenerEnv();
+        await setConfig(env.DB, "native.delete_policy", "soft");
+        await seedUserInGroup(env);
+
+        await deliver(env, envelope("dsync.user.deleted", ada, { at: T2 }));
+
+        const users = await nativeUsers(env.DB);
+        expect(users).toHaveLength(1);
+        expect(users[0]).toMatchObject({ id: "idp-user-1", active: 0 });
+        expect(await memberEdges(env.DB)).toEqual([{ group_id: "grp-eng", user_id: "idp-user-1" }]);
+        expect((await lastEvent(env.DB)).detail).toBe("offboard() — deactivated in place");
+      });
+
+      it("falls back to soft for an unrecognized policy — never regressing the production default", async () => {
+        const { env } = await seedListenerEnv();
+        await setConfig(env.DB, "native.delete_policy", "bogus");
+        await seedUserInGroup(env);
+
+        await deliver(env, envelope("dsync.user.deleted", ada, { at: T2 }));
+
+        const users = await nativeUsers(env.DB);
+        expect(users).toHaveLength(1);
+        expect(users[0]).toMatchObject({ id: "idp-user-1", active: 0 });
+        expect(await memberEdges(env.DB)).toEqual([{ group_id: "grp-eng", user_id: "idp-user-1" }]);
+      });
+    });
+
     it("survives the judy replay: a stale user.deleted delivered after a newer membership event", async () => {
       // Live incident: judy was deactivated (the environment's suspension
       // soft-delete flag was off, so it emitted user.deleted), reactivated, then

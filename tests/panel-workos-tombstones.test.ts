@@ -91,9 +91,13 @@ describe("WorkOS tombstones in the users reconciliation", () => {
     expect(rows[0]).toMatchObject({ diverged: true, tombstone: false });
   });
 
-  it("does not excuse the mirror image, a row only the native app has", () => {
-    // The asymmetry runs one way: WorkOS retains, native does not. An inactive
-    // native row WorkOS never received is a write that did not land.
+  it("reads the mirror image as a native-side tombstone once the IdP has dropped it too", () => {
+    // This shape once counted as a one-directional asymmetry — a native inactive
+    // row WorkOS never received. Deactivate-in-place gives it a second, correct
+    // reading: WorkOS *and* the IdP are both gone, so native is simply the side
+    // left holding the tombstone. The exclusion is symmetric now — see
+    // isNativeTombstone and panel-native-tombstones.test.ts for the full set,
+    // including the guard that an *active* native-only row still diverges.
     const rows = reconcileUsers({
       native: [user("erin@acme.test", 0)],
       workos: [],
@@ -103,8 +107,9 @@ describe("WorkOS tombstones in the users reconciliation", () => {
     expect(rows[0]).toMatchObject({
       native: "inactive",
       workos: "absent",
-      diverged: true,
-      tombstone: false,
+      idp: "absent",
+      diverged: false,
+      tombstone: true,
     });
   });
 

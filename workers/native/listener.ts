@@ -239,7 +239,7 @@ async function applyEvent(
     case "dsync.user.updated":
       return upsertUserFromEvent(store, data);
     case "dsync.user.deleted":
-      return deleteUserFromEvent(store, data);
+      return deleteUserFromEvent(db, store, data);
     case "dsync.group.created":
     case "dsync.group.updated":
       return upsertGroupFromEvent(store, data);
@@ -343,13 +343,29 @@ async function upsertUserFromEvent(store: ScimStore, data: Json): Promise<Outcom
  * memberships — a rehire re-activates them without re-announcing either. The
  * inactive row is a tombstone; an actual purge is a retention-policy decision,
  * not an event handler's.
+ *
+ * That soft default is what production should run. The `native.delete_policy`
+ * config key exists only so a demo/test deployment can opt the reference app
+ * into the pre-#116 `"hard"` behaviour (drop the row and its edges) to exhibit
+ * the hard-delete shape in the panel. It is read here, not baked in, and an
+ * absent or unrecognized value stays `"soft"` so the production default can
+ * never be regressed by a typo.
  */
-async function deleteUserFromEvent(store: ScimStore, data: Json): Promise<Outcome> {
+async function deleteUserFromEvent(db: Datastore, store: ScimStore, data: Json): Promise<Outcome> {
   const idpId = asString(data.idp_id);
   if (!idpId) return { action: "ignored", detail: "user event carries no idp_id" };
   const userName = userNameFromEvent(data);
   const existing = await findUser(store, idpId, userName);
   if (!existing) return { action: "skipped", detail: "no-op: user already absent", idpId };
+
+  if ((await getConfig(db, "native.delete_policy")) === "hard") {
+    // Demo/testing convenience only — loses the rehire safety the soft path
+    // buys. deleteUser cascades the native_group_members edges (it clears them
+    // before removing the row), matching the pre-#116 hard delete.
+    await store.deleteUser(existing.id);
+    return { action: "applied", detail: "offboard() — hard-deleted", idpId };
+  }
+
   const resource = userResourceFromEvent(
     existing.id,
     idpId,

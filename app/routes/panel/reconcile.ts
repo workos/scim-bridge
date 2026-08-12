@@ -73,10 +73,11 @@ export interface UserReconRow {
   workos: Presence;
   idp: Presence;
   diverged: boolean;
-  /** A user WorkOS retains as an inactive SCIM record after a delete the native
-   *  app applied as a data-plane hard delete. The DSync listener's
-   *  deactivate-in-place path never produces this shape — it leaves Inactive on
-   *  both sides, which agree on their own. See `isTombstone`. */
+  /** An inactive record one side retains that the others no longer have, in
+   *  either orientation: WorkOS keeps an inactive SCIM record after a native
+   *  data-plane hard delete (`isTombstone`), or the native app keeps an Inactive
+   *  row via the listener's deactivate-in-place after the user is gone from
+   *  WorkOS and the IdP (`isNativeTombstone`). The panel dims both the same way. */
   tombstone: boolean;
 }
 
@@ -87,9 +88,11 @@ export interface GroupMemberReconRow {
   workos: boolean;
   idp: boolean;
   diverged: boolean;
-  /** A membership edge WorkOS retains for a user it retains as an inactive SCIM
-   *  record after a native hard delete dropped the row *and* the edge — the
-   *  data-plane path; the DSync listener keeps both. See `isTombstone`. */
+  /** A membership edge one side retains for a user that is a tombstone, in either
+   *  orientation: WorkOS keeps the edge for an inactive SCIM record a native hard
+   *  delete dropped (`isTombstone`), or native keeps the edge for a
+   *  deactivate-in-place tombstone WorkOS and the IdP no longer carry
+   *  (`isNativeTombstone`). */
   tombstone: boolean;
 }
 
@@ -145,16 +148,70 @@ function presence(row: DirRow | undefined): Presence {
  * The same delete leaves the same user standing in their WorkOS groups, so
  * `reconcileGroups` applies this predicate per membership edge as well — same
  * user, same signal, same rule.
+ *
+ * This is one of two orientations. The mirror — the native app holding an
+ * Inactive tombstone WorkOS and the IdP no longer have — is `isNativeTombstone`.
  */
 function isTombstone(native: Presence, workos: Presence): boolean {
   return workos === "inactive" && native === "absent";
 }
 
-export function reconcileUsers(users: {
-  native: DirRow[];
-  workos: DirRow[];
-  idp: DirRow[];
-}): UserReconRow[] {
+/**
+ * The mirror orientation: the native app is the side left holding a tombstone.
+ *
+ * With the environment's suspension soft-delete off, a plain deactivation
+ * arrives as `dsync.user.deleted`, and the reference listener's
+ * deactivate-in-place path keeps an Inactive native row after the user is gone
+ * from WorkOS and the IdP. That row — native inactive, workos absent, idp absent
+ * — is a tombstone, not drift; purging it is a retention decision, the same as
+ * on the WorkOS side.
+ *
+ * Every clause is load-bearing, and dropping any one would swallow a real anomaly:
+ *  - native must be *inactive*. An **active** native row with no workos/idp
+ *    record is a genuine strand — a write that never propagated — and the
+ *    `active`-still-diverges guarantee the WorkOS orientation also keeps must hold
+ *    here unchanged.
+ *  - idp must be *absent*. Inactive-in-native and absent-from-workos but still
+ *    present in the IdP is a real anomaly (the IdP still knows this user), not a
+ *    clean tombstone, so it keeps diverging.
+ *
+ * Two caveats about what "absent" can mean, both the caller's responsibility:
+ *  - This orientation reads WorkOS-absence as a deletion, so it must trust the
+ *    absence. When the WorkOS listing failed to load it comes back empty, which is
+ *    indistinguishable by content from a genuinely absent user — so the callers
+ *    only apply this predicate when WorkOS was actually reached (the
+ *    `workosReachable` gate in `reconcileUsers`/`reconcileMembers`). The
+ *    WorkOS-side `isTombstone` has no such hole: an empty listing can't produce
+ *    the `inactive` it requires. The IdP listing is a local, authoritative DB
+ *    read, so its absence is always trustworthy and needs no gate.
+ *  - The panel fetches a single `count=200` page, so a user past that page also
+ *    reads as absent. That single-page truncation is a pre-existing limitation of
+ *    the whole Live-state comparison — every divergence count already assumes the
+ *    page is complete — not specific to this predicate.
+ */
+function isNativeTombstone(native: Presence, workos: Presence, idp: Presence): boolean {
+  return native === "inactive" && workos === "absent" && idp === "absent";
+}
+
+/** Options the reconciliation needs beyond the three listings. */
+export interface ReconcileOptions {
+  /** Whether the WorkOS listing was actually fetched. `false` means the WorkOS
+   *  arrays are an outage placeholder (empty, `reachable: false`), so the
+   *  native-side tombstone must not fire — an unreachable WorkOS is not a
+   *  deletion. Defaults `true` so a caller that always has real data (and every
+   *  existing test) needs no change. */
+  workosReachable?: boolean;
+}
+
+export function reconcileUsers(
+  users: {
+    native: DirRow[];
+    workos: DirRow[];
+    idp: DirRow[];
+  },
+  options: ReconcileOptions = {},
+): UserReconRow[] {
+  const { workosReachable = true } = options;
   const byName = (rows: DirRow[]) => new Map(rows.map((r) => [r.name, r]));
   const n = byName(users.native);
   const w = byName(users.workos);
@@ -163,12 +220,14 @@ export function reconcileUsers(users: {
   return names.map((name) => {
     const native = presence(n.get(name));
     const workos = presence(w.get(name));
-    const tombstone = isTombstone(native, workos);
+    const idp = presence(i.get(name));
+    const tombstone =
+      isTombstone(native, workos) || (workosReachable && isNativeTombstone(native, workos, idp));
     return {
       name,
       native,
       workos,
-      idp: presence(i.get(name)),
+      idp,
       diverged: native !== workos && !tombstone,
       tombstone,
     };
@@ -180,12 +239,17 @@ export function reconcileUsers(users: {
  * exclusion — and gets it from the same signal, not from a guess.
  *
  * A native data-plane delete drops the user's row *and* their group-membership
- * edges (the DSync listener's deactivate-in-place keeps both, so that path
- * agrees edge-for-edge and needs no exclusion). WorkOS
- * retains the SCIM resource as `active: false` and keeps it in its groups, so
- * `GET /Groups` reports an inflated member count forever: measured on a real
- * directory, four groups over-counted by exactly one member each, and every one
- * of the four extras was an inactive WorkOS record with no native row.
+ * edges, while WorkOS retains the SCIM resource as `active: false` and keeps it
+ * in its groups, so `GET /Groups` reports an inflated member count forever:
+ * measured on a real directory, four groups over-counted by exactly one member
+ * each, and every one of the four extras was an inactive WorkOS record with no
+ * native row.
+ *
+ * The listener's deactivate-in-place path produces the mirror of this at the
+ * edge level: after a delete WorkOS and the IdP both drop the edge, native keeps
+ * carrying the deactivated user in its group. That native-side tombstone edge is
+ * excluded too, by the same rule read in the opposite orientation
+ * (`isNativeTombstone` — see `reconcileMembers`).
  *
  * An earlier version of this comment argued groups could not be fixed, because a
  * SCIM Group has no `active` attribute (RFC 7643 §4.2 is `displayName` +
@@ -218,19 +282,28 @@ export function reconcileGroups(
     workos: DirRow[];
     idp: DirRow[];
   },
+  options: ReconcileOptions = {},
 ): GroupReconRow[] {
+  const { workosReachable = true } = options;
   const byName = (rows: GroupRow[]) => new Map(rows.map((r) => [r.name, r.members]));
   const n = byName(groups.native);
   const w = byName(groups.workos);
   const i = byName(groups.idp);
   const nativeUsers = new Map(users.native.map((r) => [r.name, r]));
   const workosUsers = new Map(users.workos.map((r) => [r.name, r]));
+  const idpUsers = new Map(users.idp.map((r) => [r.name, r]));
   const names = [...new Set([...n.keys(), ...w.keys(), ...i.keys()])].sort();
   return names.map((name) => {
     const native = n.get(name);
     const workos = w.get(name);
     const idp = i.get(name);
-    const members = reconcileMembers({ native, workos, idp }, nativeUsers, workosUsers);
+    const members = reconcileMembers(
+      { native, workos, idp },
+      nativeUsers,
+      workosUsers,
+      idpUsers,
+      workosReachable,
+    );
     return {
       name,
       native: native ? native.length : null,
@@ -250,6 +323,8 @@ function reconcileMembers(
   edges: { native: string[] | undefined; workos: string[] | undefined; idp: string[] | undefined },
   nativeUsers: Map<string, DirRow>,
   workosUsers: Map<string, DirRow>,
+  idpUsers: Map<string, DirRow>,
+  workosReachable: boolean,
 ): GroupMemberReconRow[] {
   const n = new Set(edges.native ?? []);
   const w = new Set(edges.workos ?? []);
@@ -258,10 +333,17 @@ function reconcileMembers(
   return names.map((name) => {
     const native = n.has(name);
     const workos = w.has(name);
+    // Classify the member once against the three users listings, then read the
+    // tombstone from whichever side is the one still holding the edge. WorkOS
+    // orientation: workos keeps the edge for an inactive record native dropped.
+    // Native orientation (the mirror): native keeps the edge for a deactivate-in-
+    // place tombstone workos and the IdP no longer have.
+    const nUser = presence(nativeUsers.get(name));
+    const wUser = presence(workosUsers.get(name));
+    const iUser = presence(idpUsers.get(name));
     const tombstone =
-      workos &&
-      !native &&
-      isTombstone(presence(nativeUsers.get(name)), presence(workosUsers.get(name)));
+      (workos && !native && isTombstone(nUser, wUser)) ||
+      (workosReachable && native && !workos && isNativeTombstone(nUser, wUser, iUser));
     return {
       name,
       native,
@@ -271,4 +353,50 @@ function reconcileMembers(
       tombstone,
     };
   });
+}
+
+/** Tombstones split by which side is left holding the inactive record, so the
+ *  panel headline can describe each accurately instead of attributing both to
+ *  WorkOS. The two orientations are mutually exclusive per row/edge. */
+export interface TombstoneCounts {
+  /** WorkOS keeps an inactive SCIM record the native app dropped (workos
+   *  inactive, native absent) — the WorkOS-side tombstone. */
+  workos: number;
+  /** The native app keeps an Inactive row after WorkOS and the IdP dropped the
+   *  user (native inactive, workos + idp absent) — the deactivate-in-place
+   *  tombstone. */
+  native: number;
+}
+
+export interface TombstoneSummary {
+  users: TombstoneCounts;
+  members: TombstoneCounts;
+}
+
+/**
+ * Count tombstones by orientation across the reconciled rows. A tombstone row is
+ * WorkOS-side exactly when native is absent (the record only WorkOS still has)
+ * and native-side otherwise (native is the inactive holder); a tombstone edge is
+ * WorkOS-side when WorkOS is the one carrying it and native-side when native is —
+ * the same split the two exclusion branches already made, read back off the row.
+ */
+export function tombstoneSummary(
+  userRows: UserReconRow[],
+  groupRows: GroupReconRow[],
+): TombstoneSummary {
+  const users: TombstoneCounts = { workos: 0, native: 0 };
+  for (const row of userRows) {
+    if (!row.tombstone) continue;
+    if (row.native === "absent") users.workos += 1;
+    else users.native += 1;
+  }
+  const members: TombstoneCounts = { workos: 0, native: 0 };
+  for (const group of groupRows) {
+    for (const member of group.members) {
+      if (!member.tombstone) continue;
+      if (member.workos) members.workos += 1;
+      else members.native += 1;
+    }
+  }
+  return { users, members };
 }

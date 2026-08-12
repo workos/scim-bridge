@@ -73,10 +73,11 @@ function transportOptions(): TransportActionOptions {
 
 export async function loader({ context }: Route.LoaderArgs) {
   const db = context.get(datastoreContext);
-  const [mockEmit, webhookSecret, nativePublicUrl, tunnelUrl] = await Promise.all([
+  const [mockEmit, webhookSecret, nativePublicUrl, deletePolicy, tunnelUrl] = await Promise.all([
     getConfig(db, "mock_workos.emit_dsync"),
     getConfig(db, "native.webhook_secret"),
     getConfig(db, "native.public_url"),
+    getConfig(db, "native.delete_policy"),
     detectNgrokTunnel(),
   ]);
   const [transportChoice, targetChoice, eventsUrl, storedKey, cursor] = await Promise.all([
@@ -92,6 +93,9 @@ export async function loader({ context }: Route.LoaderArgs) {
     mockEmit: mockEmit !== "false",
     webhookSecret: webhookSecret ?? "",
     nativePublicUrl: nativePublicUrl ?? "",
+    // Absent or unrecognized reads as "soft" — the same production default the
+    // listener falls back to, so the control never implies hard delete is on.
+    deletePolicy: deletePolicy === "hard" ? "hard" : "soft",
     tunnelUrl,
     transport:
       transportChoice === "webhook" || transportChoice === "poll"
@@ -130,6 +134,12 @@ export async function action({ context, request }: Route.ActionArgs) {
     await setConfig(db, "mock_workos.emit_dsync", form.get("value") === "true" ? "true" : "false");
     return {};
   }
+  if (intent === "set-native-delete-policy") {
+    // Only "hard" is written verbatim; anything else stores "soft", so a stray
+    // value can never leave the reference app hard-deleting.
+    await setConfig(db, "native.delete_policy", form.get("value") === "hard" ? "hard" : "soft");
+    return {};
+  }
   if (intent === "save-webhook-secret") {
     await setConfig(db, "native.webhook_secret", String(form.get("value") ?? "").trim());
     return {};
@@ -162,6 +172,7 @@ export default function PanelListener() {
     mockEmit,
     webhookSecret,
     nativePublicUrl,
+    deletePolicy,
     tunnelUrl,
     transport,
     pollTarget,
@@ -181,6 +192,11 @@ export default function PanelListener() {
     fetcher.formData?.get("intent") === "set-mock-emit"
       ? fetcher.formData.get("value") === "true"
       : mockEmit;
+  // Optimistic while the flip is in flight, honest again once it lands.
+  const shownDeletePolicy =
+    fetcher.formData?.get("intent") === "set-native-delete-policy"
+      ? String(fetcher.formData.get("value"))
+      : deletePolicy;
   // Optimistic while the flip is in flight, and honest again once it lands —
   // a refused flip (e.g. keyless real-WorkOS target) snaps the control back.
   const shownTransport =
@@ -409,6 +425,31 @@ export default function PanelListener() {
                 )
               }
             />
+          </Flex>
+
+          <Separator size="4" />
+
+          <Flex align="center" gap="3" justify="between">
+            <Flex direction="column" gap="1">
+              <Text size="2" weight="medium">
+                On dsync.user.deleted
+              </Text>
+              <Text color="gray" size="2">
+                Deactivate in place is what production should use — it keeps the row inactive so a
+                rehire or an out-of-order delivery is non-destructive. Hard delete drops the row and
+                its group memberships; it is a demo/testing convenience that loses that rehire
+                safety.
+              </Text>
+            </Flex>
+            <SegmentedControl.Root
+              onValueChange={(value) =>
+                fetcher.submit({ intent: "set-native-delete-policy", value }, { method: "post" })
+              }
+              value={shownDeletePolicy}
+            >
+              <SegmentedControl.Item value="soft">Deactivate in place</SegmentedControl.Item>
+              <SegmentedControl.Item value="hard">Hard delete</SegmentedControl.Item>
+            </SegmentedControl.Root>
           </Flex>
 
           <Separator size="4" />
