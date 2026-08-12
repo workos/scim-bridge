@@ -1,5 +1,7 @@
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
-import { joinScimUrl } from "../workers/shared/scim";
+import { isSuccess, joinScimUrl, scimFetch } from "../workers/shared/scim";
 import { validateUpstreamUrl } from "../workers/shared/upstream-url";
 
 /**
@@ -70,5 +72,46 @@ describe("joinScimUrl", () => {
     expect(joinScimUrl("https://host/scim/v2", "/Users/a%20b")).toBe(
       "https://host/scim/v2/Users/a%20b",
     );
+  });
+});
+
+/**
+ * Save-time host validation cannot stop an upstream that 302s to a blocked target
+ * after the check — so scimFetch must never follow a redirect on an upstream call.
+ */
+describe("scimFetch does not follow redirects", () => {
+  async function listen(server: http.Server): Promise<number> {
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    return (server.address() as AddressInfo).port;
+  }
+
+  it("refuses to chase a 302 to a metadata endpoint, and fails closed", async () => {
+    let metadataHits = 0;
+    // Stands in for the metadata service; a followed redirect would land here.
+    const metadata = http.createServer((_req, res) => {
+      metadataHits += 1;
+      res.writeHead(200, { "Content-Type": "application/scim+json" });
+      res.end('{"totalResults":1}');
+    });
+    const metadataPort = await listen(metadata);
+    const upstream = http.createServer((_req, res) => {
+      res.writeHead(302, { Location: `http://127.0.0.1:${metadataPort}/latest/meta-data/` });
+      res.end();
+    });
+    const upstreamPort = await listen(upstream);
+
+    try {
+      const result = await scimFetch(`http://127.0.0.1:${upstreamPort}/Users`, {
+        method: "GET",
+        token: "tok",
+      });
+      // The redirect was not followed: the metadata host was never contacted, and
+      // the 3xx surfaces as the failure every caller already treats a bad status as.
+      expect(metadataHits).toBe(0);
+      expect(isSuccess(result.status)).toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => metadata.close(() => resolve()));
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    }
   });
 });

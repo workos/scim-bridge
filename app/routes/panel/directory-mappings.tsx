@@ -4,11 +4,12 @@ import { useLoaderData, useRevalidator } from "react-router";
 import { datastoreContext } from "../../context";
 import type { IdMapping } from "../../../workers/shared/types";
 import { getDirectoryById, withDatastoreRetry } from "../../../workers/shared/db";
+import { joinScimUrl } from "../../../workers/shared/scim";
 import { Callout, Card, Code, Flex, Table, Text } from "@radix-ui/themes";
 import * as EmptyState from "../../ui/empty-state";
 import { Badge } from "../../ui/badge";
 import { Button } from "../../ui/button";
-import { CardHeader, trimTrailingSlash } from "./ui";
+import { CardHeader } from "./ui";
 
 interface ScimResource {
   id?: string;
@@ -23,12 +24,13 @@ async function fetchWorkosIndex(
   token: string,
 ): Promise<{ reachable: boolean; byId: Record<string, { externalId: string | null }> }> {
   if (!url || !token) return { reachable: false, byId: {} };
-  const base = trimTrailingSlash(url);
   const headers = { Authorization: `Bearer ${token}` };
   try {
+    // joinScimUrl (not string concat) so a saved base carrying a query can't fold
+    // the path into it, and redirect:"manual" so it can't bounce to an internal host.
     const [uRes, gRes] = await Promise.all([
-      fetch(`${base}/Users?count=200`, { headers }),
-      fetch(`${base}/Groups?count=200`, { headers }),
+      fetch(`${joinScimUrl(url, "/Users")}?count=200`, { headers, redirect: "manual" }),
+      fetch(`${joinScimUrl(url, "/Groups")}?count=200`, { headers, redirect: "manual" }),
     ]);
     if (!uRes.ok || !gRes.ok) return { reachable: false, byId: {} };
     const uBody = (await uRes.json()) as { Resources?: ScimResource[] };

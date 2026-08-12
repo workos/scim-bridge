@@ -36,6 +36,7 @@ import {
   publishMintedToken,
 } from "../../../workers/shared/client-tokens";
 import { checkNativeNamespace } from "../../../workers/shared/native-namespace";
+import { joinScimUrl } from "../../../workers/shared/scim";
 import { validateUpstreamUrl } from "../../../workers/shared/upstream-url";
 import type { BackfillSummary, Mode, NativeWriteFailure } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
@@ -131,8 +132,11 @@ async function checkEndpoint(
     };
   }
   try {
-    const response = await fetch(`${trimTrailingSlash(url)}/Users?count=1`, {
+    const response = await fetch(`${joinScimUrl(url, "/Users")}?count=1`, {
       headers: { Authorization: `Bearer ${token}` },
+      // Same reason as scimFetch: don't let a saved endpoint redirect this
+      // bearer-token probe to a metadata address after host validation.
+      redirect: "manual",
     });
     return { target, status: response.status, ok: response.ok };
   } catch (error) {
@@ -152,9 +156,10 @@ async function countUsers(url: string, token: string): Promise<EndpointCount> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
   try {
-    const response = await fetch(`${trimTrailingSlash(url)}/Users?count=1`, {
+    const response = await fetch(`${joinScimUrl(url, "/Users")}?count=1`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: controller.signal,
+      redirect: "manual",
     });
     if (!response.ok) return { reachable: false, count: null };
     const body = (await response.json()) as { totalResults?: unknown };
