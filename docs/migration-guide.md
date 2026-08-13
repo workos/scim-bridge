@@ -31,33 +31,56 @@ Two parties act in this guide:
 
 ## Step A — WorkOS provisions your directories
 
-Send your WorkOS contact one row per directory to migrate, as CSV:
+**You do not create anything in WorkOS first.** Send your WorkOS contact one row
+per directory to migrate, keyed on **your own** identifier for that directory —
+the id your app already uses for the tenant or directory, its *external id*:
 
 ```csv
-organization_id,name
-org_01HXAMPLE1,Acme — Okta
-org_01HXAMPLE2,Globex — Entra
+external_id,name,domain
+dir-8271,Acme — Okta,acme.com
+dir-8272,Globex — Entra,globex.com
 ```
 
-- `organization_id` — the WorkOS organization the directory belongs to.
-- `name` — optional label, echoed back so you can match rows up.
+- `external_id` — **your** identifier for the directory (your app's own
+  tenant/directory id). This is the one field that matters most: WorkOS stamps
+  it on the organization it creates, so it becomes the shared key that ties each
+  WorkOS directory back to the one in your system. Use something stable and
+  unique per directory.
+- `name` — a label for the organization.
+- `domain` — optional, the organization's email domain.
 
-WorkOS returns one row per directory:
+WorkOS runs its internal-admin import over that CSV — creating an
+**organization and a migrated Generic-SCIM directory for each row**, and setting
+your `external_id` on the organization — then returns one row per directory:
 
 ```csv
-organization_id,name,directory_id,scim_endpoint_url,bearer_token
-org_01HXAMPLE1,Acme — Okta,directory_01HX…,https://api.workos.com/scim/v2.0/AbC…,se_…
+external_id,organization_id,directory_id,scim_endpoint_url,bearer_token
+dir-8271,org_01HX…,directory_01HX…,https://api.workos.com/scim/v2.0/AbC…,se_…
 ```
 
-- `directory_id` — the WorkOS directory id. Your DSync listener will key on it,
-  and the bridge's status endpoint accepts it.
+- `external_id` — echoed back, so you can match each provisioned directory to
+  the one in your system. This is the whole point of sending it.
+- `organization_id` / `directory_id` — the WorkOS ids. Your DSync listener keys
+  on `directory_id`, and the bridge's status endpoint accepts it.
 - `scim_endpoint_url` + `bearer_token` — the WorkOS SCIM endpoint the bridge
   writes to, and the credential it presents. **The bearer token is shown only in
   this sheet**; treat it accordingly.
 
+Where each value goes next: `directory_id`, `scim_endpoint_url`, and
+`bearer_token` are what you feed into the bridge in [Step B](#step-b--deploy-the-bridge-and-import-the-directories).
+Your `external_id` is **not** part of the bridge import — it lives on the WorkOS
+organization purely so the two systems share one key for the directory.
+
 Directories provisioned this way are **imported directories**: WorkOS marks
 them as migrated, which is what enables the
 [migrated-id contract](../README.md#how-workos-handles-each-scim-request).
+
+> **Prefer to own your organizations?** Creating them yourself first is
+> optional but supported. Make each one (for example with the WorkOS CLI,
+> `workos organization create "Acme Corp" acme.com:verified`), set its
+> `external_id` to your directory identifier, and send us `organization_id,name`
+> rows instead — the import then provisions a migrated directory into each
+> existing organization rather than creating new ones.
 
 ### Choose your deletion semantics: suspension soft-delete
 
