@@ -31,56 +31,50 @@ Two parties act in this guide:
 
 ## Step A — WorkOS provisions your directories
 
-**You do not create anything in WorkOS first.** Send your WorkOS contact one row
-per directory to migrate, keyed on **your own** identifier for that directory —
-the id your app already uses for the tenant or directory, its *external id*:
+**You do not create anything in WorkOS first.** Give your WorkOS contact one
+entry per directory to migrate. Each entry carries:
+
+- `external_id` (**required**) — **your** identifier for the directory, the id
+  your app already uses for that tenant or directory. It is the migrated marker
+  and the idempotency key: re-running the import with the same `external_id`
+  returns the directory that already exists (with its same endpoint and token)
+  instead of creating a duplicate. Use something stable and unique per directory.
+- `type` (**required**) — the SCIM directory type (e.g. Generic SCIM). Only SCIM
+  directories can be migrated.
+- **How to attach it to a WorkOS organization** — one of: `organization_id` or
+  `organization_external_id` to use an organization you already have, or
+  `organization_name` to have WorkOS create one for you. You do not have to
+  create the organization yourself; if you would rather, the WorkOS CLI makes
+  one (`workos organization create "Acme Corp" acme.com:verified`) and you pass
+  its id.
+
+WorkOS runs its internal-admin bulk-import over that list — creating an
+organization (where needed) and a **migrated directory** per entry, tagged with
+your `external_id` — and hands back a **ready-to-import bridge CSV** with the
+WorkOS side already filled in:
 
 ```csv
-external_id,name,domain
-dir-8271,Acme — Okta,acme.com
-dir-8272,Globex — Entra,globex.com
+name,native_url,native_token,workos_url,workos_token
+Acme — Okta,,,https://api.workos.com/scim/v2.0/AbC…,se_…
 ```
 
-- `external_id` — **your** identifier for the directory (your app's own
-  tenant/directory id). This is the one field that matters most: WorkOS stamps
-  it on the organization it creates, so it becomes the shared key that ties each
-  WorkOS directory back to the one in your system. Use something stable and
-  unique per directory.
-- `name` — a label for the organization.
-- `domain` — optional, the organization's email domain.
+- `workos_url` + `workos_token` — the WorkOS SCIM endpoint the bridge writes to
+  and the bearer token it presents, **filled in for you**. The token is returned
+  only here; treat it accordingly.
+- `native_url` + `native_token` — **left blank** for you to complete in
+  [Step B](#step-b--deploy-the-bridge-and-import-the-directories) with your
+  existing app's SCIM endpoint and token.
 
-WorkOS runs its internal-admin import over that CSV — creating an
-**organization and a migrated Generic-SCIM directory for each row**, and setting
-your `external_id` on the organization — then returns one row per directory:
-
-```csv
-external_id,organization_id,directory_id,scim_endpoint_url,bearer_token
-dir-8271,org_01HX…,directory_01HX…,https://api.workos.com/scim/v2.0/AbC…,se_…
-```
-
-- `external_id` — echoed back, so you can match each provisioned directory to
-  the one in your system. This is the whole point of sending it.
-- `organization_id` / `directory_id` — the WorkOS ids. Your DSync listener keys
-  on `directory_id`, and the bridge's status endpoint accepts it.
-- `scim_endpoint_url` + `bearer_token` — the WorkOS SCIM endpoint the bridge
-  writes to, and the credential it presents. **The bearer token is shown only in
-  this sheet**; treat it accordingly.
-
-Where each value goes next: `directory_id`, `scim_endpoint_url`, and
-`bearer_token` are what you feed into the bridge in [Step B](#step-b--deploy-the-bridge-and-import-the-directories).
-Your `external_id` is **not** part of the bridge import — it lives on the WorkOS
-organization purely so the two systems share one key for the directory.
-
-Directories provisioned this way are **imported directories**: WorkOS marks
-them as migrated, which is what enables the
+This CSV *is* the bridge's bulk-import file — you finish it and load it in Step B,
+no reshaping. Directories provisioned this way are **imported directories**:
+WorkOS marks them as migrated, which is what enables the
 [migrated-id contract](../README.md#how-workos-handles-each-scim-request).
 
-> **Prefer to own your organizations?** Creating them yourself first is
-> optional but supported. Make each one (for example with the WorkOS CLI,
-> `workos organization create "Acme Corp" acme.com:verified`), set its
-> `external_id` to your directory identifier, and send us `organization_id,name`
-> rows instead — the import then provisions a migrated directory into each
-> existing organization rather than creating new ones.
+> **A note on the WorkOS directory id.** Your DSync listener and the bridge's
+> status endpoint key on the WorkOS `directory_id` (Step D). The import CSV above
+> does not carry it — get it for each directory from the WorkOS dashboard (or ask
+> your WorkOS contact for the `external_id → directory_id` list), and set it on
+> the directory's page in the bridge panel after import.
 
 ### Choose your deletion semantics: suspension soft-delete
 
@@ -136,26 +130,32 @@ The bridge is a single container in **your** infrastructure, placed so that:
 WorkOS webhooks do **not** target the bridge — they go to your app's listener
 (Step D). The bridge has no inbound dependency on WorkOS at all.
 
-Deploy ([runbook: deploy](./runbook.md#deploy)), then import each directory —
-one at a time in the panel, or all of them at once with **Bulk import**
-(one row per directory, header optional):
+Deploy ([runbook: deploy](./runbook.md#deploy)), then finish the CSV WorkOS
+handed you in Step A and load it — **Bulk import** takes the whole file, or you
+can add one directory at a time in the panel. Step A already filled `workos_url`
+and `workos_token`; you complete the two native columns:
 
 ```csv
-name,native_url,native_token,workos_url,workos_token,workos_directory_id,proxy_token
-Acme — Okta,https://acme.example.com/scim/v2,tok_native,https://api.workos.com/scim/v2.0/AbC…,se_…,directory_01HX…,okta_tok_existing
+name,native_url,native_token,workos_url,workos_token
+Acme — Okta,https://acme.example.com/scim/v2,tok_native,https://api.workos.com/scim/v2.0/AbC…,se_…
 ```
 
 - `native_url` + `native_token` — your app's existing SCIM endpoint and the
-  token the bridge presents to it. **One directory per native endpoint** — see
+  token the bridge presents to it, filled in by you. **One directory per native
+  endpoint** — see
   [the namespace rule](./runbook.md#deployment-requirement-one-directory-per-native-scim-endpoint).
-- `workos_url` + `workos_token` + `workos_directory_id` — pasted straight from
-  Step A's sheet (`scim_endpoint_url`, `bearer_token`, `directory_id`).
-- `proxy_token` — optional. Supply the bearer token your IdP already presents
-  today and the IdP needs no credential change at all
-  ([zero IdP-touch](./runbook.md#zero-idp-touch-deployment)); omit it and the
-  bridge mints one, which is **not displayed after import** — press **Rotate**
-  on the directory page to mint a token you can copy, shown once
+- `workos_url` + `workos_token` — already present from Step A; leave them as-is.
+
+Two fields are set on the directory's page after import, not in this CSV:
+
+- `proxy_token` — the bridge mints one on import and does **not** display it;
+  press **Rotate** on the directory page to get a copyable token, shown once
   ([tokens are hashed](./runbook.md#proxy-tokens-are-hashed-so-they-cant-be-read-back)).
+  If your IdP already presents a bearer token you want to keep, paste it into the
+  **Existing IdP bearer token** field instead and the IdP needs no credential
+  change ([zero IdP-touch](./runbook.md#zero-idp-touch-deployment)).
+- `workos_directory_id` — the WorkOS `directory_id` from Step A's note; the DSync
+  listener and status endpoint key on it (Step D).
 
 ## Step C — repoint the IdP
 
