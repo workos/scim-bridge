@@ -24,6 +24,7 @@ import {
   mirrorUpsert,
   nativeNamespaceIsShared,
   parseJson,
+  scimErrorDetail,
   sharesNativeNamespace,
   scimFetch,
   type IdTranslationMaps,
@@ -569,7 +570,7 @@ async function pushToNative(
     }
   } else {
     counts.failed += 1;
-    pushError(errors, `${kind}/${nativeId}: ${describeFailure(result.status)}`);
+    pushError(errors, `${kind}/${nativeId}: ${describeFailure(result)}`);
   }
 }
 
@@ -761,10 +762,14 @@ async function findNativeIdByAttr(
   return isRecord(match) && typeof match.id === "string" ? match.id : null;
 }
 
-function describeFailure(status: number): string {
-  return status === 409
-    ? "native returned 409 (userName/displayName exists under a different id; drift unresolved)"
-    : `native returned ${status}`;
+function describeFailure(result: UpstreamResult): string {
+  // 409 keeps the bridge's own diagnosis — it names the repair that was tried
+  // and why the operator sees it unresolved, which the upstream body cannot.
+  if (result.status === 409) {
+    return "native returned 409 (userName/displayName exists under a different id; drift unresolved)";
+  }
+  const detail = scimErrorDetail(result.bodyText);
+  return `native returned ${result.status}${detail ? ` (${detail})` : ""}`;
 }
 
 function pushError(errors: string[], message: string): void {

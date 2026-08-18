@@ -461,19 +461,46 @@ function mirrorOk(workosRequest: string, result: UpstreamResult, acc: Elapsed): 
   };
 }
 
+/**
+ * The human-readable reason inside a SCIM error body — RFC 7644 `detail`,
+ * prefixed with `scimType` when present — or null when the body is not one.
+ * Collapsed to a single line and capped so a misbehaving upstream cannot
+ * balloon the one-line error reports this feeds.
+ */
+export function scimErrorDetail(bodyText: string | null): string | null {
+  const body = bodyText ? parseJson(bodyText) : null;
+  if (!body || typeof body.detail !== "string") return null;
+  const scimType = typeof body.scimType === "string" && body.scimType !== "";
+  const detail = `${scimType ? `${body.scimType}: ` : ""}${body.detail}`
+    .replace(/\s+/g, " ")
+    .trim();
+  if (detail === "") return null;
+  // Cap by code point, not code unit: String#slice can cut between a surrogate
+  // pair's halves and render a broken character in the report.
+  const characters = Array.from(detail);
+  return characters.length > 200 ? `${characters.slice(0, 200).join("")}…` : detail;
+}
+
 function mirrorFail(
   workosRequest: string,
   result: UpstreamResult,
   acc: Elapsed,
   error: string,
 ): MirrorResult {
+  // A failed leg's body is usually a SCIM error whose `detail` says WHY, so
+  // carry it in the error string: the backfill summary and the live divergence
+  // records report only this one line, and the raw body is persisted nowhere
+  // unless the directory opts into log persistence. Guarded on the status
+  // because one caller reports a failure ABOUT a 2xx response (a create whose
+  // echo has no id), where the body is a resource, not an error.
+  const detail = isSuccess(result.status) ? null : scimErrorDetail(result.bodyText);
   return {
     ok: false,
     workosRequest,
     status: result.status,
     ms: acc.ms,
     body: result.bodyText,
-    error,
+    error: detail ? `${error} (${detail})` : error,
   };
 }
 
