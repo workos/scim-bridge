@@ -314,12 +314,83 @@ describe("runBackfill", () => {
     expect(summary.users).toEqual({ total: 3, mirrored: 1, failed: 2 });
     expect(summary.groups).toEqual({ total: 0, mirrored: 0, failed: 0 });
     expect(summary.errors).toEqual([
-      "Users/u2: WorkOS POST returned 500",
+      "Users/u2: WorkOS POST returned 500 (boom)",
       "Users/u3: socket hang up",
     ]);
     // Only the survivor got a mapping.
     expect(await mappingRows(env, directory.id)).toEqual([
       { resource_type: "Users", native_id: "u1", workos_id: "u1", strategy: "migrated-id" },
+    ]);
+  });
+
+  // A bare status code sends the operator to the WorkOS-side logs (or to support)
+  // for the reason; the SCIM error body already says it. Surfaced with the status
+  // so the summary self-diagnoses even when log persistence is off — which is the
+  // default state a test drive runs in.
+  it("surfaces the WorkOS SCIM error detail in the backfill summary", async () => {
+    const env = await createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+    fake = installFakeUpstreams();
+    fake.route("native", "GET", "/Users", listPage([{ id: "u1", userName: "admin" }]));
+    fake.route("native", "GET", "/Groups", listPage([]));
+    fake.route("workos", "PUT", "/Users/", scimJson(404, { detail: "not found" }));
+    fake.route(
+      "workos",
+      "POST",
+      "/Users",
+      scimJson(400, {
+        schemas: ["urn:ietf:params:scim:api:messages:2.0:Error"],
+        scimType: "invalidValue",
+        detail: "Required attributes missing: emails",
+        status: "400",
+      }),
+    );
+
+    const summary = await runBackfill(env.DB, directory);
+
+    expect(summary.users).toEqual({ total: 1, mirrored: 0, failed: 1 });
+    expect(summary.errors).toEqual([
+      "Users/u1: WorkOS POST returned 400 (invalidValue: Required attributes missing: emails)",
+    ]);
+  });
+
+  it("keeps the error bare when the failure body is not a SCIM error", async () => {
+    const env = await createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+    fake = installFakeUpstreams();
+    fake.route("native", "GET", "/Users", listPage([{ id: "u1", userName: "one@x.test" }]));
+    fake.route("native", "GET", "/Groups", listPage([]));
+    fake.route("workos", "PUT", "/Users/", scimJson(404, { detail: "not found" }));
+    fake.route(
+      "workos",
+      "POST",
+      "/Users",
+      () => new Response("<html>Bad Gateway</html>", { status: 502 }),
+    );
+
+    const summary = await runBackfill(env.DB, directory);
+
+    expect(summary.errors).toEqual(["Users/u1: WorkOS POST returned 502"]);
+  });
+
+  it("collapses and truncates an oversized SCIM error detail", async () => {
+    const env = await createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+    fake = installFakeUpstreams();
+    fake.route("native", "GET", "/Users", listPage([{ id: "u1", userName: "one@x.test" }]));
+    fake.route("native", "GET", "/Groups", listPage([]));
+    fake.route("workos", "PUT", "/Users/", scimJson(404, { detail: "not found" }));
+    fake.route(
+      "workos",
+      "POST",
+      "/Users",
+      scimJson(400, { detail: `bad\nattribute ${"x".repeat(300)}` }),
+    );
+
+    const summary = await runBackfill(env.DB, directory);
+
+    expect(summary.errors).toEqual([
+      `Users/u1: WorkOS POST returned 400 (${`bad attribute ${"x".repeat(300)}`.slice(0, 200)}…)`,
     ]);
   });
 
@@ -497,7 +568,7 @@ describe("runBackfill", () => {
 
     expect(summary.users).toEqual({ total: 25, mirrored: 0, failed: 25 });
     expect(summary.errors).toHaveLength(20);
-    expect(summary.errors[0]).toBe("Users/user-0: WorkOS POST returned 500");
+    expect(summary.errors[0]).toBe("Users/user-0: WorkOS POST returned 500 (boom)");
   });
 
   // A group Okta pushed carries no externalId, and a native app may serialize
@@ -781,7 +852,7 @@ describe("runReconcileFromWorkos", () => {
     const summary = await runReconcileFromWorkos(env.DB, directory);
 
     expect(summary.users).toEqual({ total: 2, mirrored: 1, failed: 1 });
-    expect(summary.errors).toEqual(["Users/wos_1: native returned 500"]);
+    expect(summary.errors).toEqual(["Users/wos_1: native returned 500 (nope)"]);
   });
 
   it("counts a thrown native leg and an id-less WorkOS resource as failed", async () => {
@@ -847,7 +918,7 @@ describe("runReconcileFromWorkos", () => {
       "/Users/wos_2",
     ]);
     expect(summary.users).toEqual({ total: 2, mirrored: 1, failed: 1 });
-    expect(summary.errors).toEqual(["Users/user one: native returned 500"]);
+    expect(summary.errors).toEqual(["Users/user one: native returned 500 (nope)"]);
 
     // Failure rows land in proxy_log too, with the raw (undecoded) native id.
     const rows = await proxyLogRows(env);
@@ -1584,7 +1655,13 @@ describe("runBackfill logging and member passthrough", () => {
     expect(
       rows.map((r) => [r.path, r.workos_request, r.workos_status, r.response_status, r.error]),
     ).toEqual([
-      ["/Users/u1", `POST /Users +${MIGRATED_ID_HEADER}`, 500, 500, "WorkOS POST returned 500"],
+      [
+        "/Users/u1",
+        `POST /Users +${MIGRATED_ID_HEADER}`,
+        500,
+        500,
+        "WorkOS POST returned 500 (boom)",
+      ],
       ["/Users/u2", `PUT /Users/u2 +${MIGRATED_ID_HEADER}`, null, null, "socket hang up"],
     ]);
     expect(await mappingRows(env, directory.id)).toEqual([]);
