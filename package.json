@@ -27,7 +27,7 @@
     "@radix-ui/themes": "^3.3.0",
     "@react-router/node": "^8.3.0",
     "better-sqlite3": "^13.0.3",
-    "cross-env": "^7.0.3",
+    "cross-env": "^10.1.0",
     "hono": "^4.13.2",
     "isbot": "^5.2.1",
     "pg": "^8.23.0",
