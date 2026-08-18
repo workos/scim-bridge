@@ -394,6 +394,29 @@ describe("runBackfill", () => {
     ]);
   });
 
+  it("truncates the detail on a character boundary, not mid surrogate pair", async () => {
+    const env = await createEnv();
+    const directory = await seedDirectory(env.DB, { mode: "dual-write" });
+    fake = installFakeUpstreams();
+    fake.route("native", "GET", "/Users", listPage([{ id: "u1", userName: "one@x.test" }]));
+    fake.route("native", "GET", "/Groups", listPage([]));
+    fake.route("workos", "PUT", "/Users/", scimJson(404, { detail: "not found" }));
+    // 199 ASCII chars + two astral-plane characters: a 200-code-UNIT cut would
+    // land between the first emoji's surrogate halves and render a broken char.
+    fake.route(
+      "workos",
+      "POST",
+      "/Users",
+      scimJson(400, { detail: `${"x".repeat(199)}💥💥` }),
+    );
+
+    const summary = await runBackfill(env.DB, directory);
+
+    expect(summary.errors).toEqual([
+      `Users/u1: WorkOS POST returned 400 (${"x".repeat(199)}💥…)`,
+    ]);
+  });
+
   it("pages through the native enumeration until totalResults is reached", async () => {
     const env = await createEnv();
     const directory = await seedDirectory(env.DB, { mode: "dual-write" });

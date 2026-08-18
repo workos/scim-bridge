@@ -475,7 +475,10 @@ export function scimErrorDetail(bodyText: string | null): string | null {
     .replace(/\s+/g, " ")
     .trim();
   if (detail === "") return null;
-  return detail.length > 200 ? `${detail.slice(0, 200)}…` : detail;
+  // Cap by code point, not code unit: String#slice can cut between a surrogate
+  // pair's halves and render a broken character in the report.
+  const characters = Array.from(detail);
+  return characters.length > 200 ? `${characters.slice(0, 200).join("")}…` : detail;
 }
 
 function mirrorFail(
