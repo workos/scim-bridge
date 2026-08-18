@@ -403,18 +403,11 @@ describe("runBackfill", () => {
     fake.route("workos", "PUT", "/Users/", scimJson(404, { detail: "not found" }));
     // 199 ASCII chars + two astral-plane characters: a 200-code-UNIT cut would
     // land between the first emoji's surrogate halves and render a broken char.
-    fake.route(
-      "workos",
-      "POST",
-      "/Users",
-      scimJson(400, { detail: `${"x".repeat(199)}💥💥` }),
-    );
+    fake.route("workos", "POST", "/Users", scimJson(400, { detail: `${"x".repeat(199)}💥💥` }));
 
     const summary = await runBackfill(env.DB, directory);
 
-    expect(summary.errors).toEqual([
-      `Users/u1: WorkOS POST returned 400 (${"x".repeat(199)}💥…)`,
-    ]);
+    expect(summary.errors).toEqual([`Users/u1: WorkOS POST returned 400 (${"x".repeat(199)}💥…)`]);
   });
 
   it("pages through the native enumeration until totalResults is reached", async () => {
