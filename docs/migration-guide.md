@@ -197,6 +197,13 @@ Before cutover your app must consume Directory Sync events:
 
 ## Step E — pilot one directory, then advance the rest in waves
 
+**Audit your data first.** WorkOS validates every user and group it is handed:
+a user without a non-empty `userName` and a usable email is rejected and held
+on the WorkOS side; quieter violations degrade silently. Every check is a
+query you can run against your users database today, before anything migrates
+— [workos-scim-requirements.md](./workos-scim-requirements.md) is the
+checklist, and the decoder for the errors the backfill summary reports.
+
 **Pilot first.** Take one low-stakes directory through every rung below — all
 the way to `workos-only` and one post-cutover change observed arriving through
 your listener — before touching the rest. Every integration surprise you'll

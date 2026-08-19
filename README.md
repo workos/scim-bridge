@@ -15,7 +15,9 @@ id mappings.
 > [`docs/migration-guide.md`](./docs/migration-guide.md)** — the end-to-end path
 > from the directory list you hand WorkOS to cutover, including the exact CSV
 > shapes exchanged at each handoff. [`docs/runbook.md`](./docs/runbook.md) has
-> each step's operational depth, and
+> each step's operational depth,
+> [`docs/workos-scim-requirements.md`](./docs/workos-scim-requirements.md) is
+> the data checklist to run against your users database before backfill, and
 > [`docs/architecture.md`](./docs/architecture.md) explains why it is built this
 > way.
 
