@@ -289,7 +289,10 @@ Advance the directory's mode from its page, verifying convergence in the
 1. **passthrough** → confirm requests flow through to native unchanged.
 2. **dual-write (native-first)** → new writes now also mirror to WorkOS.
 3. **Run backfill** → copies existing native state into WorkOS (idempotent;
-   safe to re-run). Requires dual-write on.
+   safe to re-run). Requires dual-write on. Failures in the summary are
+   usually the data, not the bridge —
+   [workos-scim-requirements.md](./workos-scim-requirements.md) maps each
+   WorkOS error to the audit that would have caught it.
 4. Verify parity (Mappings shows a WorkOS id per resource).
 5. **workos-primary** → WorkOS starts answering the IdP, while the proxy keeps
    writing the native app directly. **Stay here.** Dwelling on this rung is the
@@ -490,6 +493,8 @@ token). Keyless polling works only against that bundled mock — set
 | Proxy returns 401 and the token looks right | Check the header shape. `Authorization: Bearer <token>` (any casing of the scheme) and a bare `Authorization: <token>` both authenticate, so it doesn't matter whether the IdP adds the prefix or sends the field verbatim; any other scheme (`Basic …`) does not. The one shape that still fails is a doubled prefix — typing `Bearer <token>` into an IdP that then adds its own. |
 | Proxy returns 502 | The native (passthrough/dual-write) or WorkOS (workos-only) endpoint is unreachable — verify the URL/token with the directory page's test buttons. |
 | WorkOS answers 400 `invalidSyntax` on a mirror or backfill | An attribute the native app sent as `null` where WorkOS expects a string. The bridge drops null-valued keys from every WorkOS-bound resource body, so this should only appear on a `PATCH` (whose `Operations` are deliberately left alone — a null there can be a meaningful remove) or for a genuinely malformed value. |
+| WorkOS answers 400 `Required attributes missing: emails` | The user has no `emails[]` entry with a non-blank value and their `userName` is not an email address WorkOS could backfill from. WorkOS holds the user in a `Validating` state and drops them from group syncs until corrected — fix the source data and re-run backfill. The full set of WorkOS-side data requirements: [workos-scim-requirements.md](./workos-scim-requirements.md). |
+| WorkOS answers 409 on a mirror or backfill | A uniqueness collision inside the directory: a duplicate `userName` or active-user email (both case-insensitive), or a group identity (`externalId`, else `displayName`) already taken. The [data checklist](./workos-scim-requirements.md) has the audits that catch these up front. |
 | Listener ignores events after cutover | `GET /status/directories/{id}` must answer `apply_dsync_events: true`. If it answers `false` with `mode: workos-only`, the row didn't flip; if the listener ignores a `true`, it is deriving the decision from `mode` or `native_authoritative` instead of reading the field. |
 | Listener applies each change twice | It is inferring "apply" from `native_authoritative` (or from "not passthrough/dual-write") rather than reading `apply_dsync_events`. Those agree in every mode except `workos-primary`, so this shows up the moment a directory reaches that mode. |
 | Proxy returns 502 in workos-primary | Native rejected the write with a 5xx or could not be reached while WorkOS took it. Visible by design: the directory page's native-writes card names the resource. The IdP's retry is safe (ids are shared, so it converges); if native keeps refusing, **Reconcile from WorkOS** repairs it. |
