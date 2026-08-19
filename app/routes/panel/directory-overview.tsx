@@ -831,7 +831,7 @@ export default function DirectoryOverview() {
           <Flex direction="column" gap="4">
             <CardHeader
               title="Listener status endpoint"
-              description="The customer's native app polls this from its DSync event listener to decide whether to handle or ignore an event for this directory (native_authoritative). Authenticate with the directory's proxy bearer token above. Set the WorkOS directory id (directory_...) so the listener can address it by the id DSync events carry."
+              description="The customer's native app polls this from its DSync event listener and reads apply_dsync_events: apply the event when true, acknowledge and drop it when false. That field is the whole contract — native_authoritative only reports who owns the data. Authenticate with the directory's proxy bearer token above. Set the WorkOS directory id (directory_...) so the listener can address it by the id DSync events carry."
             />
             <Grid columns={{ initial: "1", sm: "2" }} gap="4">
               <Flex direction="column" gap="2">
