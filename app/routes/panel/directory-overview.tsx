@@ -37,6 +37,7 @@ import {
 } from "../../../workers/shared/client-tokens";
 import { checkNativeNamespace } from "../../../workers/shared/native-namespace";
 import { joinScimUrl } from "../../../workers/shared/scim";
+import { countUsers, type EndpointCount } from "./user-count";
 import { validateUpstreamUrl } from "../../../workers/shared/upstream-url";
 import type { BackfillSummary, Mode, NativeWriteFailure } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
@@ -52,11 +53,6 @@ interface HealthResult {
   status: number | null;
   ok: boolean;
   detail?: string;
-}
-
-interface EndpointCount {
-  reachable: boolean;
-  count: number | null;
 }
 
 interface TopologyResult {
@@ -146,29 +142,6 @@ async function checkEndpoint(
       ok: false,
       detail: error instanceof Error ? error.message : String(error),
     };
-  }
-}
-
-/** Live user count from an endpoint over SCIM, with a short timeout so an
- *  unreachable or not-yet-configured endpoint fails fast instead of hanging. */
-async function countUsers(url: string, token: string): Promise<EndpointCount> {
-  if (!url) return { reachable: false, count: null };
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5000);
-  try {
-    const response = await fetch(`${joinScimUrl(url, "/Users")}?count=1`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: controller.signal,
-      redirect: "manual",
-    });
-    if (!response.ok) return { reachable: false, count: null };
-    const body = (await response.json()) as { totalResults?: unknown };
-    const count = typeof body.totalResults === "number" ? body.totalResults : null;
-    return { reachable: true, count };
-  } catch {
-    return { reachable: false, count: null };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -666,12 +639,21 @@ function LiveStateCard({ mode }: { mode: Mode }) {
   }, [fetcher]);
 
   const topo = fetcher.data?.topology;
-  const counts = { native: topo?.native.count ?? null, workos: topo?.workos.count ?? null };
+  const counts = {
+    native: topo?.native.count ?? null,
+    nativeTruncated: topo?.native.truncated,
+    workos: topo?.workos.count ?? null,
+    workosTruncated: topo?.workos.truncated,
+  };
 
   let sync: { color: "green" | "yellow" | "gray"; label: string } | null = null;
   if (topo) {
     if (!topo.native.reachable || !topo.workos.reachable) {
       sync = { color: "gray", label: "endpoint unreachable" };
+    } else if (topo.native.truncated || topo.workos.truncated) {
+      // A truncated count is a floor, so equality (and inequality) between the
+      // two sides proves nothing — say so instead of claiming either.
+      sync = { color: "gray", label: "counts capped" };
     } else if (topo.native.count === topo.workos.count) {
       sync = { color: "green", label: "in sync" };
     } else {

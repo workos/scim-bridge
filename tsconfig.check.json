@@ -10,18 +10,21 @@
   // of its own deliberately: this project changing what CI enforces should be
   // its own reviewable commit, not a rider on a 470-file deletion.
   "extends": "./tsconfig.json",
-  // Two panel files are in here. app/context.ts, because server/index.ts imports
+  // Three panel files are in here. app/context.ts, because server/index.ts imports
   // it to populate the request context and a composite project must list every
-  // file it reaches; and app/routes/panel/reconcile.ts, the Live state panel's
-  // divergence comparison, which a test asserts on directly. Both are plain
-  // TypeScript that imports no component — a panel *route* would drag the whole
-  // component tree into this project, which is what the exclude below is about.
+  // file it reaches; app/routes/panel/reconcile.ts, the Live state panel's
+  // divergence comparison, which a test asserts on directly; and
+  // app/routes/panel/user-count.ts, the live user-count probe, likewise
+  // test-asserted. All are plain TypeScript that imports no component — a panel
+  // *route* would drag the whole component tree into this project, which is what
+  // the exclude below is about.
   "include": [
     "workers/**/*",
     "server/**/*",
     "tests/**/*",
     "app/context.ts",
-    "app/routes/panel/reconcile.ts"
+    "app/routes/panel/reconcile.ts",
+    "app/routes/panel/user-count.ts"
   ],
   // The one test that imports a panel route. scripts/check-type-gate.mjs fails if
   // another test starts crossing that line. Now that the panel typechecks clean,
