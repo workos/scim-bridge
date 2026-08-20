@@ -639,12 +639,21 @@ function LiveStateCard({ mode }: { mode: Mode }) {
   }, [fetcher]);
 
   const topo = fetcher.data?.topology;
-  const counts = { native: topo?.native.count ?? null, workos: topo?.workos.count ?? null };
+  const counts = {
+    native: topo?.native.count ?? null,
+    nativeTruncated: topo?.native.truncated,
+    workos: topo?.workos.count ?? null,
+    workosTruncated: topo?.workos.truncated,
+  };
 
   let sync: { color: "green" | "yellow" | "gray"; label: string } | null = null;
   if (topo) {
     if (!topo.native.reachable || !topo.workos.reachable) {
       sync = { color: "gray", label: "endpoint unreachable" };
+    } else if (topo.native.truncated || topo.workos.truncated) {
+      // A truncated count is a floor, so equality (and inequality) between the
+      // two sides proves nothing — say so instead of claiming either.
+      sync = { color: "gray", label: "counts capped" };
     } else if (topo.native.count === topo.workos.count) {
       sync = { color: "green", label: "in sync" };
     } else {

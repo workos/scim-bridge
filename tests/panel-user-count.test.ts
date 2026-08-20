@@ -30,21 +30,60 @@ describe("countUsers", () => {
   let fake: FakeUpstreams | undefined;
   afterEach(() => fake?.restore());
 
-  it("reports the collection size against a server whose totalResults is the page size", async () => {
-    fake = installFakeUpstreams();
-    const all = users(16);
-    fake.route("native", "GET", /^\/Users/, (call) => {
-      const requested = Number(
-        new URL(`https://x${call.path}`, "https://x").searchParams.get("count") ?? all.length,
-      );
-      const page = all.slice(0, requested);
-      // The naive shape: totalResults echoes the page, not the collection.
+  /** A server with the naive shape: it honors count/startIndex, but reports
+   *  totalResults as the size of the page it returned, not the collection. */
+  function naiveServer(fakeUpstreams: FakeUpstreams, total: number) {
+    const all = users(total);
+    fakeUpstreams.route("native", "GET", /^\/Users/, (call) => {
+      const params = new URL(`https://x${call.path}`, "https://x").searchParams;
+      const requested = Number(params.get("count") ?? all.length);
+      const startIndex = Number(params.get("startIndex") ?? 1);
+      const page = all.slice(startIndex - 1, startIndex - 1 + requested);
       return listPage(page, page.length);
     });
+  }
+
+  it("reports the collection size against a server whose totalResults is the page size", async () => {
+    fake = installFakeUpstreams();
+    naiveServer(fake, 16);
 
     const result = await countUsers(NATIVE_URL, "native-secret");
 
-    expect(result).toEqual({ reachable: true, count: 16 });
+    expect(result).toEqual({ reachable: true, count: 16, truncated: false });
+    // A page that isn't full already proves the collection ended: no second probe.
+    expect(fake.calls).toHaveLength(1);
+  });
+
+  it("resolves a full first page with one more probe when the total is page-sized", async () => {
+    fake = installFakeUpstreams();
+    naiveServer(fake, 250);
+
+    const result = await countUsers(NATIVE_URL, "native-secret");
+
+    // Page 2 (startIndex=201) returns 50 rows and is not full, so the count is
+    // exact — the ambiguity is resolved, not merely flagged.
+    expect(result).toEqual({ reachable: true, count: 250, truncated: false });
+    expect(fake.calls).toHaveLength(2);
+  });
+
+  it("reports a floor and truncation when the second page is full too", async () => {
+    fake = installFakeUpstreams();
+    naiveServer(fake, 450);
+
+    const result = await countUsers(NATIVE_URL, "native-secret");
+
+    expect(result).toEqual({ reachable: true, count: 400, truncated: true });
+    expect(fake.calls).toHaveLength(2);
+  });
+
+  it("keeps an exactly-page-sized collection exact via the empty second page", async () => {
+    fake = installFakeUpstreams();
+    naiveServer(fake, 200);
+
+    const result = await countUsers(NATIVE_URL, "native-secret");
+
+    expect(result).toEqual({ reachable: true, count: 200, truncated: false });
+    expect(fake.calls).toHaveLength(2);
   });
 
   it("still trusts a compliant totalResults beyond the returned page", async () => {
@@ -53,7 +92,9 @@ describe("countUsers", () => {
 
     const result = await countUsers(NATIVE_URL, "native-secret");
 
-    expect(result).toEqual({ reachable: true, count: 500 });
+    // totalResults exceeding the page is unambiguous: one request, no probe.
+    expect(result).toEqual({ reachable: true, count: 500, truncated: false });
+    expect(fake.calls).toHaveLength(1);
   });
 
   it("falls back to counting the returned resources when totalResults is missing", async () => {
@@ -70,7 +111,7 @@ describe("countUsers", () => {
 
     const result = await countUsers(NATIVE_URL, "native-secret");
 
-    expect(result).toEqual({ reachable: true, count: 3 });
+    expect(result).toEqual({ reachable: true, count: 3, truncated: false });
   });
 
   it("reports a reachable endpoint with no readable count as null, not zero", async () => {
@@ -79,6 +120,6 @@ describe("countUsers", () => {
 
     const result = await countUsers(NATIVE_URL, "native-secret");
 
-    expect(result).toEqual({ reachable: true, count: null });
+    expect(result).toEqual({ reachable: true, count: null, truncated: false });
   });
 });
