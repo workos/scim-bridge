@@ -20,6 +20,7 @@ import {
   checkNativeNamespace,
   duplicateNativeNamespaces,
   duplicateNativeNamespaceWarnings,
+  partitionedNamespaceNotices,
 } from "../workers/shared/native-namespace";
 import { newScimToken } from "../workers/shared/ids";
 import type { PocEnv } from "../workers/shared/types";
@@ -514,7 +515,7 @@ export async function seedDemoDirectory(env: PocEnv, config: AppConfig): Promise
 
 /**
  * Warn at boot about directories that already share a native SCIM namespace,
- * and return how many groups were found.
+ * and return how many conflicting groups were found.
  *
  * Deliberately not fatal. A database written before the rule was enforced may hold
  * two directories on one endpoint, and the only place an operator can repair that
@@ -524,15 +525,23 @@ export async function seedDemoDirectory(env: PocEnv, config: AppConfig): Promise
  * stops the moment the process does; here the unsafe state is data, which
  * outlives the process and needs the panel to correct.
  *
+ * Attested token-partitioned groups are not conflicts and are excluded from the
+ * count: they log at INFO — an audit line naming each operator-sanctioned shared
+ * endpoint at every boot — not a WARNING asking anyone to act.
+ *
  * The panel repeats these on the directory list, because nobody reads container
  * logs from a month ago.
  */
 export async function reportNativeNamespaceDuplicates(env: PocEnv): Promise<number> {
   const duplicates = duplicateNativeNamespaces(await listDirectories(env.DB));
-  for (const warning of duplicateNativeNamespaceWarnings(duplicates)) {
+  const warnings = duplicateNativeNamespaceWarnings(duplicates);
+  for (const warning of warnings) {
     console.warn(`WARNING: ${warning}`);
   }
-  return duplicates.length;
+  for (const notice of partitionedNamespaceNotices(duplicates)) {
+    console.log(`INFO: ${notice}`);
+  }
+  return warnings.length;
 }
 
 /** Both upstream legs of the seeded demo directory: this process's own fakes. */

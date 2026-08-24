@@ -20,6 +20,7 @@ import {
   findNativeNamespaceConflict,
   namespaceConflictMessage,
   type NamespaceDirectory,
+  partitionedNamespaceNotices,
   unparseableNativeUrlMessage,
 } from "../../../workers/shared/native-namespace";
 import { nativeNamespaceKey } from "../../../workers/shared/scim";
@@ -177,7 +178,17 @@ function csvNamespaceRefusals(
       refusals.push(`Row ${line} (${row.name}): ${stored}`);
       continue;
     }
-    accepted.push({ id: `row ${line}`, name: row.name, native_url: url, line });
+    // A CSV row is never attested: token partitioning is a deliberate
+    // per-directory act on the directory page, not a column someone pastes
+    // without reading. So an import can only ever *tighten* against these rows.
+    accepted.push({
+      id: `row ${line}`,
+      name: row.name,
+      native_url: url,
+      native_token: row.native_token,
+      native_token_partitioned: 0,
+      line,
+    });
   }
   return refusals;
 }
@@ -194,6 +205,7 @@ export async function loader({ context }: Route.LoaderArgs) {
       countNativeWriteFailures(db),
     ]);
 
+  const namespaceDuplicates = duplicateNativeNamespaces(directories);
   return {
     directories,
     /** Per directory, how many resources WorkOS holds a write for that native does
@@ -203,7 +215,11 @@ export async function loader({ context }: Route.LoaderArgs) {
      *  refused, so this is only ever data written before the check existed — and the
      *  panel is where an operator repairs it, which is why it is surfaced rather
      *  than made fatal at boot. */
-    namespaceWarnings: duplicateNativeNamespaceWarnings(duplicateNativeNamespaces(directories)),
+    namespaceWarnings: duplicateNativeNamespaceWarnings(namespaceDuplicates),
+    /** Shared endpoints the operator attested as token-partitioned: reported as
+     *  standing state, not a conflict, because the isolation rests on their
+     *  attestation rather than anything the bridge can verify. */
+    namespaceNotices: partitionedNamespaceNotices(namespaceDuplicates),
     proxyPublicUrl: proxyPublicUrl ?? "",
     nativePublicUrl: nativePublicUrl ?? "",
     nativeScimToken: nativeScimToken ?? "",
@@ -421,6 +437,7 @@ export default function PanelHome() {
     directories,
     diverged,
     namespaceWarnings,
+    namespaceNotices,
     proxyPublicUrl,
     nativePublicUrl,
     nativeScimToken,
@@ -547,6 +564,17 @@ export default function PanelHome() {
           </Callout.Text>
           {namespaceWarnings.map((warning) => (
             <Callout.Text key={warning}>{warning}</Callout.Text>
+          ))}
+        </Callout.Root>
+      )}
+
+      {namespaceNotices.length > 0 && (
+        <Callout.Root color="gray" data-testid="namespace-attestations">
+          <Callout.Text>
+            Operator-attested shared endpoints — working as configured, on your attestation.
+          </Callout.Text>
+          {namespaceNotices.map((notice) => (
+            <Callout.Text key={notice}>{notice}</Callout.Text>
           ))}
         </Callout.Root>
       )}

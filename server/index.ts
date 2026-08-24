@@ -112,6 +112,8 @@ if (pollerStatus.running) {
 // but a database written before that could already violate it. Say so
 // loudly, naming the directories — and keep starting: the panel is where the
 // operator repairs the data, so refusing to boot would remove the only remedy.
+// Groups the operator attested as token-partitioned are not counted here; they
+// log at INFO inside the report.
 const namespaceDuplicates = await reportNativeNamespaceDuplicates(env);
 if (namespaceDuplicates) {
   console.warn(

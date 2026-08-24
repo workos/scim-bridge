@@ -57,6 +57,7 @@ const blankDirectory: Directory = {
   proxy_token_hint: "",
   native_url: "",
   native_token: "",
+  native_token_partitioned: 0,
   workos_url: "",
   workos_token: "",
   workos_directory_id: null,

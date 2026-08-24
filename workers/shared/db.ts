@@ -7,6 +7,9 @@ import {
   timingSafeEqual,
 } from "./crypto";
 import { newDirectoryId, newProxyToken } from "./ids";
+// Type-only, so the value-level import in the other direction (scim.ts uses
+// getMapping/listDirectories) does not become a runtime cycle.
+import type { NativeEndpoint } from "./scim";
 import { TransientDatastoreError, type Datastore } from "./datastore";
 import type {
   Directory,
@@ -352,19 +355,25 @@ export async function reconcileDirectories(
   );
 }
 
+/** URL, token, and the token-partitioning attestation are saved together: the
+ *  attestation is a claim about exactly this (URL, token) pair, so writing them
+ *  in one statement means no reader ever sees the flag attached to a half-updated
+ *  endpoint. */
 export async function setDirectoryNative(
   db: Datastore,
   id: string,
   url: string,
   token: string,
+  tokenPartitioned: boolean,
 ): Promise<void> {
   const encrypted = await encryptSecret(db, token);
   await withDatastoreRetry(() =>
     db
       .prepare(
-        "UPDATE scim_directories SET native_url = ?, native_token = ?, updated_at = datetime('now') WHERE id = ?",
+        "UPDATE scim_directories SET native_url = ?, native_token = ?, " +
+          "native_token_partitioned = ?, updated_at = datetime('now') WHERE id = ?",
       )
-      .bind(url, encrypted, id)
+      .bind(url, encrypted, tokenPartitioned ? 1 : 0, id)
       .run(),
   );
 }
@@ -484,32 +493,39 @@ export async function getMappingByWorkosId(
 
 /**
  * Mappings of this native id held by *other* directories, each carrying that
- * directory's native base URL so the caller can tell which of them address the
- * same native namespace: ids only collide meaningfully within one native app, so
- * two directories pointed at different endpoints can mint the same id for
- * unrelated resources. Namespace comparison is the caller's job — the URL needs
- * canonicalisation, which SQL string equality can't do (see
- * `sharesNativeNamespace`). No credential is selected: the native token plays no
- * part in the comparison, since the bridge cannot verify that a customer's app
- * scopes its rows by the presenting credential.
+ * directory's native endpoint coordinates so the caller can tell which of them
+ * address the same native namespace: ids only collide meaningfully within one
+ * native app, so two directories pointed at different endpoints can mint the
+ * same id for unrelated resources. Namespace comparison is the caller's job —
+ * the URL needs canonicalisation, which SQL string equality can't do (see
+ * `sharesNativeNamespace`). The native token rides along decrypted, with the
+ * per-directory partitioning attestation: where every directory on one URL has
+ * attested that the native app isolates rows by token, the same native id under
+ * two distinct tokens names two different tenants' rows, not one contested one.
  */
 export async function listOtherMappingsByNativeId(
   db: Datastore,
   directory: Directory,
   resourceType: ResourceType,
   nativeId: string,
-): Promise<(IdMapping & { native_url: string })[]> {
+): Promise<(IdMapping & NativeEndpoint)[]> {
   const { results } = await withDatastoreRetry(() =>
     db
       .prepare(
-        "SELECT m.*, d.native_url FROM id_mappings m " +
+        "SELECT m.*, d.native_url, d.native_token, d.native_token_partitioned " +
+          "FROM id_mappings m " +
           "JOIN scim_directories d ON d.id = m.directory_id " +
           "WHERE m.resource_type = ? AND m.native_id = ? AND m.directory_id != ?",
       )
       .bind(resourceType, nativeId, directory.id)
-      .all<IdMapping & { native_url: string }>(),
+      .all<IdMapping & NativeEndpoint>(),
   );
-  return results;
+  return Promise.all(
+    results.map(async (row) => ({
+      ...row,
+      native_token: await decryptSecret(db, row.native_token),
+    })),
+  );
 }
 
 /** The mapping fields a caller supplies; the rest of the row has defaults. */

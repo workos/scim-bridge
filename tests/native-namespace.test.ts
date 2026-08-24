@@ -4,6 +4,9 @@ import {
   checkNativeNamespace,
   duplicateNativeNamespaces,
   duplicateNativeNamespaceWarnings,
+  findNativeNamespaceConflict,
+  type NamespaceDirectory,
+  partitionedNamespaceNotices,
 } from "../workers/shared/native-namespace";
 import { reportNativeNamespaceDuplicates, seedDemoDirectory } from "../server/config";
 import type { AppConfig } from "../server/config";
@@ -24,6 +27,25 @@ import { createEnv, seedDirectory } from "./helpers";
 const HOST = "https://app.example.com";
 const ENDPOINT = `${HOST}/scim/v2`;
 
+/** A stored-directory fixture: unattested, with its own token by default, so
+ *  every pre-existing refusal below is proven to hold DESPITE distinct tokens —
+ *  distinctness alone must never lift a conflict. */
+function dir(
+  id: string,
+  name: string,
+  native_url: string,
+  extra: Partial<NamespaceDirectory> = {},
+): NamespaceDirectory {
+  return {
+    id,
+    name,
+    native_url,
+    native_token: `token-${id}`,
+    native_token_partitioned: 0,
+    ...extra,
+  };
+}
+
 /** The one directory in the database, asserted to be alone. */
 async function only(env: PocEnv): Promise<Directory> {
   const rows = await listDirectories(env.DB);
@@ -34,9 +56,7 @@ async function only(env: PocEnv): Promise<Directory> {
 describe("one directory per native SCIM namespace", () => {
   describe("the refusal an operator reads", () => {
     it("names the conflicting directory, the endpoint, and a per-directory path", () => {
-      const message = checkNativeNamespace(ENDPOINT, [
-        { id: "dir_01ACME", name: "Acme — Okta", native_url: ENDPOINT },
-      ]);
+      const message = checkNativeNamespace(ENDPOINT, [dir("dir_01ACME", "Acme — Okta", ENDPOINT)]);
       expect(message).toContain(ENDPOINT);
       // Which directory collided — by name AND id, because a fleet may hold two
       // directories called "Acme" and the operator has to find the right row.
@@ -53,8 +73,7 @@ describe("one directory per native SCIM namespace", () => {
     });
 
     it("puts the tenant segment where the customer's path already is", () => {
-      const at = (url: string) =>
-        checkNativeNamespace(url, [{ id: "d", name: "Other", native_url: url }]) ?? "";
+      const at = (url: string) => checkNativeNamespace(url, [dir("d", "Other", url)]) ?? "";
       // Before a trailing version segment, which is where SCIM services take it.
       expect(at("https://a.test/api/scim/v2.0")).toContain(
         "https://a.test/api/scim/<tenant-a>/v2.0",
@@ -80,7 +99,7 @@ describe("one directory per native SCIM namespace", () => {
   });
 
   describe("comparison is canonical, not textual", () => {
-    const stored = [{ id: "dir_01", name: "Acme", native_url: "https://app.example.com/scim/v2" }];
+    const stored = [dir("dir_01", "Acme", "https://app.example.com/scim/v2")];
 
     it.each([
       ["a trailing slash", "https://app.example.com/scim/v2/"],
@@ -102,10 +121,7 @@ describe("one directory per native SCIM namespace", () => {
     });
 
     it("allows any number of directories with no native endpoint yet", () => {
-      const blanks = [
-        { id: "a", name: "A", native_url: "" },
-        { id: "b", name: "B", native_url: "   " },
-      ];
+      const blanks = [dir("a", "A", ""), dir("b", "B", "   ")];
       expect(checkNativeNamespace("", blanks)).toBeNull();
       expect(checkNativeNamespace("   ", blanks)).toBeNull();
       // And a blank never blocks a real one.
@@ -150,12 +166,12 @@ describe("one directory per native SCIM namespace", () => {
 
     it("groups directories that share an endpoint, canonically", () => {
       const groups = duplicateNativeNamespaces([
-        { id: "a", name: "A", native_url: ENDPOINT },
-        { id: "b", name: "B", native_url: `${ENDPOINT}/` },
-        { id: "c", name: "C", native_url: "https://APP.EXAMPLE.COM:443/scim/v2" },
-        { id: "d", name: "D", native_url: `${HOST}/scim/d/v2` },
-        { id: "e", name: "E", native_url: "" },
-        { id: "f", name: "F", native_url: "" },
+        dir("a", "A", ENDPOINT),
+        dir("b", "B", `${ENDPOINT}/`),
+        dir("c", "C", "https://APP.EXAMPLE.COM:443/scim/v2"),
+        dir("d", "D", `${HOST}/scim/d/v2`),
+        dir("e", "E", ""),
+        dir("f", "F", ""),
       ]);
       expect(groups).toHaveLength(1);
       expect(groups[0].key).toBe(ENDPOINT);
@@ -164,8 +180,8 @@ describe("one directory per native SCIM namespace", () => {
 
     it("treats unparseable base URLs as possibly the same app", () => {
       const groups = duplicateNativeNamespaces([
-        { id: "a", name: "A", native_url: "app.example.com" },
-        { id: "b", name: "B", native_url: "not a url either" },
+        dir("a", "A", "app.example.com"),
+        dir("b", "B", "not a url either"),
       ]);
       // Fail-closed: the bridge cannot prove these address different apps, and
       // being wrong here costs a warning rather than a refusal.
@@ -178,11 +194,7 @@ describe("one directory per native SCIM namespace", () => {
       const at = (n: number) =>
         duplicateNativeNamespaceWarnings(
           duplicateNativeNamespaces(
-            Array.from({ length: n }, (_, i) => ({
-              id: `dir_0${i}`,
-              name: `D${i}`,
-              native_url: ENDPOINT,
-            })),
+            Array.from({ length: n }, (_, i) => dir(`dir_0${i}`, `D${i}`, ENDPOINT)),
           ),
         )[0];
       // "the directory A, the directory B are all configured" is what the first
@@ -216,6 +228,154 @@ describe("one directory per native SCIM namespace", () => {
 
       await expect(reportNativeNamespaceDuplicates(env)).resolves.toBe(0);
       expect(warn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("token-partitioned namespaces (the ENT-6878 opt-out)", () => {
+    const attested = (id: string, name: string, token: string) =>
+      dir(id, name, ENDPOINT, { native_token: token, native_token_partitioned: 1 });
+    const partitionedCandidate = (token: string) => ({
+      native_token: token,
+      native_token_partitioned: 1,
+    });
+
+    it("lifts the conflict only when both sides attest and the tokens differ", () => {
+      const holder = attested("dir_01A", "Org A", "token-a");
+      expect(checkNativeNamespace(ENDPOINT, [holder], partitionedCandidate("token-b"))).toBeNull();
+      // Canonically equivalent spellings of the shared URL are equally lifted.
+      expect(
+        checkNativeNamespace(`${ENDPOINT}/`, [holder], partitionedCandidate("token-b")),
+      ).toBeNull();
+      // A third attested tenant joins the same group past two incumbents.
+      expect(
+        checkNativeNamespace(
+          ENDPOINT,
+          [holder, attested("dir_01B", "Org B", "token-b")],
+          partitionedCandidate("token-c"),
+        ),
+      ).toBeNull();
+    });
+
+    it("keeps the refusal while either side has not opted in", () => {
+      const unattested = dir("dir_01A", "Org A", ENDPOINT, { native_token: "token-a" });
+      // Candidate attested, holder not: both must opt in.
+      expect(checkNativeNamespace(ENDPOINT, [unattested], partitionedCandidate("token-b"))).toMatch(
+        /already in use by/,
+      );
+      // Holder attested, candidate not — the CSV import and the create dialog
+      // never attest, so this is also what keeps bulk import strict.
+      expect(checkNativeNamespace(ENDPOINT, [attested("dir_01A", "Org A", "token-a")])).toMatch(
+        /already in use by/,
+      );
+    });
+
+    it("names the attestation remedy in the ordinary refusal", () => {
+      const message = checkNativeNamespace(ENDPOINT, [dir("dir_01A", "Org A", ENDPOINT)]) ?? "";
+      // The path remedy stays first; the attestation is the documented alternative.
+      expect(message).toContain(`${HOST}/scim/<tenant-a>/v2`);
+      expect(message).toMatch(/token-partitioned/);
+    });
+
+    it("refuses equal or empty tokens with the distinct-token message, naming no token", () => {
+      const holder = attested("dir_01A", "Org A", "token-shared");
+      const equal = checkNativeNamespace(ENDPOINT, [holder], partitionedCandidate("token-shared"));
+      // The distinct token IS the boundary being asserted, so the message says
+      // that instead of suggesting a path — and never contains the token itself.
+      expect(equal).toMatch(/do not tell them apart/);
+      expect(equal).not.toContain("token-shared");
+      expect(equal).not.toContain("<tenant-a>");
+      expect(checkNativeNamespace(ENDPOINT, [holder], partitionedCandidate(""))).toMatch(
+        /do not tell them apart/,
+      );
+    });
+
+    it("treats tokens the bridge cannot decrypt as indistinguishable", () => {
+      // Distinct ciphertexts prove nothing about the plaintexts (randomized IV),
+      // so attestation over opaque tokens must not lift the refusal.
+      const holder = attested("dir_01A", "Org A", "enc:v1:AAAA");
+      expect(checkNativeNamespace(ENDPOINT, [holder], partitionedCandidate("enc:v1:BBBB"))).toMatch(
+        /do not tell them apart/,
+      );
+    });
+
+    it("refuses a token edit that would equal a neighbour's in the attested group", () => {
+      // The URL is unchanged and already sanctioned; the TOKEN save is what
+      // collapses the boundary, so it is what gets refused.
+      const neighbours = [
+        attested("dir_01A", "Org A", "token-a"),
+        attested("dir_01B", "Org B", "token-b"),
+      ];
+      expect(
+        findNativeNamespaceConflict(ENDPOINT, neighbours, partitionedCandidate("token-b"))?.id,
+      ).toBe("dir_01B");
+      expect(checkNativeNamespace(ENDPOINT, neighbours, partitionedCandidate("token-b"))).toMatch(
+        /do not tell them apart/,
+      );
+    });
+
+    it("groups a fully attested set as partitioned, and reports it as INFO not WARNING", () => {
+      const duplicates = duplicateNativeNamespaces([
+        attested("dir_01A", "Org A", "token-a"),
+        attested("dir_01B", "Org B", "token-b"),
+      ]);
+      expect(duplicates).toHaveLength(1);
+      expect(duplicates[0].partitioned).toBe(true);
+      expect(duplicateNativeNamespaceWarnings(duplicates)).toHaveLength(0);
+      const [notice] = partitionedNamespaceNotices(duplicates);
+      expect(notice).toContain("Org A");
+      expect(notice).toContain("Org B");
+      expect(notice).toContain(ENDPOINT);
+      expect(notice).toMatch(/attest/);
+      // Audit line, not credential material.
+      expect(notice).not.toContain("token-a");
+      expect(notice).not.toContain("token-b");
+    });
+
+    it("keeps warning when the group is only partly attested or a pair's tokens match", () => {
+      const partly = duplicateNativeNamespaces([
+        attested("dir_01A", "Org A", "token-a"),
+        dir("dir_01B", "Org B", ENDPOINT, { native_token: "token-b" }),
+      ]);
+      expect(partly[0].partitioned).toBe(false);
+      expect(duplicateNativeNamespaceWarnings(partly)).toHaveLength(1);
+      expect(partitionedNamespaceNotices(partly)).toHaveLength(0);
+
+      const collided = duplicateNativeNamespaces([
+        attested("dir_01A", "Org A", "token-shared"),
+        attested("dir_01B", "Org B", "token-shared"),
+        attested("dir_01C", "Org C", "token-c"),
+      ]);
+      // One equal pair poisons the whole group: it is only as partitioned as its
+      // weakest pair.
+      expect(collided[0].partitioned).toBe(false);
+      expect(duplicateNativeNamespaceWarnings(collided)).toHaveLength(1);
+    });
+
+    it("boot reports an attested group at INFO and counts zero conflicts", async () => {
+      const env = await createEnv();
+      await seedDirectory(env.DB, {
+        name: "Org A",
+        native_url: ENDPOINT,
+        native_token: "token-a",
+        native_token_partitioned: 1,
+      });
+      await seedDirectory(env.DB, {
+        name: "Org B",
+        native_url: ENDPOINT,
+        native_token: "token-b",
+        native_token_partitioned: 1,
+      });
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      await expect(reportNativeNamespaceDuplicates(env)).resolves.toBe(0);
+
+      expect(warn).not.toHaveBeenCalled();
+      const logged = log.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(logged).toContain("INFO:");
+      expect(logged).toContain("Org A");
+      expect(logged).toContain("Org B");
+      expect(logged).not.toContain("token-a");
     });
   });
 });

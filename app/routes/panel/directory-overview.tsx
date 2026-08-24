@@ -41,7 +41,17 @@ import { countUsers, type EndpointCount } from "./user-count";
 import { validateUpstreamUrl } from "../../../workers/shared/upstream-url";
 import type { BackfillSummary, Mode, NativeWriteFailure } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
-import { Callout, Card, Code, Flex, Grid, RadioCards, Text, TextField } from "@radix-ui/themes";
+import {
+  Callout,
+  Card,
+  Checkbox,
+  Code,
+  Flex,
+  Grid,
+  RadioCards,
+  Text,
+  TextField,
+} from "@radix-ui/themes";
 import * as AlertDialog from "../../ui/alert-dialog";
 import { Badge } from "../../ui/badge";
 import { Button } from "../../ui/button";
@@ -187,6 +197,8 @@ export async function action({
 
   if (intent === "save-native") {
     const nativeUrl = String(form.get("native_url") ?? "").trim();
+    const nativeToken = String(form.get("native_token") ?? "").trim();
+    const tokenPartitioned = form.get("native_token_partitioned") === "on";
     const urlError = validateUpstreamUrl(nativeUrl);
     if (urlError) {
       return { error: urlError };
@@ -194,18 +206,19 @@ export async function action({
     // This intent can *move* a directory onto an endpoint another already uses,
     // which is the same hazard as creating it there. Every other
     // directory is a candidate; this one is excluded, or re-saving an unchanged
-    // URL would collide with itself.
+    // URL would collide with itself. The token and attestation being saved ride
+    // along: this is the one place an operator can attest token partitioning,
+    // and the same check refuses a token edit that would equal a neighbour's in
+    // an attested group — the distinct token is the boundary being asserted.
     const others = (await listDirectories(db)).filter((other) => other.id !== directory.id);
-    const namespaceError = checkNativeNamespace(nativeUrl, others);
+    const namespaceError = checkNativeNamespace(nativeUrl, others, {
+      native_token: nativeToken,
+      native_token_partitioned: tokenPartitioned ? 1 : 0,
+    });
     if (namespaceError) {
       return { error: namespaceError };
     }
-    await setDirectoryNative(
-      db,
-      directory.id,
-      nativeUrl,
-      String(form.get("native_token") ?? "").trim(),
-    );
+    await setDirectoryNative(db, directory.id, nativeUrl, nativeToken, tokenPartitioned);
     return {};
   }
 
@@ -541,6 +554,7 @@ function EndpointCard({
   tokenValue,
   buttonLabel,
   pending,
+  children,
 }: {
   title: string;
   description: string;
@@ -551,6 +565,10 @@ function EndpointCard({
   tokenValue: string;
   buttonLabel: string;
   pending: boolean;
+  /** Extra fields submitted with this endpoint's form, rendered between the
+   *  URL/token pair and the save button (the native card's token-partitioning
+   *  attestation). */
+  children?: React.ReactNode;
 }) {
   return (
     <Card size="3">
@@ -583,6 +601,7 @@ function EndpointCard({
               />
             </Flex>
           </Grid>
+          {children}
           <Flex justify="end">
             <Button loading={pending} type="submit">
               {buttonLabel}
@@ -793,7 +812,27 @@ export default function DirectoryOverview() {
         tokenValue={directory.native_token}
         buttonLabel="Save native endpoint"
         pending={pendingIntent === "save-native"}
-      />
+      >
+        <Flex direction="column" gap="2">
+          <Text as="label" size="2">
+            <Flex gap="2">
+              <Checkbox
+                defaultChecked={Boolean(directory.native_token_partitioned)}
+                name="native_token_partitioned"
+              />
+              This SCIM service isolates rows by bearer token (token-partitioned)
+            </Flex>
+          </Text>
+          <Text color="gray" size="1">
+            Only if your SCIM service serves every tenant from this one URL and decides the tenant
+            from the bearer token alone. Mark every directory that shares the URL and give each its
+            own native token — the bridge then treats endpoint-plus-token as the namespace. This is
+            your attestation: the bridge cannot verify the isolation, and if the service does not
+            actually partition by token, a write meant for one directory can land on another's
+            users. Prefer a path per tenant where you can.
+          </Text>
+        </Flex>
+      </EndpointCard>
 
       <EndpointCard
         title="WorkOS directory endpoint"
