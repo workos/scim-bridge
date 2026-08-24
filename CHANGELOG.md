@@ -13,6 +13,8 @@ Container images for each version:
 
 ## [Unreleased]
 
+## [0.4.0]
+
 ### Added
 
 - **Token-partitioned native namespaces (opt-in).** A SCIM service that serves
