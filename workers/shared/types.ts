@@ -34,6 +34,11 @@ export interface Directory {
   proxy_token_hint: string;
   native_url: string;
   native_token: string;
+  /** 1 = the operator attests the native app isolates rows by bearer token, so
+   *  directories on one `native_url` with distinct non-empty tokens are treated
+   *  as disjoint namespaces; 0 (default) = a shared URL is a shared id space.
+   *  An operator's promise the bridge cannot verify — see `sharesNativeNamespace`. */
+  native_token_partitioned: number;
   workos_url: string;
   workos_token: string;
   /** The WorkOS directory id (directory_...) this row migrates, when known.

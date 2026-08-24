@@ -889,28 +889,88 @@ describe("secretsMatch", () => {
 
 describe("sharesNativeNamespace", () => {
   const url = "https://native.test/scim/v2";
+  /** Unattested with its own token unless the test says otherwise. */
+  const endpoint = (native_url: string, native_token = "", native_token_partitioned = 0) => ({
+    native_url,
+    native_token,
+    native_token_partitioned,
+  });
 
-  it("is shared for the same url regardless of the tokens", async () => {
+  it("is shared for the same url regardless of the tokens, absent attestation", async () => {
     // The bridge cannot verify a customer's app partitions its rows by the
     // presenting credential, so a matching native_url is shared whether the
-    // tokens match or differ. Distinct tokens must not downgrade it to "not
-    // shared", which would open the cross-tenant write guards.
-    expect(await sharesNativeNamespace({ native_url: url }, { native_url: url })).toBe(true);
-    expect(await sharesNativeNamespace({ native_url: url }, { native_url: `${url}/` })).toBe(true);
+    // tokens match or differ. Distinct tokens alone must not downgrade it to
+    // "not shared", which would open the cross-tenant write guards.
+    expect(await sharesNativeNamespace(endpoint(url, "tok-a"), endpoint(url, "tok-b"))).toBe(true);
+    expect(await sharesNativeNamespace(endpoint(url, "tok-a"), endpoint(`${url}/`, "tok-b"))).toBe(
+      true,
+    );
   });
 
   it("is not shared when the urls differ", async () => {
-    expect(
-      await sharesNativeNamespace(
-        { native_url: url },
-        { native_url: "https://other.test/scim/v2" },
-      ),
-    ).toBe(false);
+    expect(await sharesNativeNamespace(endpoint(url), endpoint("https://other.test/scim/v2"))).toBe(
+      false,
+    );
   });
 
   it("fails closed on an unparseable url", async () => {
-    expect(await sharesNativeNamespace({ native_url: "not a url" }, { native_url: url })).toBe(
-      true,
-    );
+    expect(await sharesNativeNamespace(endpoint("not a url"), endpoint(url))).toBe(true);
+  });
+
+  describe("token partitioning (both sides attested)", () => {
+    it("splits one url into disjoint namespaces when the tokens are distinct", async () => {
+      expect(
+        await sharesNativeNamespace(endpoint(url, "tok-a", 1), endpoint(url, "tok-b", 1)),
+      ).toBe(false);
+      // Canonically the same url, still split: the attestation rides the
+      // namespace key, not the spelling.
+      expect(
+        await sharesNativeNamespace(endpoint(url, "tok-a", 1), endpoint(`${url}/`, "tok-b", 1)),
+      ).toBe(false);
+    });
+
+    it("stays shared when only one side attested", async () => {
+      expect(await sharesNativeNamespace(endpoint(url, "tok-a", 1), endpoint(url, "tok-b"))).toBe(
+        true,
+      );
+      expect(await sharesNativeNamespace(endpoint(url, "tok-a"), endpoint(url, "tok-b", 1))).toBe(
+        true,
+      );
+    });
+
+    it("stays shared on equal, empty, or whitespace tokens — they partition nothing", async () => {
+      expect(await sharesNativeNamespace(endpoint(url, "tok", 1), endpoint(url, "tok", 1))).toBe(
+        true,
+      );
+      expect(await sharesNativeNamespace(endpoint(url, "", 1), endpoint(url, "tok", 1))).toBe(true);
+      expect(await sharesNativeNamespace(endpoint(url, "   ", 1), endpoint(url, "tok", 1))).toBe(
+        true,
+      );
+      // Equal after trim is equal: whitespace is not a tenant boundary.
+      expect(await sharesNativeNamespace(endpoint(url, "tok ", 1), endpoint(url, " tok", 1))).toBe(
+        true,
+      );
+    });
+
+    it("stays shared when a token is still in its encrypted at-rest form", async () => {
+      // No APP_ENCRYPTION_KEY to decrypt with: a randomized IV makes equal
+      // plaintexts unequal ciphertexts, so two opaque values reading as
+      // "distinct" proves nothing — indistinguishable must mean shared.
+      expect(
+        await sharesNativeNamespace(
+          endpoint(url, "enc:v1:AAAA", 1),
+          endpoint(url, "enc:v1:BBBB", 1),
+        ),
+      ).toBe(true);
+    });
+
+    it("cannot rescue an unparseable url", async () => {
+      expect(
+        await sharesNativeNamespace(
+          endpoint("not a url", "tok-a", 1),
+          endpoint("not a url", "tok-b", 1),
+        ),
+      ).toBe(true);
+    });
   });
 });

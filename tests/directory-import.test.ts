@@ -400,7 +400,11 @@ async function postOverview(
 async function loadHome(
   env: PocEnv,
   demoMode = false,
-): Promise<{ namespaceWarnings: string[]; demoDirectory: string | null }> {
+): Promise<{
+  namespaceWarnings: string[];
+  namespaceNotices: string[];
+  demoDirectory: string | null;
+}> {
   const context = new RouterContextProvider();
   context.set(datastoreContext, env.DB);
   context.set(demoModeContext, demoMode);
@@ -410,6 +414,7 @@ async function loadHome(
     params: {},
   } as unknown as LoaderFunctionArgs)) as {
     namespaceWarnings: string[];
+    namespaceNotices: string[];
     demoDirectory: string | null;
   };
 }
@@ -502,6 +507,29 @@ describe("one directory per native SCIM namespace", () => {
       // Names both sides of the collision by row, since CSV rows have no ids yet.
       expect(result.error).toContain("Row 3 (Initech)");
       expect(result.error).toContain('row 2 ("Globex") of this same import');
+    });
+
+    it("stays strict against an attested token-partitioned group — CSV rows never attest", async () => {
+      const env = await createEnv();
+      // A stored, fully sanctioned token-partitioned directory on the endpoint.
+      const orgA = await seedDirectory(env.DB, {
+        name: "Org A",
+        native_url: NS_ENDPOINT,
+        native_token: "token-a",
+        native_token_partitioned: 1,
+      });
+
+      // The row even brings its own distinct native token — not enough. The
+      // attestation is a deliberate per-directory act on the directory page,
+      // not a column someone pastes without reading.
+      const result = (await nsSubmit(env, {
+        intent: "bulk-import",
+        csv: `Org B,${NS_ENDPOINT},token-b,,,`,
+      })) as { error?: string };
+
+      await only(env);
+      expect(result.error).toContain("Nothing was imported");
+      expect(result.error).toContain(orgA.id);
     });
 
     it("refuses the whole file when one row takes a stored directory's endpoint", async () => {
@@ -633,6 +661,142 @@ describe("one directory per native SCIM namespace", () => {
         }),
       ).toEqual({});
       expect((await getDirectoryById(env.DB, globex.id))?.native_url).toBe("");
+    });
+
+    describe("the token-partitioned attestation (ENT-6878)", () => {
+      it("lets an attested save join an attested neighbour's URL, and persists the flag", async () => {
+        const env = await createEnv();
+        await seedDirectory(env.DB, {
+          name: "Org A",
+          native_url: NS_ENDPOINT,
+          native_token: "token-a",
+          native_token_partitioned: 1,
+        });
+        const orgB = await seedDirectory(env.DB, { name: "Org B", native_url: "" });
+
+        expect(
+          await postOverview(env, orgB.id, {
+            intent: "save-native",
+            native_url: NS_ENDPOINT,
+            native_token: "token-b",
+            native_token_partitioned: "on",
+          }),
+        ).toEqual({});
+        const after = await getDirectoryById(env.DB, orgB.id);
+        expect(after?.native_url).toBe(NS_ENDPOINT);
+        expect(after?.native_token_partitioned).toBeTruthy();
+      });
+
+      it("refuses the same save without the checkbox, or against an unattested holder", async () => {
+        const env = await createEnv();
+        await seedDirectory(env.DB, {
+          name: "Org A",
+          native_url: NS_ENDPOINT,
+          native_token: "token-a",
+          native_token_partitioned: 1,
+        });
+        const orgB = await seedDirectory(env.DB, { name: "Org B", native_url: "" });
+
+        // No checkbox in the form — a browser omits an unchecked one entirely.
+        const unattested = (await postOverview(env, orgB.id, {
+          intent: "save-native",
+          native_url: NS_ENDPOINT,
+          native_token: "token-b",
+        })) as { error?: string };
+        expect(unattested.error).toMatch(/already in use by/);
+
+        const unattestedHolder = await seedDirectory(env.DB, {
+          name: "Org C",
+          native_url: `${NS_HOST}/scim/other/v2`,
+          native_token: "token-c",
+        });
+        const ontoUnattested = (await postOverview(env, orgB.id, {
+          intent: "save-native",
+          native_url: `${NS_HOST}/scim/other/v2`,
+          native_token: "token-b",
+          native_token_partitioned: "on",
+        })) as { error?: string };
+        expect(ontoUnattested.error).toContain(unattestedHolder.id);
+        expect((await getDirectoryById(env.DB, orgB.id))?.native_url).toBe("");
+      });
+
+      it("refuses a token save that would equal an attested neighbour's token", async () => {
+        const env = await createEnv();
+        await seedDirectory(env.DB, {
+          name: "Org A",
+          native_url: NS_ENDPOINT,
+          native_token: "token-a",
+          native_token_partitioned: 1,
+        });
+        const orgB = await seedDirectory(env.DB, {
+          name: "Org B",
+          native_url: NS_ENDPOINT,
+          native_token: "token-b",
+          native_token_partitioned: 1,
+        });
+
+        const result = (await postOverview(env, orgB.id, {
+          intent: "save-native",
+          native_url: NS_ENDPOINT,
+          native_token: "token-a",
+          native_token_partitioned: "on",
+        })) as { error?: string };
+
+        // The distinct token IS the boundary attested, so the save is refused —
+        // and the message never contains the token itself.
+        expect(result.error).toMatch(/do not tell them apart/);
+        expect(result.error).not.toContain("token-a");
+        expect((await getDirectoryById(env.DB, orgB.id))?.native_token).toBe("token-b");
+      });
+
+      it("also refuses UNticking the box while still sharing the URL", async () => {
+        const env = await createEnv();
+        await seedDirectory(env.DB, {
+          name: "Org A",
+          native_url: NS_ENDPOINT,
+          native_token: "token-a",
+          native_token_partitioned: 1,
+        });
+        const orgB = await seedDirectory(env.DB, {
+          name: "Org B",
+          native_url: NS_ENDPOINT,
+          native_token: "token-b",
+          native_token_partitioned: 1,
+        });
+
+        // Dropping the attestation would put an unattested directory on a shared
+        // URL — the exact state the rule forbids — so it is refused like any
+        // other way of reaching it.
+        const result = (await postOverview(env, orgB.id, {
+          intent: "save-native",
+          native_url: NS_ENDPOINT,
+          native_token: "token-b",
+        })) as { error?: string };
+        expect(result.error).toMatch(/already in use by/);
+        expect((await getDirectoryById(env.DB, orgB.id))?.native_token_partitioned).toBeTruthy();
+      });
+
+      it("reports an attested pair as a notice on the panel, not a conflict", async () => {
+        const env = await createEnv();
+        await seedDirectory(env.DB, {
+          name: "Org A",
+          native_url: NS_ENDPOINT,
+          native_token: "token-a",
+          native_token_partitioned: 1,
+        });
+        await seedDirectory(env.DB, {
+          name: "Org B",
+          native_url: NS_ENDPOINT,
+          native_token: "token-b",
+          native_token_partitioned: 1,
+        });
+
+        const { namespaceWarnings, namespaceNotices } = await loadHome(env);
+        expect(namespaceWarnings).toHaveLength(0);
+        expect(namespaceNotices).toHaveLength(1);
+        expect(namespaceNotices[0]).toContain("Org A");
+        expect(namespaceNotices[0]).not.toContain("token-a");
+      });
     });
   });
   describe("a deployment that already violates the rule", () => {

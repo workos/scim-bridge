@@ -697,9 +697,13 @@ async function unattributedReason(
   resource: Record<string, unknown>,
 ): Promise<string | null> {
   const others = await listOtherMappingsByNativeId(db, directory, kind, driftedId);
-  // A neighbour maps the *same* native row when it fronts the same native app
-  // (same native_url). Distinct native tokens do not make it a different row: the
-  // bridge cannot verify the customer's app scopes rows by credential.
+  // A neighbour maps the *same* native row when it fronts the same native
+  // namespace. On a plain shared native_url that is any neighbour — distinct
+  // tokens alone do not make it a different row, since the bridge cannot verify
+  // the customer's app scopes rows by credential. Where both directories are
+  // attested token-partitioned with distinct tokens, the same native id under
+  // the neighbour names a different tenant's row, so it neither blocks this
+  // attribution nor is written by it (see `sharesNativeNamespace`).
   const shared = await Promise.all(
     others.map((mapping) => sharesNativeNamespace(directory, mapping)),
   );

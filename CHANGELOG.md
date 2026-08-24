@@ -13,6 +13,22 @@ Container images for each version:
 
 ## [Unreleased]
 
+### Added
+
+- **Token-partitioned native namespaces (opt-in).** A SCIM service that serves
+  every tenant from one flat URL and decides the tenant from the bearer token can
+  now front several directories on that one URL — if the operator marks **each**
+  of them token-partitioned on its directory page and gives each its own native
+  token. The namespace identity becomes *(endpoint, token)*; every guard keeps
+  its fail-closed answer for any group that falls short (an unattested member,
+  equal or empty tokens, a token the bridge cannot decrypt). This is an explicit
+  attestation, not a detection: the bridge cannot verify the isolation, so the
+  refusal message, the runbook, and an `INFO` audit line at every boot all name
+  the risk — if the service does not actually isolate by token, a write for one
+  tenant lands on another. Per-tenant paths remain the recommendation, and the
+  bulk CSV import stays strict (rows can never attest). Adds the
+  `native_token_partitioned` column on both datastore engines.
+
 ## [0.3.1]
 
 A single security fix on top of 0.3.0.

@@ -1,5 +1,6 @@
 import type { Directory, IdMapping, ResourceType } from "./types";
 import { MIGRATED_ID_HEADER } from "./types";
+import { isEncryptedSecret, timingSafeEqual } from "./crypto";
 import {
   getMapping,
   getMappingByWorkosId,
@@ -144,24 +145,60 @@ export function sharesNamespace(ours: string, theirs: string): boolean {
   return a === null || b === null ? true : a === b;
 }
 
-/** The native-app coordinate two rows are compared on for collision: the base
- *  URL of the native app. A whole `Directory` satisfies it, but so does a
- *  mapping row that carries only this (see `listOtherMappingsByNativeId`). */
-export type NativeEndpoint = Pick<Directory, "native_url">;
+/** The native-app coordinate two rows are compared on for collision: where the
+ *  directory points, plus the credential and attestation that can split one URL
+ *  into per-tenant namespaces. A whole `Directory` satisfies it, but so does a
+ *  mapping row that carries only these (see `listOtherMappingsByNativeId`).
+ *  `native_token` must be plaintext — the db layer decrypts before comparing. */
+export type NativeEndpoint = Pick<
+  Directory,
+  "native_url" | "native_token" | "native_token_partitioned"
+>;
 
 /**
- * Whether two directories share a native namespace — i.e. front the same native
- * app. Two directories on one `native_url` share an id space: the bridge cannot
- * verify that the customer's app partitions its rows by which bearer token
- * authenticated a call, so a matching URL must be treated as shared regardless
- * of the tokens. Fails closed on an unparseable URL too (see `sharesNamespace`),
- * which only ever refuses a write.
+ * Whether both sides attest their native app isolates rows by bearer token AND
+ * present tokens that actually partition — non-empty and distinct. False on any
+ * shortfall: one side unattested (both must opt in), an empty token (partitions
+ * nothing), equal tokens (one tenant twice, not two tenants), or a token still
+ * in its encrypted at-rest form. That last one matters when `APP_ENCRYPTION_KEY`
+ * is unset for a row written encrypted: a randomized IV makes equal plaintexts
+ * unequal ciphertexts (see crypto.ts), so two opaque values could read as
+ * "distinct" while the real tokens are identical — indistinguishable must mean
+ * shared.
+ *
+ * Nothing derived from a token may leave this function: the comparison is the
+ * boundary check, the tokens themselves stay out of keys, logs, and messages.
+ */
+export function tokenPartitionSplits(a: NativeEndpoint, b: NativeEndpoint): boolean {
+  if (!a.native_token_partitioned || !b.native_token_partitioned) return false;
+  const ours = a.native_token.trim();
+  const theirs = b.native_token.trim();
+  if (ours === "" || theirs === "") return false;
+  if (isEncryptedSecret(ours) || isEncryptedSecret(theirs)) return false;
+  return !timingSafeEqual(ours, theirs);
+}
+
+/**
+ * Whether two directories share a native namespace — i.e. front the same set of
+ * rows in a native app. Two directories on one `native_url` share an id space:
+ * the bridge cannot verify that the customer's app partitions its rows by which
+ * bearer token authenticated a call, so a matching URL is treated as shared —
+ * unless BOTH directories carry the operator's explicit attestation that the app
+ * does exactly that, with distinct non-empty tokens as the tenant boundary
+ * (`tokenPartitionSplits`). Namespace identity is then (canonical URL, token).
+ * Fails closed on an unparseable URL (see `sharesNamespace`) whatever the
+ * attestations say: a URL the bridge cannot canonicalise cannot be claimed
+ * disjoint. Refusing a write is the only cost of a wrong "shared" here.
  */
 export async function sharesNativeNamespace(
   a: NativeEndpoint,
   b: NativeEndpoint,
 ): Promise<boolean> {
-  return sharesNamespace(a.native_url, b.native_url);
+  const ours = nativeNamespaceKey(a.native_url);
+  const theirs = nativeNamespaceKey(b.native_url);
+  if (ours === null || theirs === null) return true;
+  if (ours !== theirs) return false;
+  return !tokenPartitionSplits(a, b);
 }
 
 /**
@@ -172,9 +209,12 @@ export async function sharesNativeNamespace(
  * be choosing which of its neighbours' rows to write. Callers fail closed on
  * true.
  *
- * A matching `native_url` is sufficient to be shared: distinct native tokens do
- * NOT prove the callers address disjoint rows, because the bridge cannot verify
- * that the customer's app scopes its rows by the presenting credential.
+ * A matching `native_url` is sufficient to be shared unless every party has
+ * opted in to token partitioning: distinct native tokens alone do NOT prove the
+ * callers address disjoint rows, because the bridge cannot verify that the
+ * customer's app scopes its rows by the presenting credential. The attestation
+ * (`native_token_partitioned`, set per directory in the panel) is the operator
+ * taking responsibility for exactly that claim — see `sharesNativeNamespace`.
  */
 export async function nativeNamespaceIsShared(
   db: Datastore,

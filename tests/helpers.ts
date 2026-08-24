@@ -184,6 +184,7 @@ export interface SeedDirectoryOptions {
   proxy_token?: string;
   native_url?: string;
   native_token?: string;
+  native_token_partitioned?: number;
   workos_token?: string;
   workos_directory_id?: string | null;
   log_persistence?: number;
@@ -205,8 +206,9 @@ export async function seedDirectory(
     .prepare(
       `INSERT INTO scim_directories
          (id, name, mode, proxy_token_hash, proxy_token_hint, native_url, native_token,
-          workos_url, workos_token, workos_directory_id, log_persistence)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          native_token_partitioned, workos_url, workos_token, workos_directory_id,
+          log_persistence)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       // The same generator production uses, now that the column has no default.
@@ -217,6 +219,7 @@ export async function seedDirectory(
       proxyTokenHint(token),
       opts.native_url ?? NATIVE_URL,
       opts.native_token ?? "native-secret",
+      opts.native_token_partitioned ?? 0,
       WORKOS_URL,
       opts.workos_token ?? "workos-secret",
       opts.workos_directory_id ?? null,

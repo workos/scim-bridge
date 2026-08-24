@@ -159,11 +159,13 @@ a set of live credentials. It is still a set of *upstream* ones: the native and
 WorkOS bearer tokens are only encrypted if `APP_ENCRYPTION_KEY` is set, and the id
 mappings are irreplaceable. Both are arguments for a volume you control.
 
-## Deployment requirement: one directory per native SCIM endpoint
+## Deployment requirement: one directory per native SCIM namespace
 
-**Your SCIM service must give every directory its own base URL.** This is a
-requirement of the deployment, not a preference — check it before you import
-anything, because it may need a change on your side.
+**Your SCIM service must give every directory its own base URL — or, if it
+genuinely isolates rows by bearer token, its own token plus an explicit
+attestation (below).** This is a requirement of the deployment, not a
+preference — check it before you import anything, because it may need a change
+on your side.
 
 Two bridge directories pointed at one native endpoint share a single set of SCIM
 user and group ids. The bridge cannot see how your service decides which tenant a
@@ -185,17 +187,46 @@ https://app.example.com/scim/globex/v2    → directory 2
 ```
 
 If your SCIM service today serves every tenant from one flat URL and decides the
-tenant from the bearer token alone, add a path segment per directory before you
-migrate the second one. A token is not enough: the bridge has no way to verify
-that your service partitions rows by the presenting credential.
+tenant from the bearer token alone, the recommended fix is still a path segment
+per directory before you migrate the second one. A token alone is not enough:
+the bridge has no way to verify that your service partitions rows by the
+presenting credential.
 
 A directory with an empty native base URL is fine — it addresses nothing yet.
+
+### The token-partitioned attestation (flat-URL services)
+
+If adding per-tenant paths is not workable, you can keep the flat URL by
+attesting, per directory, that your SCIM service isolates rows by bearer token:
+on each directory's page, tick **“This SCIM service isolates rows by bearer
+token (token-partitioned)”** under **Native SCIM endpoint**, and give each
+directory its own native token. The conflict lifts only when **every**
+directory on the shared URL is attested **and** the tokens are pairwise
+distinct and non-empty — the namespace identity becomes *(endpoint, token)*
+instead of the endpoint alone. Anything short of that keeps the refusal:
+one unattested directory, an empty or duplicated token, or a token stored
+encrypted that the bridge can no longer decrypt (no `APP_ENCRYPTION_KEY`)
+all fail closed.
+
+Be clear about what you are signing: **this converts a guarantee the bridge
+enforces structurally into a promise only you can keep.** If your service does
+not actually isolate rows by token, a write meant for one directory lands on
+another's users — precisely the failure the per-path rule makes impossible.
+Because the token is now the tenant boundary, editing a native token to equal a
+neighbour's in the same attested group is refused, and the bulk CSV import
+never attests: rows sharing a `native_url` still refuse the whole file, and a
+second directory joins a flat URL only through the directory page.
+
+Attested groups are named at every boot as an `INFO` line and on the panel's
+directories page — an audit trail, not a warning.
 
 **Upgrading a deployment that already violates this.** The bridge still starts. It
 logs a `WARNING` at boot naming each set of directories that share an endpoint,
 and repeats it on the panel's directories page. Nothing is refused retroactively;
 only new saves are checked. Repair it by giving each directory its own path (edit
-**Native SCIM endpoint** on the directory page) and the warning clears.
+**Native SCIM endpoint** on the directory page) — or, where the token-partitioned
+conditions above truly hold, by attesting every directory in the group — and the
+warning clears.
 
 ## Import directories
 
@@ -403,14 +434,17 @@ shared namespace.** Several directories can front one native app (the same
 attribution) treat that as a *shared* namespace whatever the `native_token`s are,
 and refuse to attribute a native row from a tenant-supplied id — so no directory
 can name another's rows. Distinct per-directory native tokens deliberately do
-**not** relax this: whether a customer's app partitions its rows by the
-credential that authenticated the call is a property of that app, not something
-the bridge can observe or enforce, and an app that accepts every issued token
-over one flat row set would turn the relaxation into a cross-tenant write. The
-practical consequence is that directories sharing a `native_url` do not get the
-`externalId`-derived, id-preserving mapping; to keep it, **migrate each directory
-against a native namespace it has to itself** (a distinct `native_url`, e.g. a
-per-tenant host or path prefix).
+**not** relax this on their own: whether a customer's app partitions its rows by
+the credential that authenticated the call is a property of that app, not
+something the bridge can observe or enforce, and an app that accepts every issued
+token over one flat row set would turn the relaxation into a cross-tenant write.
+The practical consequence is that directories sharing a `native_url` do not get
+the `externalId`-derived, id-preserving mapping; to keep it, **migrate each
+directory against a native namespace it has to itself** — a distinct `native_url`
+(a per-tenant host or path prefix), or the
+[token-partitioned attestation](#the-token-partitioned-attestation-flat-url-services),
+under which every guard above treats each *(endpoint, token)* pair as its own
+namespace, on your word that the app isolates by token.
 
 Reconcile never deletes a native row to fix an id: native is the customer's own
 app, where a `DELETE` deprovisions a real person (session revocation, data

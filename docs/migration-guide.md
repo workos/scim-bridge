@@ -142,8 +142,11 @@ Acme — Okta,https://acme.example.com/scim/v2,tok_native,https://api.workos.com
 
 - `native_url` + `native_token` — your app's existing SCIM endpoint and the
   token the bridge presents to it, filled in by you. **One directory per native
-  endpoint** — see
-  [the namespace rule](./runbook.md#deployment-requirement-one-directory-per-native-scim-endpoint).
+  namespace** — its own base URL, or its own token where you attest the service
+  isolates rows by token; see
+  [the namespace rule](./runbook.md#deployment-requirement-one-directory-per-native-scim-namespace).
+  The CSV can never attest — a flat-URL second directory is set up on its
+  directory page after import.
 - `workos_url` + `workos_token` — already present from Step A; leave them as-is.
 
 Two fields are set on the directory's page after import, not in this CSV:
