@@ -156,4 +156,75 @@ describe("workos-primary create: externalId equal to another resource's native i
       strategy: "fallback-post",
     });
   });
+
+  it("converges an IdP retry when native adopted the externalId under a fallback-post mapping", async () => {
+    // The retry the refusal must NOT catch: a native app that adopts the externalId
+    // as its own id (native_id === externalId) while WorkOS mints a different id, so
+    // the mapping is {native_id: E, workos_id: W} and a faithful retry resolves E on
+    // the native_id column. It is the same resource, not a cross-resource alias, so
+    // it must converge onto W rather than be refused.
+    const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+
+    // First create: native adopts externalId "E"; WorkOS mints a different id "W".
+    fake.route("native", "POST", "/Users", scimJson(201, { id: "E", userName: "ada" }), {
+      once: true,
+    });
+    fake.route("workos", "PUT", "/Users/E", scimJson(404, { detail: "not found" }), { once: true });
+    fake.route("workos", "POST", "/Users", scimJson(201, { id: "W", userName: "ada" }), {
+      once: true,
+    });
+    const first = await proxyWorker.fetch(
+      proxyRequest(directory, "POST", "/scim/v2/Users", {
+        userName: "ada@example.com",
+        externalId: "E",
+        active: true,
+      }),
+      env,
+      createCtx(),
+    );
+    expect(first.status).toBe(201);
+    expect(await getMapping(env.DB, directory.id, "Users", "E")).toMatchObject({
+      workos_id: "W",
+      strategy: "fallback-post",
+    });
+
+    // The retry: native resolves the resource by its userName and adopts the id
+    // again, and the mirror converges onto the existing WorkOS row W.
+    fake.route("native", "GET", /^\/Users\?/, (call) => {
+      const filter = new URL(`http://native${call.path}`).searchParams.get("filter");
+      const rows =
+        filter === 'userName eq "ada@example.com"'
+          ? [{ id: "E", userName: "ada@example.com" }]
+          : [];
+      return scimJson(200, {
+        totalResults: rows.length,
+        startIndex: 1,
+        itemsPerPage: rows.length,
+        Resources: rows,
+      });
+    });
+    fake.route("native", "POST", "/Users", scimJson(201, { id: "E", userName: "ada" }), {
+      once: true,
+    });
+    fake.route("workos", "PUT", "/Users/W", scimJson(200, { id: "W", userName: "ada" }));
+
+    const retry = await proxyWorker.fetch(
+      proxyRequest(directory, "POST", "/scim/v2/Users", {
+        userName: "ada@example.com",
+        externalId: "E",
+        active: true,
+      }),
+      env,
+      createCtx(),
+    );
+
+    expect(retry.status).toBe(201);
+    expect(await retry.json()).toMatchObject({ id: "E" });
+    // The one mapping is unchanged — the retry converged, no alias was minted.
+    expect(await getMapping(env.DB, directory.id, "Users", "E")).toMatchObject({
+      workos_id: "W",
+      strategy: "fallback-post",
+    });
+    expect(await listNativeWriteFailures(env.DB, directory.id)).toEqual([]);
+  });
 });
