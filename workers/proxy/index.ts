@@ -753,6 +753,42 @@ async function workosPrimaryCreate(
       return finish(scimError(409, log.error));
     }
   }
+  // The other id space the same `externalId` can collide with. The mirror leg is
+  // keyed on `workosMintId` as a NATIVE id, so an `externalId` that already names
+  // an existing resource's native row sends the mirror down `mirrorUpsert`'s
+  // existing-mapping branch — a PUT onto THAT resource's WorkOS row, recorded into
+  // the sink and then rebound onto native's freshly echoed id: a second mapping
+  // onto the neighbour's row, the alias the DELETE id-space guard reads as a live
+  // native id. `claimedByAnother` guards the first-touch and 409-recovery mint
+  // sites, but only on the `workos_id` column and never this caller.
+  //
+  // It is the same collision `claimedMint` guards, on the other column, so it takes
+  // the same resolution: the only legitimate such create is the IdP retrying a
+  // create this directory already completed — the `fallback-post` case where native
+  // adopted the `externalId` as its own id while WorkOS minted a different one, so
+  // the mapping is keyed on the `externalId` as its `native_id`. Prove it the same
+  // way, against native, before either leg; anything native does not resolve to the
+  // claimed resource is refused with nothing to walk back.
+  const aliasedNative =
+    workosMintId && !claimedMint
+      ? await getMapping(env.DB, directory.id, kind, workosMintId)
+      : null;
+  if (aliasedNative) {
+    const priorNativeId = uniqueAttributeValue(kind, parsed)
+      ? await findNativeByUniqueAttribute(directory, kind, parsed)
+      : null;
+    if (priorNativeId !== aliasedNative.native_id) {
+      log.error =
+        `${kind}/${workosMintId} already names a resource in this directory, so a create cannot ` +
+        "reuse it as an externalId. Address that resource by the id this directory returned for " +
+        "it, or create the resource without reusing an existing id.";
+      return finish(scimError(409, log.error));
+    }
+  }
+  // The existing mapping this create is a retry of, found by either id column: its
+  // `native_id` is what native must echo for the create to be adopted, and the
+  // mirror runs native-first so it lands on the claimed row rather than minting one.
+  const claimed = claimedMint ?? aliasedNative;
   const nativeCreatePromise = nativeCreate(env, directory, kind, requestBody, contentType, url);
   // The mappings mirrorUpsert would write are collected instead of written: the
   // row has to be keyed on the id NATIVE reports, which is not known until its
@@ -760,10 +796,10 @@ async function workosPrimaryCreate(
   // that does not exist.
   const sink: MappingSink = [];
   const mirrorPromise =
-    workosMintId && !claimedMint
+    workosMintId && !claimed
       ? mirrorUpsert(env.DB, directory, kind, workosMintId, workosBody, sink)
       : nativeCreatePromise.then((native) =>
-          native.id === null || (claimedMint && claimedMint.native_id !== native.id)
+          native.id === null || (claimed && claimed.native_id !== native.id)
             ? null
             : mirrorUpsert(env.DB, directory, kind, native.id, workosBody, sink),
         );
@@ -792,7 +828,7 @@ async function workosPrimaryCreate(
     }
     return finish(nativeFailureResponse(native));
   }
-  if (claimedMint && claimedMint.native_id !== native.id) {
+  if (claimed && claimed.native_id !== native.id) {
     // The claim was resolved against native above and matched, so reaching here
     // means native then answered the create with a THIRD id — a native-side race
     // between the resolve and the create. Nothing was written to WorkOS (the
@@ -807,7 +843,7 @@ async function workosPrimaryCreate(
     // `reconcileFromWorkos` runs, since no WorkOS row exists to replay onto it.
     // The orphan native row is surfaced on the proxy log via `log.error` instead.
     log.error =
-      `${mintConflictDetail(kind, claimedMint.workos_id, claimedMint.native_id)} The native app ` +
+      `${mintConflictDetail(kind, claimed.workos_id, claimed.native_id)} The native app ` +
       `answered the create with ${kind}/${native.id}, which now has no WorkOS counterpart and no ` +
       "mapping; it will not converge on retry.";
     return finish(scimError(409, log.error));
