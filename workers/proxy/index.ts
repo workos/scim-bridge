@@ -753,6 +753,29 @@ async function workosPrimaryCreate(
       return finish(scimError(409, log.error));
     }
   }
+  // The other id space the same `externalId` can collide with. The mirror leg
+  // below is keyed on `workosMintId` as a NATIVE id, so an `externalId` that
+  // already names an existing resource's native row sends the mirror down
+  // `mirrorUpsert`'s existing-mapping branch — a PUT onto THAT resource's WorkOS
+  // row, recorded into the sink and then rebound onto native's freshly echoed id:
+  // a second mapping onto the neighbour's row, the alias the DELETE id-space guard
+  // reads as a live native id. `claimedByAnother` guards the first-touch and
+  // 409-recovery mint sites, but only on the `workos_id` column and never this
+  // caller. A `claimedMint` (the id is another resource's `workos_id`) is the
+  // legitimate migrated-id retry, resolved above; an id that is another resource's
+  // `native_id` has no legitimate create, so refuse it here, before either leg, so
+  // the neighbour's row is never written and there is nothing to walk back.
+  const aliasedNative =
+    workosMintId && !claimedMint
+      ? await getMapping(env.DB, directory.id, kind, workosMintId)
+      : null;
+  if (aliasedNative) {
+    log.error =
+      `${kind}/${workosMintId} already names a resource in this directory, so a create cannot ` +
+      "reuse it as an externalId. Address that resource by the id this directory returned for " +
+      "it, or create the resource without reusing an existing id.";
+    return finish(scimError(409, log.error));
+  }
   const nativeCreatePromise = nativeCreate(env, directory, kind, requestBody, contentType, url);
   // The mappings mirrorUpsert would write are collected instead of written: the
   // row has to be keyed on the id NATIVE reports, which is not known until its
