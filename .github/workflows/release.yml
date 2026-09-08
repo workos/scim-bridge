@@ -68,14 +68,33 @@ jobs:
       # when someone ticks the box.
       PUSH: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.push_image) }}
     outputs:
-      digest: ${{ steps.build.outputs.digest }}
+      digest: ${{ steps.build-publish.outputs.digest || steps.build-verify.outputs.digest }}
       version: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
           node-version: 26
+
+      - name: Setup Socket Firewall
+        id: sfw
+        uses: workos/setup-socket-firewall@ca93dd8aa351f54f4729fe3377a9be23c631c25d
+        with:
+          token: ${{ secrets.PUBLIC_SOCKET_FIREWALL_TOKEN }}
+          allow-external-fork-fallback: ${{ github.event_name == 'pull_request' }}
+
+      - name: Prepare Docker npm config
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.sfw.outputs.active }}" = "true" ]; then
+            cp "${HOME}/.npmrc" "${RUNNER_TEMP}/sfw-docker-npmrc"
+          else
+            printf 'registry=https://registry.npmjs.org/\n' > "${RUNNER_TEMP}/sfw-docker-npmrc"
+          fi
+          chmod 600 "${RUNNER_TEMP}/sfw-docker-npmrc"
 
       # The same guard CI runs, in the publish path too. An image whose lockfile
       # resolves from WorkOS's internal proxy can only be rebuilt inside WorkOS,
@@ -141,6 +160,29 @@ jobs:
           tags: scim-bridge:scan
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          secret-files: |
+            npmrc=${{ runner.temp }}/sfw-docker-npmrc
+
+      - name: Build multi-arch image before publishing
+        if: env.PUSH == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          secret-files: |
+            npmrc=${{ runner.temp }}/sfw-docker-npmrc
+
+      - name: Restore public registry before publishing
+        if: env.PUSH == 'true'
+        uses: workos/setup-socket-firewall/teardown@ca93dd8aa351f54f4729fe3377a9be23c631c25d
 
       # Layer scan, not `ls` in the container: a file deleted in a later layer
       # is still in the pushed image. Runs before the push, because "we noticed
@@ -191,8 +233,9 @@ jobs:
           fi
           echo "✓ the exact-version tag is not yet published"
 
-      - name: Build and push
-        id: build
+      - name: Build multi-arch image
+        if: env.PUSH != 'true'
+        id: build-verify
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -201,7 +244,33 @@ jobs:
           # Both go out under one manifest list, so `docker pull` picks the right
           # one and the README needs no per-arch instructions.
           platforms: linux/amd64,linux/arm64
-          push: ${{ env.PUSH == 'true' }}
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          secret-files: |
+            npmrc=${{ runner.temp }}/sfw-docker-npmrc
+
+      - name: Build and push
+        if: env.PUSH == 'true'
+        id: build-publish
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          # amd64 for the first customer's AWS hosts, arm64 for Cloudflare
+          # Containers and for anyone developing on an Apple Silicon laptop.
+          # Both go out under one manifest list, so `docker pull` picks the right
+          # one and the README needs no per-arch instructions.
+          platforms: linux/amd64,linux/arm64
+          # Socket Firewall has already been torn down. If any Dockerfile RUN
+          # step needs the network here, the protected pre-publish build did not
+          # supply the expected local BuildKit cache and this publish must fail.
+          network: none
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
@@ -210,15 +279,15 @@ jobs:
           # which is what lets a customer's scanner answer "are we exposed to
           # CVE-x" without asking us. Only the registry exporter can carry them,
           # so they are off when nothing is being pushed.
-          provenance: ${{ env.PUSH == 'true' && 'mode=max' || 'false' }}
-          sbom: ${{ env.PUSH == 'true' }}
+          provenance: mode=max
+          sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Summarise
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.build-publish.outputs.digest || steps.build-verify.outputs.digest }}
         run: |
           {
             echo "### Image"
@@ -241,6 +310,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Resolve the tag
         id: tag

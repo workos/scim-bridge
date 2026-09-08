@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -29,10 +32,17 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 26
           cache: npm
+      - name: Setup Socket Firewall
+        uses: workos/setup-socket-firewall@ca93dd8aa351f54f4729fe3377a9be23c631c25d
+        with:
+          token: ${{ secrets.PUBLIC_SOCKET_FIREWALL_TOKEN }}
+          allow-external-fork-fallback: ${{ github.event_name == 'pull_request' }}
       - run: npm ci
       # Every dependency must come from the public registry: this repo is
       # published, and an internal proxy URL installs for nobody else (#45).

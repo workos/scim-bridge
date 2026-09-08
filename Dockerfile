@@ -22,7 +22,7 @@ RUN node scripts/check-public-registry.mjs
 # `npm ci` only — no `|| npm install` fallback. The fallback turned an
 # unresolvable or stale lockfile into a green build against a *different*
 # dependency tree, which is the one failure the lockfile exists to prevent.
-RUN npm ci
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc npm ci
 
 COPY . .
 RUN npm run build && npm prune --omit=dev
