@@ -87,14 +87,22 @@ jobs:
           allow-external-fork-fallback: ${{ github.event_name == 'pull_request' }}
 
       - name: Prepare Docker npm config
+        env:
+          SFW_ACTIVE: ${{ steps.sfw.outputs.active }}
+          IS_EXTERNAL_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
           set -euo pipefail
-          if [ "${{ steps.sfw.outputs.active }}" = "true" ]; then
-            cp "${HOME}/.npmrc" "${RUNNER_TEMP}/sfw-docker-npmrc"
+          npmrc="${RUNNER_TEMP}/sfw-docker-npmrc"
+          if [ "$SFW_ACTIVE" = "true" ]; then
+            cat "${HOME}/.npmrc" > "$npmrc"
+            printf '\n%s\n' 'replace-registry-host=always' >> "$npmrc"
+          elif [ "$IS_EXTERNAL_FORK" = "true" ]; then
+            printf '%s\n' 'registry=https://registry.npmjs.org/' > "$npmrc"
           else
-            printf 'registry=https://registry.npmjs.org/\n' > "${RUNNER_TEMP}/sfw-docker-npmrc"
+            echo "::error::Socket Firewall did not activate for a trusted Docker build."
+            exit 1
           fi
-          chmod 600 "${RUNNER_TEMP}/sfw-docker-npmrc"
+          chmod 600 "$npmrc"
 
       # The same guard CI runs, in the publish path too. An image whose lockfile
       # resolves from WorkOS's internal proxy can only be rebuilt inside WorkOS,
@@ -158,13 +166,13 @@ jobs:
           load: true
           provenance: false
           tags: scim-bridge:scan
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          add-hosts: ${{ steps.sfw.outputs.active == 'true' && 'registry.npmjs.org=127.0.0.1' || '' }}
+          build-args: |
+            SOCKET_FIREWALL_REQUIRED=${{ steps.sfw.outputs.active }}
           secret-files: |
             npmrc=${{ runner.temp }}/sfw-docker-npmrc
 
-      - name: Build multi-arch image before publishing
-        if: env.PUSH == 'true'
+      - name: Build multi-arch image to warm publish cache
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -175,20 +183,48 @@ jobs:
           annotations: ${{ steps.meta.outputs.annotations }}
           provenance: false
           sbom: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          add-hosts: ${{ steps.sfw.outputs.active == 'true' && 'registry.npmjs.org=127.0.0.1' || '' }}
+          build-args: |
+            SOCKET_FIREWALL_REQUIRED=${{ steps.sfw.outputs.active }}
           secret-files: |
             npmrc=${{ runner.temp }}/sfw-docker-npmrc
 
-      - name: Restore public registry before publishing
-        if: env.PUSH == 'true'
+      - name: Remove Docker npm config
+        if: ${{ always() }}
+        run: rm -f "${RUNNER_TEMP}/sfw-docker-npmrc"
+
+      - name: Restore public registry after Docker installs
+        if: ${{ always() && steps.sfw.outputs.active == 'true' }}
         uses: workos/setup-socket-firewall/teardown@ca93dd8aa351f54f4729fe3377a9be23c631c25d
+
+      - name: Build publish-mode image without Docker npm config
+        id: build-verify
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          add-hosts: ${{ steps.sfw.outputs.active == 'true' && 'registry.npmjs.org=127.0.0.1' || '' }}
+          provenance: false
+          sbom: false
+          outputs: type=oci,dest=${{ runner.temp }}/scim-bridge-publish-mode.oci.tar
+          build-args: |
+            SOCKET_FIREWALL_REQUIRED=${{ steps.sfw.outputs.active }}
 
       # Layer scan, not `ls` in the container: a file deleted in a later layer
       # is still in the pushed image. Runs before the push, because "we noticed
       # after publishing" is not something a registry lets you undo.
+      - name: Test image secret scanner catches deleted-layer leaks
+        run: .github/scripts/test-image-secret-scanner.sh scim-bridge:scan
+
       - name: Check the image carries no secrets
         run: .github/scripts/check-image-secrets.sh scim-bridge:scan
+
+      - name: Check the multi-arch image carries no secrets
+        run: .github/scripts/check-image-secrets.sh "${RUNNER_TEMP}/scim-bridge-publish-mode.oci.tar"
 
       # Start it and drive the three routes a first-run customer touches. An
       # image that builds but does not boot fails at the worst possible moment:
@@ -233,28 +269,6 @@ jobs:
           fi
           echo "✓ the exact-version tag is not yet published"
 
-      - name: Build multi-arch image
-        if: env.PUSH != 'true'
-        id: build-verify
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          # amd64 for the first customer's AWS hosts, arm64 for Cloudflare
-          # Containers and for anyone developing on an Apple Silicon laptop.
-          # Both go out under one manifest list, so `docker pull` picks the right
-          # one and the README needs no per-arch instructions.
-          platforms: linux/amd64,linux/arm64
-          push: false
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          annotations: ${{ steps.meta.outputs.annotations }}
-          provenance: false
-          sbom: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          secret-files: |
-            npmrc=${{ runner.temp }}/sfw-docker-npmrc
-
       - name: Build and push
         if: env.PUSH == 'true'
         id: build-publish
@@ -266,10 +280,11 @@ jobs:
           # Both go out under one manifest list, so `docker pull` picks the right
           # one and the README needs no per-arch instructions.
           platforms: linux/amd64,linux/arm64
-          # Socket Firewall has already been torn down. If any Dockerfile RUN
-          # step needs the network here, the protected pre-publish build did not
-          # supply the expected local BuildKit cache and this publish must fail.
-          network: none
+          # The Docker npm config has already been removed. The required
+          # install layer must come from the protected local BuildKit cache; if
+          # it does not, the Dockerfile fails before npm can redownload without
+          # the mounted config.
+          add-hosts: ${{ steps.sfw.outputs.active == 'true' && 'registry.npmjs.org=127.0.0.1' || '' }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -281,8 +296,8 @@ jobs:
           # so they are off when nothing is being pushed.
           provenance: mode=max
           sbom: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          build-args: |
+            SOCKET_FIREWALL_REQUIRED=${{ steps.sfw.outputs.active }}
 
       - name: Summarise
         env:
@@ -296,6 +311,10 @@ jobs:
             echo "- tags: \`$(echo "$TAGS" | tr '\n' ' ')\`"
             echo "- digest: \`${DIGEST:-（not pushed）}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove local OCI export
+        if: ${{ always() }}
+        run: rm -f "${RUNNER_TEMP}/scim-bridge-publish-mode.oci.tar"
 
   release:
     needs: docker
