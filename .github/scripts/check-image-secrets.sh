@@ -204,10 +204,29 @@ def scan_docker_save(store: Store, offenders: list[str]) -> tuple[int, int, int]
             paths += p
     return image_count, layers, paths
 
+INDEX_MEDIA_TYPES = {
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+}
+IMAGE_MANIFEST_MEDIA_TYPES = {
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.docker.distribution.manifest.v2+json",
+}
+
+
+def safe_media(media: object) -> str:
+    if not media:
+        return "<missing>"
+    value = str(media)
+    if re.fullmatch(r"[-+./0-9A-Za-z]+", value):
+        return value
+    return "<redacted>"
+
+
 def scan_oci_descriptor(store: Store, desc: dict, label: str, offenders: list[str]) -> tuple[int, int, int]:
-    media = desc.get("mediaType", "")
-    obj = read_json(store, blob_name(desc))
-    if media.endswith("image.index.v1+json") or media.endswith("manifest.list.v2+json") or "image.index" in media:
+    media = str(desc.get("mediaType", ""))
+    if media in INDEX_MEDIA_TYPES:
+        obj = read_json(store, blob_name(desc))
         images = layers = paths = 0
         for idx, child in enumerate(obj.get("manifests", []) or []):
             i, l, p = scan_oci_descriptor(store, child, f"{label} manifest {idx}", offenders)
@@ -215,7 +234,8 @@ def scan_oci_descriptor(store: Store, desc: dict, label: str, offenders: list[st
             layers += l
             paths += p
         return images, layers, paths
-    if media.endswith("image.manifest.v1+json") or "image.manifest" in media:
+    if media in IMAGE_MANIFEST_MEDIA_TYPES:
+        obj = read_json(store, blob_name(desc))
         config = obj.get("config")
         if config and config.get("digest"):
             scan_config(json.loads(store.read_bytes(blob_name(config)).decode("utf-8")), label, offenders)
@@ -225,10 +245,19 @@ def scan_oci_descriptor(store: Store, desc: dict, label: str, offenders: list[st
             layers += l
             paths += p
         return 1, layers, paths
-    return 0, 0, 0
+    raise RuntimeError(
+        f"{label}: unsupported OCI descriptor media type {safe_media(media)}; "
+        "refusing to skip an uninspected descriptor"
+    )
 
 def scan_oci(store: Store, offenders: list[str]) -> tuple[int, int, int]:
     index = read_json(store, "index.json")
+    media = str(index.get("mediaType", ""))
+    if media and media not in INDEX_MEDIA_TYPES:
+        raise RuntimeError(
+            f"oci index: unsupported OCI index media type {safe_media(media)}; "
+            "refusing to scan an unknown layout"
+        )
     images = layers = paths = 0
     for idx, desc in enumerate(index.get("manifests", []) or []):
         i, l, p = scan_oci_descriptor(store, desc, f"oci image {idx}", offenders)
@@ -263,6 +292,9 @@ def main() -> int:
 
 try:
     raise SystemExit(main())
+except Exception as exc:
+    print(f"FAIL: {exc}", file=sys.stderr)
+    raise SystemExit(1)
 finally:
     shutil.rmtree(work, ignore_errors=True)
 PY
