@@ -11,7 +11,8 @@ import { readFileSync } from "node:fs";
 
 const ALLOWED_HOST = "registry.npmjs.org";
 
-const lock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8"));
+const lockPath = process.argv[2] ?? new URL("../package-lock.json", import.meta.url);
+const lock = JSON.parse(readFileSync(lockPath, "utf8"));
 
 /** Every `resolved` URL in the tree, with the package path that carries it. */
 function resolvedUrls(packages) {
