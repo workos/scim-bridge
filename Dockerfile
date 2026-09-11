@@ -22,10 +22,30 @@ RUN node scripts/check-public-registry.mjs
 # `npm ci` only — no `|| npm install` fallback. The fallback turned an
 # unresolvable or stale lockfile into a green build against a *different*
 # dependency tree, which is the one failure the lockfile exists to prevent.
-RUN npm ci
+# CI requires the ephemeral npm config secret produced by Socket Firewall; local
+# docker builds keep working without it. Lifecycle scripts run later with the
+# network disabled so build/prune hooks cannot download outside the protected
+# install layer.
+ARG SOCKET_FIREWALL_REQUIRED=false
+RUN --mount=type=secret,id=npmrc,target=/run/secrets/npmrc <<'EOF'
+set -eu
+npm_config=/run/secrets/npmrc
+if [ "$SOCKET_FIREWALL_REQUIRED" = "true" ]; then
+  if [ ! -s "$npm_config" ]; then
+    echo "Socket Firewall npm config secret is required for this Docker build" >&2
+    exit 1
+  fi
+
+  NPM_CONFIG_USERCONFIG="$npm_config" npm ci --ignore-scripts
+elif [ -s "$npm_config" ]; then
+  NPM_CONFIG_USERCONFIG="$npm_config" npm ci --ignore-scripts
+else
+  npm ci --ignore-scripts
+fi
+EOF
 
 COPY . .
-RUN npm run build && npm prune --omit=dev
+RUN --network=none npm_config_nodedir=/usr/local npm rebuild && npm run build && npm prune --omit=dev
 
 # ---- runtime stage -----------------------------------------------------------
 FROM node:26-bookworm-slim AS runtime
