@@ -72,10 +72,37 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
           node-version: 26
+
+      - name: Setup Socket Firewall
+        id: sfw
+        uses: workos/setup-socket-firewall@ca93dd8aa351f54f4729fe3377a9be23c631c25d
+        with:
+          token: ${{ secrets.PUBLIC_SOCKET_FIREWALL_TOKEN }}
+          allow-external-fork-fallback: ${{ github.event_name == 'pull_request' }}
+
+      - name: Prepare Docker npm config
+        env:
+          SFW_ACTIVE: ${{ steps.sfw.outputs.active }}
+          IS_EXTERNAL_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          set -euo pipefail
+          npmrc="${RUNNER_TEMP}/sfw-docker-npmrc"
+          if [ "$SFW_ACTIVE" = "true" ]; then
+            cat "${HOME}/.npmrc" > "$npmrc"
+            printf '\n%s\n' 'replace-registry-host=always' >> "$npmrc"
+          elif [ "$IS_EXTERNAL_FORK" = "true" ]; then
+            printf '%s\n' 'registry=https://registry.npmjs.org/' > "$npmrc"
+          else
+            echo "::error::Socket Firewall did not activate for a trusted Docker build."
+            exit 1
+          fi
+          chmod 600 "$npmrc"
 
       # The same guard CI runs, in the publish path too. An image whose lockfile
       # resolves from WorkOS's internal proxy can only be rebuilt inside WorkOS,
@@ -139,8 +166,11 @@ jobs:
           load: true
           provenance: false
           tags: scim-bridge:scan
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          add-hosts: ${{ steps.sfw.outputs.active == 'true' && 'registry.npmjs.org=127.0.0.1' || '' }}
+          build-args: |
+            SOCKET_FIREWALL_REQUIRED=${{ steps.sfw.outputs.active }}
+          secret-files: |
+            npmrc=${{ runner.temp }}/sfw-docker-npmrc
 
       # Layer scan, not `ls` in the container: a file deleted in a later layer
       # is still in the pushed image. Runs before the push, because "we noticed
@@ -201,6 +231,7 @@ jobs:
           # Both go out under one manifest list, so `docker pull` picks the right
           # one and the README needs no per-arch instructions.
           platforms: linux/amd64,linux/arm64
+          add-hosts: ${{ steps.sfw.outputs.active == 'true' && 'registry.npmjs.org=127.0.0.1' || '' }}
           push: ${{ env.PUSH == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -212,8 +243,18 @@ jobs:
           # so they are off when nothing is being pushed.
           provenance: ${{ env.PUSH == 'true' && 'mode=max' || 'false' }}
           sbom: ${{ env.PUSH == 'true' }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          build-args: |
+            SOCKET_FIREWALL_REQUIRED=${{ steps.sfw.outputs.active }}
+          secret-files: |
+            npmrc=${{ runner.temp }}/sfw-docker-npmrc
+
+      - name: Remove Docker npm config
+        if: ${{ always() }}
+        run: rm -f "${RUNNER_TEMP}/sfw-docker-npmrc"
+
+      - name: Restore public registry after Docker installs
+        if: ${{ always() && steps.sfw.outputs.active == 'true' }}
+        uses: workos/setup-socket-firewall/teardown@ca93dd8aa351f54f4729fe3377a9be23c631c25d
 
       - name: Summarise
         env:
@@ -241,6 +282,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Resolve the tag
         id: tag
