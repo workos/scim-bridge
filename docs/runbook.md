@@ -531,9 +531,86 @@ token). Keyless polling works only against that bundled mock — set
 | WorkOS answers 409 on a mirror or backfill | A uniqueness collision inside the directory: a duplicate `userName` or active-user email (both case-insensitive), or a group identity (`externalId`, else `displayName`) already taken. The [data checklist](./workos-scim-requirements.md) has the audits that catch these up front. |
 | Listener ignores events after cutover | `GET /status/directories/{id}` must answer `apply_dsync_events: true`. If it answers `false` with `mode: workos-only`, the row didn't flip; if the listener ignores a `true`, it is deriving the decision from `mode` or `native_authoritative` instead of reading the field. |
 | Listener applies each change twice | It is inferring "apply" from `native_authoritative` (or from "not passthrough/dual-write") rather than reading `apply_dsync_events`. Those agree in every mode except `workos-primary`, so this shows up the moment a directory reaches that mode. |
-| Proxy returns 502 in workos-primary | Native rejected the write with a 5xx or could not be reached while WorkOS took it. Visible by design: the directory page's native-writes card names the resource. The IdP's retry is safe (ids are shared, so it converges); if native keeps refusing, **Reconcile from WorkOS** repairs it. |
-| Proxy returns a native 4xx in workos-primary | Native rejected the write on its merits, so its own status and body are returned rather than a 502 — a bare retry would only reproduce it. Fix the resource (or native's validation), then retry or reconcile. |
+| Proxy returns 502 in workos-primary | For an existing resource, native rejected the write with a 5xx or could not be reached while WorkOS took it; retry or **Reconcile from WorkOS** can repair the gap shown on the native-writes card. A create accepted by either upstream without a completed mapping retains its claim and requires [create recovery](#a-workos-primary-create-returns-503-with-retry-after) before another create. A native-only row is not recorded on the native-writes card. |
+| Proxy returns a native 4xx in workos-primary | Native rejected the write on its merits; fix the resource or native's validation before retrying. Its status and body are forwarded unless WorkOS accepted a create without a resolved native id: that create returns `502` and requires [create recovery](#a-workos-primary-create-returns-503-with-retry-after). |
 | Mappings show `fallback-post` | The migrated-id contract wasn't active for that WorkOS directory (flag/`migrated`/`created_at` prerequisites) — ids aren't shared. |
 | Tokens look like `enc:v1:…` in the DB | Expected — they're encrypted at rest. Never change `APP_ENCRYPTION_KEY` after writing, or they become unreadable. |
 | Panel 500s after setting a key | The key changed since tokens were written; restore the original `APP_ENCRYPTION_KEY`. |
 | Stand-in ignores every DSync event | Its `DIRECTORIES_JSON` entry must carry the directory's WorkOS id and proxy token, the bridge's row must have that WorkOS id set, and `BRIDGE_STATUS_URL` must reach the bridge — otherwise the mode reads as pre-cutover. |
+
+### A workos-primary create returns 503 with Retry-After
+
+The bridge allows one `workos-primary` create at a time per directory and resource
+type. Users and Groups, and different directories, remain independent. The claim
+is taken before the ownership checks and held until both upstream legs and the
+mapping write complete, so overlapping creates cannot adopt the same WorkOS row
+under different native ids. A competing create returns `503` with `Retry-After: 1`
+without contacting either upstream; retry it after the active create completes.
+Completed creates still run the existing ownership checks on retry, so reusing
+another resource's id returns a permanent `409`.
+
+**Reconcile from WorkOS** acquires both the Users and Groups claims before reading
+its snapshot, so it cannot replay a create whose native id is still unresolved.
+While reconciliation holds the claims, new creates return the same busy `503`.
+A busy claim also refuses reconciliation before either upstream is contacted.
+After a successful replay, the native response must confirm the addressed id and
+any new mapping must persist before the claims are released. Missing or different
+response ids, lost native responses, and mapping failures retain both claims for
+operator recovery. Resolving an existing native row during drift repair also
+retains the claims if its repair is rejected before the mapping can persist.
+If the WorkOS row already maps to another native id, reconciliation refuses the
+drift repair before writing the newly found row and retains the claims. Changing
+that established identity requires operator recovery instead of a second mapping.
+A read-only snapshot failure releases them if no replay left an unresolved
+outcome. The older 30-minute reconcile lease does not expire these
+resource claims.
+
+Claims live in `workos_primary_create_claims` and do not expire. A slow upstream
+may still commit a write after any lease deadline, so automatic expiry would
+reopen the race. A completed create releases its claim only after both upstreams
+agree on the resource and the mapping is persisted. Explicit rejections on both
+sides also release it, as does a native rejection when WorkOS was never called.
+If either upstream accepted the create or resolved an existing row, the claim
+stays in place until the mapping is complete, even when the other side explicitly
+returned a 4xx or 5xx. An unmatched row on either side could otherwise let another
+identity reuse its id. A transport failure, a successful create response without
+an id, a process crash, or an unexpected exception (including a failed mapping
+commit) also retains the claim until an operator resolves the writes. Handled
+unresolved outcomes return a `502` explaining that recovery is required; uncaught
+exceptions use the server's error handling. Later creates return the busy `503`
+in either case.
+
+If the `503` persists:
+
+1. Inspect `directory_id`, `resource_type`, `token`, and `started_at` in
+   `workos_primary_create_claims` to identify the unresolved operation. A reconcile
+   holds both resource types under one token. The token is a claim identifier,
+   not a bearer credential.
+2. Pause provisioning for the affected directory and stop or drain **every proxy
+   instance and reconcile runner** that can hold the request. Confirm the upstreams have finished any
+   accepted writes; a stopped client alone does not prove a remote write stopped.
+3. Check both upstreams and `id_mappings` for the interrupted operation. Resolve any
+   unmatched native/WorkOS rows and ensure that no two native ids share a WorkOS
+   id before allowing provisioning to resume. Reconcile-from-WorkOS alone cannot
+   discover a native-only row, and retained claims block it too: repair the rows
+   and mappings before releasing the claims instead of using reconcile to bypass
+   this recovery step.
+4. Delete only the inspected claim, matching all three values:
+
+   ```sql
+   DELETE FROM workos_primary_create_claims
+   WHERE directory_id = '<directory-id>'
+     AND resource_type = 'Users'
+     AND token = '<inspected-claim-token>';
+   ```
+
+   For an interrupted reconcile, repeat for its inspected Groups claim after
+   verifying both resource types.
+
+5. Resume the proxy instances and provisioning, then retry the create.
+
+Apply the new schema migrations before starting the updated proxy. During a
+rolling upgrade, old proxy instances do not acquire these claims: drain them
+before sending creates or reconciles to the updated instances. The claims
+serialize this create path with Reconcile from WorkOS; they do not serialize
+forward backfills or other write modes.

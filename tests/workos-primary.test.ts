@@ -4,6 +4,7 @@ import {
   getMapping,
   listNativeWriteFailures,
   recordNativeWriteFailure,
+  releaseWorkosPrimaryCreate,
   setDirectoryMode,
   upsertMapping,
 } from "../workers/shared/db";
@@ -29,8 +30,8 @@ import {
  *   1. The IdP is never told a write succeeded when one side rejected it.
  *   2. A write WorkOS kept and native refused is recorded durably, whatever the
  *      directory's log settings say.
- *   3. A retry converges rather than duplicating — the property that makes
- *      "fail the request" a safe policy here at all.
+ *   3. Mapped-resource retries converge; unresolved creates require operator
+ *      recovery before another create can touch either upstream.
  *   4. The legs overlap, so the mode costs max(native, workos) and not the sum.
  *   5. Native is still current at every rung, in both directions, with no
  *      reconcile and no backfill in between.
@@ -64,11 +65,15 @@ describe("workos-primary", () => {
     active: true,
   };
 
-  function put(directory: SeededDirectory, body: unknown = ada): Promise<Response> {
+  function put(
+    directory: SeededDirectory,
+    body: unknown = ada,
+    ctx = createCtx(),
+  ): Promise<Response> {
     return proxyWorker.fetch(
       proxyRequest(directory, "PUT", "/scim/v2/Users/native-1", body),
       env,
-      createCtx(),
+      ctx,
     );
   }
 
@@ -115,7 +120,9 @@ describe("workos-primary", () => {
       fake.route("native", "PUT", "/Users/native-1", scimJson(200, { id: "native-1", ...ada }));
       fake.route("workos", "PUT", "/Users/workos-1", scimJson(200, { id: "workos-1", ...ada }));
 
-      expect((await put(directory)).status).toBe(200);
+      const ctx = createCtx();
+      expect((await put(directory, ada, ctx)).status).toBe(200);
+      await ctx.drain();
 
       const { results } = await env.DB.prepare(
         "SELECT native_status, native_body, workos_status FROM proxy_log ORDER BY id",
@@ -543,11 +550,10 @@ describe("workos-primary", () => {
       });
     });
 
-    it("converges on a retry instead of creating the resource twice", async () => {
-      // The property that makes failing the IdP request safe. First attempt:
-      // WorkOS creates, native rejects. Retry: WorkOS resolves its existing row
-      // by id, and native answers 409 for the resource it already holds, which is
-      // resolved to that row rather than reported.
+    it("converges on a retry after an operator recovers an unresolved create", async () => {
+      // WorkOS creates while native rejects, leaving no trusted identity link.
+      // Operator recovery must establish that link and release the claim before
+      // a retry can safely resolve the existing rows.
       const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
       fake.route("native", "POST", "/Users", scimJson(500, { detail: "boom" }), { once: true });
       fake.route("workos", "PUT", "/Users/idp-1", scimJson(404, { detail: "absent" }), {
@@ -568,14 +574,41 @@ describe("workos-primary", () => {
         method: "POST",
       });
 
-      // The retry, against upstreams that now hold what the first attempt left.
+      const callsBeforeRetry = fake.calls.length;
+      const blocked = await proxyWorker.fetch(
+        proxyRequest(directory, "POST", "/scim/v2/Users", ada),
+        env,
+        createCtx(),
+      );
+      expect(blocked.status).toBe(503);
+      expect(fake.calls).toHaveLength(callsBeforeRetry);
+
+      // The operator verifies/repairs both resources, restores their mapping,
+      // and releases only the inspected claim, as described in the runbook.
+      await upsertMapping(env.DB, {
+        directory_id: directory.id,
+        resource_type: "Users",
+        native_id: "n-1",
+        workos_id: "idp-1",
+        strategy: "fallback-post",
+      });
+      const claim = await env.DB.prepare(
+        "SELECT token FROM workos_primary_create_claims WHERE directory_id = ? AND resource_type = ?",
+      )
+        .bind(directory.id, "Users")
+        .first<{ token: string }>();
+      expect(claim).not.toBeNull();
+      if (!claim) throw new Error("the unresolved create did not retain its claim");
+      await releaseWorkosPrimaryCreate(env.DB, directory.id, "Users", claim.token);
+
+      // Retry against the verified resources without creating either twice.
       fake.route("native", "POST", "/Users", scimJson(409, { detail: "userName exists" }));
       fake.route(
         "native",
         "GET",
         "/Users?filter=",
         // The row native resolves the 409 to must carry the userName we filtered
-        // on; the lookup now verifies it before adopting the id (VULN-3084).
+        // on; the lookup verifies it before adopting the id.
         scimJson(200, { Resources: [{ id: "n-1", userName: ada.userName }] }),
       );
       fake.route("workos", "PUT", "/Users/idp-1", scimJson(200, { id: "idp-1", ...ada }));
