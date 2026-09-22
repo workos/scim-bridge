@@ -537,3 +537,52 @@ token). Keyless polling works only against that bundled mock — set
 | Tokens look like `enc:v1:…` in the DB | Expected — they're encrypted at rest. Never change `APP_ENCRYPTION_KEY` after writing, or they become unreadable. |
 | Panel 500s after setting a key | The key changed since tokens were written; restore the original `APP_ENCRYPTION_KEY`. |
 | Stand-in ignores every DSync event | Its `DIRECTORIES_JSON` entry must carry the directory's WorkOS id and proxy token, the bridge's row must have that WorkOS id set, and `BRIDGE_STATUS_URL` must reach the bridge — otherwise the mode reads as pre-cutover. |
+
+### A workos-primary create returns 503 with Retry-After
+
+The bridge allows one `workos-primary` create at a time per directory and resource
+type. Users and Groups, and different directories, remain independent. The claim
+is taken before the ownership checks and held until both upstream legs and the
+mapping write complete, so overlapping creates cannot adopt the same WorkOS row
+under different native ids. A competing create returns `503` with `Retry-After: 1`
+without contacting either upstream; retry it after the active create completes.
+Completed creates still run the existing ownership checks on retry, so reusing
+another resource's id returns a permanent `409`.
+
+Claims live in `workos_primary_create_claims` and do not expire. A slow upstream
+may still commit a write after any lease deadline, so automatic expiry would
+reopen the race. Completed creates and explicit upstream rejections release the
+claim. A transport failure, a successful create response without an id, a process
+crash, or an unexpected exception (including a failed mapping commit) leaves it in
+place and blocks more creates of that resource type until an operator resolves
+the uncertain outcome. Caught transport failures and detected responses without
+an id return a `502` explaining that recovery is required; uncaught exceptions
+use the server's error handling. Later creates return the busy `503` in either case.
+
+If the `503` persists:
+
+1. Inspect `directory_id`, `resource_type`, `token`, and `started_at` in
+   `workos_primary_create_claims` to identify the unresolved create. The token is
+   a claim identifier, not a bearer credential.
+2. Pause provisioning for the affected directory and stop or drain **every proxy
+   instance** that can hold the request. Confirm the upstreams have finished any
+   accepted writes; a stopped client alone does not prove a remote write stopped.
+3. Check both upstreams and `id_mappings` for the interrupted create. Resolve any
+   unmatched native/WorkOS rows and ensure that no two native ids share a WorkOS
+   id before allowing provisioning to resume. Reconcile-from-WorkOS alone cannot
+   discover a native-only row.
+4. Delete only the inspected claim, matching all three values:
+
+   ```sql
+   DELETE FROM workos_primary_create_claims
+   WHERE directory_id = '<directory-id>'
+     AND resource_type = 'Users'
+     AND token = '<inspected-claim-token>';
+   ```
+
+5. Resume the proxy instances and provisioning, then retry the create.
+
+Apply the new schema migrations before starting the updated proxy. During a
+rolling upgrade, old proxy instances do not acquire these claims: drain them
+before sending creates to the updated instances. The claim protects this create
+path; it does not serialize operator backfills, reconciles, or other write modes.

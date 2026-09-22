@@ -64,11 +64,15 @@ describe("workos-primary", () => {
     active: true,
   };
 
-  function put(directory: SeededDirectory, body: unknown = ada): Promise<Response> {
+  function put(
+    directory: SeededDirectory,
+    body: unknown = ada,
+    ctx = createCtx(),
+  ): Promise<Response> {
     return proxyWorker.fetch(
       proxyRequest(directory, "PUT", "/scim/v2/Users/native-1", body),
       env,
-      createCtx(),
+      ctx,
     );
   }
 
@@ -115,7 +119,9 @@ describe("workos-primary", () => {
       fake.route("native", "PUT", "/Users/native-1", scimJson(200, { id: "native-1", ...ada }));
       fake.route("workos", "PUT", "/Users/workos-1", scimJson(200, { id: "workos-1", ...ada }));
 
-      expect((await put(directory)).status).toBe(200);
+      const ctx = createCtx();
+      expect((await put(directory, ada, ctx)).status).toBe(200);
+      await ctx.drain();
 
       const { results } = await env.DB.prepare(
         "SELECT native_status, native_body, workos_status FROM proxy_log ORDER BY id",

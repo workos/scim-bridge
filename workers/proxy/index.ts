@@ -1,6 +1,7 @@
 import type { Datastore } from "../shared/datastore";
 import type { Directory, PocEnv, ResourceType, WorkerHandler } from "../shared/types";
 import {
+  claimWorkosPrimaryCreate,
   clearNativeWriteFailure,
   deleteMapping,
   getDirectoryByToken,
@@ -9,6 +10,7 @@ import {
   insertProxyLog,
   type ProxyLogInsert,
   recordNativeWriteFailure,
+  releaseWorkosPrimaryCreate,
   shouldPersistLogs,
   upsertMapping,
 } from "../shared/db";
@@ -704,6 +706,57 @@ async function workosPrimaryCreate(
   log: ProxyLogInsert,
   finish: (response: Response) => Response,
 ): Promise<Response> {
+  const token = crypto.randomUUID();
+  if (!(await claimWorkosPrimaryCreate(env.DB, directory.id, kind, token))) {
+    log.error = `Another ${kind} create is unresolved for this directory. Retry after it completes.`;
+    const response = scimError(503, log.error);
+    response.headers.set("Retry-After", "1");
+    return finish(response);
+  }
+
+  // Hold the database claim from before the collision snapshots until after the
+  // mapping is persisted. The native and WorkOS legs can still run concurrently.
+  // An unexpected exception (including an uncertain mapping commit) keeps the
+  // claim: releasing in finally would allow another create onto an unmapped row,
+  // potentially while an upstream leg is still writing. See the recovery runbook.
+  const { response, releaseClaim } = await workosPrimaryCreateClaimed(
+    env,
+    directory,
+    kind,
+    requestBody,
+    contentType,
+    url,
+    log,
+  );
+  if (releaseClaim) await releaseWorkosPrimaryCreate(env.DB, directory.id, kind, token);
+  return finish(response);
+}
+
+interface WorkosPrimaryCreateOutcome {
+  response: Response;
+  releaseClaim: boolean;
+}
+
+async function workosPrimaryCreateClaimed(
+  env: PocEnv,
+  directory: Directory,
+  kind: ResourceType,
+  requestBody: string | null,
+  contentType: string | null,
+  url: URL,
+  log: ProxyLogInsert,
+): Promise<WorkosPrimaryCreateOutcome> {
+  let releaseClaim = true;
+  const finish = (response: Response): WorkosPrimaryCreateOutcome => ({
+    response: releaseClaim
+      ? response
+      : scimError(
+          502,
+          "The create's upstream outcome is uncertain. Further creates of this resource type " +
+            "are blocked until an operator checks both upstreams and recovers the create claim.",
+        ),
+    releaseClaim,
+  });
   const parsed = parseJson(requestBody) ?? {};
   const maps = await loadIdMaps(env.DB, directory.id);
   const toWorkos = makeTranslator(maps.nativeToWorkos);
@@ -809,6 +862,18 @@ async function workosPrimaryCreate(
   log.native_status = native.result?.status ?? null;
   log.native_ms = native.result?.ms ?? null;
   log.native_body = native.result?.bodyText ?? null;
+
+  // A transport error does not prove the remote write stopped or never committed.
+  // A successful create without an id is similarly impossible to bind safely.
+  // Keep the claim for recovery instead of admitting a new create onto that row.
+  releaseClaim = !(
+    native.result === null ||
+    (isSuccess(native.result.status) && native.id === null) ||
+    (mirror !== null && !mirror.ok && (mirror.status === null || isSuccess(mirror.status)))
+  );
+  if (!releaseClaim) {
+    log.error = "Create claim retained: an upstream write has an uncertain outcome.";
+  }
 
   const workosOk = mirror !== null && mirror.ok;
   // Before native answers, the only handle on the resource is the id the IdP will

@@ -459,6 +459,49 @@ export async function setDirectoriesLogPersistence(
   );
 }
 
+/** Claim the entire create interval, including preflight reads and mapping
+ * persistence. Native ids are unknown until POST returns, so different external
+ * ids must also serialize: either can collide with the other's new native id.
+ * Claims deliberately have no TTL because upstream writes cannot be fenced.
+ */
+export async function claimWorkosPrimaryCreate(
+  db: Datastore,
+  directoryId: string,
+  kind: ResourceType,
+  token: string,
+): Promise<boolean> {
+  const { meta } = await withDatastoreRetry(() =>
+    db
+      .prepare(
+        "INSERT INTO workos_primary_create_claims (directory_id, resource_type, token) " +
+          "VALUES (?, ?, ?) ON CONFLICT (directory_id, resource_type) DO UPDATE " +
+          "SET token = excluded.token WHERE workos_primary_create_claims.token = excluded.token",
+      )
+      .bind(directoryId, kind, token)
+      .run(),
+  );
+  // The same token may acquire again after a lost acknowledgement. A competing
+  // token changes no rows, so it cannot mistake another request's claim for its own.
+  return Boolean(meta.changes);
+}
+
+export async function releaseWorkosPrimaryCreate(
+  db: Datastore,
+  directoryId: string,
+  kind: ResourceType,
+  token: string,
+): Promise<void> {
+  await withDatastoreRetry(() =>
+    db
+      .prepare(
+        "DELETE FROM workos_primary_create_claims " +
+          "WHERE directory_id = ? AND resource_type = ? AND token = ?",
+      )
+      .bind(directoryId, kind, token)
+      .run(),
+  );
+}
+
 export async function getMapping(
   db: Datastore,
   directoryId: string,
