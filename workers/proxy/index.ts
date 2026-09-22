@@ -752,7 +752,7 @@ async function workosPrimaryCreateClaimed(
       ? response
       : scimError(
           502,
-          "The create's upstream outcome is uncertain. Further creates of this resource type " +
+          "The create's upstream writes are unresolved. Further creates of this resource type " +
             "are blocked until an operator checks both upstreams and recovers the create claim.",
         ),
     releaseClaim,
@@ -865,17 +865,19 @@ async function workosPrimaryCreateClaimed(
 
   // A transport error does not prove the remote write stopped or never committed.
   // A successful create without an id is similarly impossible to bind safely.
-  // Keep the claim for recovery instead of admitting a new create onto that row.
+  // Even an explicit native rejection leaves an unmapped WorkOS row when its
+  // leg succeeded. Keep the claim rather than let a different identity adopt it.
+  const workosOk = mirror !== null && mirror.ok;
   releaseClaim = !(
     native.result === null ||
     (isSuccess(native.result.status) && native.id === null) ||
+    (workosOk && native.id === null) ||
     (mirror !== null && !mirror.ok && (mirror.status === null || isSuccess(mirror.status)))
   );
   if (!releaseClaim) {
-    log.error = "Create claim retained: an upstream write has an uncertain outcome.";
+    log.error = "Create claim retained: upstream writes are unresolved or lack a native identity.";
   }
 
-  const workosOk = mirror !== null && mirror.ok;
   // Before native answers, the only handle on the resource is the id the IdP will
   // retry with, so a create that never reached native is recorded under that.
   const failureKey = externalId ?? uniqueAttributeValue(kind, parsed) ?? `POST /${kind}`;

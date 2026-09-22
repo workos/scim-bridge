@@ -531,8 +531,8 @@ token). Keyless polling works only against that bundled mock — set
 | WorkOS answers 409 on a mirror or backfill | A uniqueness collision inside the directory: a duplicate `userName` or active-user email (both case-insensitive), or a group identity (`externalId`, else `displayName`) already taken. The [data checklist](./workos-scim-requirements.md) has the audits that catch these up front. |
 | Listener ignores events after cutover | `GET /status/directories/{id}` must answer `apply_dsync_events: true`. If it answers `false` with `mode: workos-only`, the row didn't flip; if the listener ignores a `true`, it is deriving the decision from `mode` or `native_authoritative` instead of reading the field. |
 | Listener applies each change twice | It is inferring "apply" from `native_authoritative` (or from "not passthrough/dual-write") rather than reading `apply_dsync_events`. Those agree in every mode except `workos-primary`, so this shows up the moment a directory reaches that mode. |
-| Proxy returns 502 in workos-primary | Native rejected the write with a 5xx or could not be reached while WorkOS took it. Visible by design: the directory page's native-writes card names the resource. The IdP's retry is safe (ids are shared, so it converges); if native keeps refusing, **Reconcile from WorkOS** repairs it. |
-| Proxy returns a native 4xx in workos-primary | Native rejected the write on its merits, so its own status and body are returned rather than a 502 — a bare retry would only reproduce it. Fix the resource (or native's validation), then retry or reconcile. |
+| Proxy returns 502 in workos-primary | Native rejected the write with a 5xx or could not be reached while WorkOS took it. The directory page's native-writes card names the resource. For an existing resource, retry or **Reconcile from WorkOS** can repair the gap. A create that WorkOS accepted without a resolved native id retains its claim and requires [create recovery](#a-workos-primary-create-returns-503-with-retry-after) before another create. |
+| Proxy returns a native 4xx in workos-primary | Native rejected the write on its merits; fix the resource or native's validation before retrying. Its status and body are forwarded unless WorkOS accepted a create without a resolved native id: that create returns `502` and requires [create recovery](#a-workos-primary-create-returns-503-with-retry-after). |
 | Mappings show `fallback-post` | The migrated-id contract wasn't active for that WorkOS directory (flag/`migrated`/`created_at` prerequisites) — ids aren't shared. |
 | Tokens look like `enc:v1:…` in the DB | Expected — they're encrypted at rest. Never change `APP_ENCRYPTION_KEY` after writing, or they become unreadable. |
 | Panel 500s after setting a key | The key changed since tokens were written; restore the original `APP_ENCRYPTION_KEY`. |
@@ -551,12 +551,14 @@ another resource's id returns a permanent `409`.
 
 Claims live in `workos_primary_create_claims` and do not expire. A slow upstream
 may still commit a write after any lease deadline, so automatic expiry would
-reopen the race. Completed creates and explicit upstream rejections release the
-claim. A transport failure, a successful create response without an id, a process
-crash, or an unexpected exception (including a failed mapping commit) leaves it in
-place and blocks more creates of that resource type until an operator resolves
-the uncertain outcome. Caught transport failures and detected responses without
-an id return a `502` explaining that recovery is required; uncaught exceptions
+reopen the race. Completed creates and creates rejected by both upstreams release
+the claim. If WorkOS accepted the create but native returned no usable id, the
+claim stays in place even when native explicitly returned a 4xx or 5xx. The
+WorkOS row has no persisted native mapping, so another identity could otherwise
+adopt it. A transport failure, a successful create response without an id, a
+process crash, or an unexpected exception (including a failed mapping commit)
+also retains the claim until an operator resolves the writes. Handled unresolved
+outcomes return a `502` explaining that recovery is required; uncaught exceptions
 use the server's error handling. Later creates return the busy `503` in either case.
 
 If the `503` persists:

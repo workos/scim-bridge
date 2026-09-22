@@ -160,7 +160,16 @@ describe("reconcile replay of an unmapped WorkOS row in a shared namespace", () 
       active: false,
       displayName: "Attacker Controlled",
     });
-    expect(plant.status).toBe(409);
+    // Native's rejected adoption leaves a WorkOS row without a native identity,
+    // so the response requires recovery and the claim blocks further creates.
+    expect(plant.status).toBe(502);
+    expect(
+      await env.DB.prepare(
+        "SELECT token FROM workos_primary_create_claims WHERE directory_id = ? AND resource_type = ?",
+      )
+        .bind(attacker.id, "Users")
+        .first(),
+    ).not.toBeNull();
     expect(
       await env.DB.prepare("SELECT COUNT(*) AS n FROM id_mappings WHERE directory_id = ?")
         .bind(attacker.id)

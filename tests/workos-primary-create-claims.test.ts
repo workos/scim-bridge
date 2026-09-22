@@ -105,7 +105,7 @@ describe("workos-primary create claims", () => {
     });
   });
 
-  it("releases after an expected upstream rejection so a retry can converge", async () => {
+  it("releases when both upstreams explicitly reject the create so a retry can converge", async () => {
     const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
     const create = () =>
       proxyWorker.fetch(
@@ -129,14 +129,19 @@ describe("workos-primary create claims", () => {
       "workos",
       "PUT",
       "/Users/idp-1",
+      scimJson(503, { detail: "temporarily unavailable" }),
+      { once: true },
+    );
+    fake.route(
+      "workos",
+      "PUT",
+      "/Users/idp-1",
       scimJson(200, { id: "idp-1", userName: "ada@example.com" }),
     );
 
     expect((await create()).status).toBe(502);
     expect(await readClaim(directory.id)).toBeNull();
-    expect(await listNativeWriteFailures(env.DB, directory.id)).toMatchObject([
-      { resource_key: "idp-1", method: "POST", native_status: 503 },
-    ]);
+    expect(await listNativeWriteFailures(env.DB, directory.id)).toEqual([]);
 
     expect((await create()).status).toBe(201);
     expect(await getMapping(env.DB, directory.id, "Users", "native-1")).toMatchObject({
