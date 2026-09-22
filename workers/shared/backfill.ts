@@ -2,6 +2,7 @@ import type { Datastore } from "./datastore";
 import type { BackfillSummary, Directory, ResourceType } from "./types";
 import {
   claimReconcileRun,
+  claimWorkosPrimaryCreate,
   clearReplayedDivergenceForResource,
   clearReplayedDivergences,
   getMapping,
@@ -10,6 +11,7 @@ import {
   listOtherMappingsByNativeId,
   markDivergencesForSweep,
   releaseReconcileRun,
+  releaseWorkosPrimaryCreate,
   shouldPersistLogs,
   upsertMapping,
   upsertMappings,
@@ -312,8 +314,13 @@ async function mirrorResource(
  * forward direction no longer relies on this: WorkOS creates only via POST.)
  */
 export class ReconcileInFlightError extends Error {
-  constructor(directoryId: string) {
-    super(`A reconcile is already running for directory ${directoryId}.`);
+  constructor(directoryId: string, kind?: ResourceType) {
+    super(
+      kind
+        ? `A ${kind} create or reconcile is unresolved for directory ${directoryId}. ` +
+            "Wait for the active operation to finish; a retained claim requires operator recovery."
+        : `A reconcile is already running for directory ${directoryId}.`,
+    );
     this.name = "ReconcileInFlightError";
   }
 }
@@ -332,13 +339,60 @@ export async function runReconcileFromWorkos(
     throw new ReconcileInFlightError(directory.id);
   }
   try {
-    return await reconcileFromWorkos(db, directory);
+    // Take both resource claims before any snapshot or replay. Checking whether
+    // a create is active without acquiring its claim would leave a race in both
+    // directions. These claims cannot expire while a remote write may still run.
+    try {
+      for (const kind of ["Users", "Groups"] as const) {
+        if (!(await claimWorkosPrimaryCreate(db, directory.id, kind, runToken))) {
+          throw new ReconcileInFlightError(directory.id, kind);
+        }
+      }
+    } catch (error) {
+      // No upstream work began. Owner-scoped release also covers an acquisition
+      // whose acknowledgement was lost, without touching a competing operation.
+      await releaseReconcileCreateClaims(db, directory.id, runToken);
+      throw error;
+    }
+
+    const state: ReconcileReplayState = { unresolvedWrite: false };
+    const summary = await reconcileFromWorkos(db, directory, state);
+    if (state.unresolvedWrite) {
+      summary.errors.unshift(
+        "Create claims retained: a native replay is unresolved. An operator must check both " +
+          "upstreams and recover the claims before another create or reconcile.",
+      );
+      summary.errors.length = Math.min(summary.errors.length, ERROR_CAP);
+    } else {
+      await releaseReconcileCreateClaims(db, directory.id, runToken);
+    }
+    return summary;
   } finally {
+    // The legacy run lease is only an additional reconcile guard. Unexpected
+    // exceptions leave the non-expiring resource claims held for recovery.
     await releaseReconcileRun(db, directory.id, runToken);
   }
 }
 
-async function reconcileFromWorkos(db: Datastore, directory: Directory): Promise<BackfillSummary> {
+async function releaseReconcileCreateClaims(
+  db: Datastore,
+  directoryId: string,
+  token: string,
+): Promise<void> {
+  for (const kind of ["Users", "Groups"] as const) {
+    await releaseWorkosPrimaryCreate(db, directoryId, kind, token);
+  }
+}
+
+interface ReconcileReplayState {
+  unresolvedWrite: boolean;
+}
+
+async function reconcileFromWorkos(
+  db: Datastore,
+  directory: Directory,
+  state: ReconcileReplayState,
+): Promise<BackfillSummary> {
   const summary: BackfillSummary = {
     users: { total: 0, mirrored: 0, failed: 0 },
     groups: { total: 0, mirrored: 0, failed: 0 },
@@ -373,6 +427,7 @@ async function reconcileFromWorkos(db: Datastore, directory: Directory): Promise
       summary.users,
       summary.errors,
       sweepToken,
+      state,
     );
   }
 
@@ -402,6 +457,7 @@ async function reconcileFromWorkos(db: Datastore, directory: Directory): Promise
       summary.groups,
       summary.errors,
       sweepToken,
+      state,
     );
   }
 
@@ -466,6 +522,7 @@ async function pushToNative(
   counts: ResourceCounts,
   errors: string[],
   sweepToken: string,
+  state: ReconcileReplayState,
 ): Promise<void> {
   counts.total += 1;
   const workosId = typeof resource.id === "string" ? resource.id : null;
@@ -485,6 +542,16 @@ async function pushToNative(
   // identity fallback.
   const mapping = await getMappingByWorkosId(db, directory.id, kind, workosId);
   const nativeId = mapping?.native_id ?? toNative(kind, workosId);
+  const nativeMapping = await getMapping(db, directory.id, kind, nativeId);
+  if (nativeMapping && nativeMapping.workos_id !== workosId) {
+    counts.failed += 1;
+    pushError(
+      errors,
+      `${kind}/${nativeId}: this native id already maps to WorkOS ${nativeMapping.workos_id}; ` +
+        "the reconcile did not replay a different resource onto it.",
+    );
+    return;
+  }
   // An unmapped WorkOS id is replayed at its raw value (the translator's identity
   // fallback), so the id this PUT addresses is whatever minted the WorkOS row —
   // and on `workos-primary` a create mints it from the tenant's own `externalId`.
@@ -512,6 +579,7 @@ async function pushToNative(
   try {
     result = await putNative(directory, kind, nativeId, resource);
   } catch (error) {
+    state.unresolvedWrite = true;
     counts.failed += 1;
     pushError(errors, `${kind}/${nativeId}: ${errorMessage(error)}`);
     return;
@@ -529,8 +597,37 @@ async function pushToNative(
   // functionally equivalent to a shared id. Missing mapping was the real bug.
   let drift: DriftRepair | null = null;
   if (result.status === 409) {
-    drift = await repairDrift(db, directory, kind, workosId, nativeId, resource, maps, errors);
+    drift = await repairDrift(db, directory, kind, workosId, nativeId, resource, errors, state);
     if (drift?.result) result = drift.result;
+  }
+
+  if (isSuccess(result.status)) {
+    const confirmedId = drift?.nativeId ?? nativeId;
+    const returned = parseJson(result.bodyText);
+    if (returned?.id !== confirmedId) {
+      state.unresolvedWrite = true;
+      counts.failed += 1;
+      pushError(
+        errors,
+        `${kind}/${confirmedId}: native replay succeeded without confirming the requested id; ` +
+          "no mapping was recorded and the create claims require operator recovery.",
+      );
+      return;
+    }
+    // A successful unmapped replay can create a native row. Persist its ownership
+    // before releasing the shared claim, or a later create could adopt its WorkOS
+    // id under a different native id. Drift repair earns the same durable mapping.
+    if (!mapping || drift) {
+      await upsertMapping(db, {
+        directory_id: directory.id,
+        resource_type: kind,
+        native_id: confirmedId,
+        workos_id: workosId,
+        strategy: confirmedId === workosId ? "migrated-id" : "fallback-post",
+      });
+      maps.workosToNative[kind].set(workosId, confirmedId);
+      maps.nativeToWorkos[kind].set(confirmedId, workosId);
+    }
   }
 
   try {
@@ -617,8 +714,8 @@ async function repairDrift(
   workosId: string,
   nativeId: string,
   resource: Record<string, unknown>,
-  maps: IdTranslationMaps,
   errors: string[],
+  state: ReconcileReplayState,
 ): Promise<DriftRepair | null> {
   const attr = kind === "Users" ? "userName" : "displayName";
   const value = typeof resource[attr] === "string" ? (resource[attr] as string) : null;
@@ -631,6 +728,17 @@ async function repairDrift(
     driftedId = resolved;
   } catch (error) {
     pushError(errors, `${kind}/${nativeId}: resolving drift by ${attr}: ${errorMessage(error)}`);
+    return null;
+  }
+
+  const currentMapping = await getMappingByWorkosId(db, directory.id, kind, workosId);
+  if (currentMapping && currentMapping.native_id !== driftedId) {
+    state.unresolvedWrite = true;
+    pushError(
+      errors,
+      `${kind}/${workosId}: this WorkOS row already maps to native id ${currentMapping.native_id}, ` +
+        `but native resolved ${driftedId}; operator recovery is required before changing its mapping.`,
+    );
     return null;
   }
 
@@ -648,24 +756,14 @@ async function repairDrift(
   try {
     result = await putNative(directory, kind, driftedId, resource);
   } catch (error) {
+    state.unresolvedWrite = true;
     pushError(errors, `${kind}/${driftedId}: ${errorMessage(error)}`);
     return { nativeId: driftedId, attr, value, result: null };
   }
-  if (isSuccess(result.status)) {
-    await upsertMapping(db, {
-      directory_id: directory.id,
-      resource_type: kind,
-      native_id: driftedId,
-      workos_id: workosId,
-      strategy: "fallback-post",
-    });
-    // Reflect the repair in the live translation maps so a group pushed later in
-    // this same reconcile addresses a repaired user by its drifted native id
-    // (the translator reads these maps by reference); the DB row alone wouldn't
-    // be observed until the next reconcile.
-    maps.workosToNative[kind].set(workosId, driftedId);
-    maps.nativeToWorkos[kind].set(driftedId, workosId);
-  }
+  // Resolving the collision established an existing native identity. Until the
+  // repair and its mapping complete, another create must not reuse that id even
+  // when the repair received an explicit rejection.
+  if (!isSuccess(result.status)) state.unresolvedWrite = true;
   return { nativeId: driftedId, attr, value, result };
 }
 

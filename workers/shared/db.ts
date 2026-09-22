@@ -808,10 +808,10 @@ export async function markDivergencesForSweep(
   );
 }
 
-/** How long a reconcile claim stays valid. A run that dies without releasing its
- *  claim — a crashed worker, a killed container — must not lock the directory out
- *  of reconciling forever, and a reconcile that is still legitimately running past
- *  this window is longer than any snapshot-and-replay the panel triggers. */
+/** Lifetime of the legacy reconcile lease. The additional non-expiring resource
+ *  claims now guard replay against creates and superseding reconciles. Expiring
+ *  this lease cannot bypass an unresolved remote write: retained resource claims
+ *  require operator recovery. */
 const RECONCILE_CLAIM_TTL_MS = 30 * 60 * 1000;
 
 /** The `datetime('now')` text format both engines store timestamps in. Sortable as

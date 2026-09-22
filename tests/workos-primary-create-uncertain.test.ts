@@ -22,6 +22,78 @@ describe("workos-primary creates with an unresolved upstream outcome", () => {
   });
   afterEach(() => fake.restore());
 
+  it.each<{ kind: ResourceType; workosStatus: number; nativeStatus: number }>([
+    { kind: "Users", workosStatus: 400, nativeStatus: 201 },
+    { kind: "Groups", workosStatus: 400, nativeStatus: 201 },
+    { kind: "Users", workosStatus: 503, nativeStatus: 201 },
+    { kind: "Groups", workosStatus: 503, nativeStatus: 201 },
+    { kind: "Users", workosStatus: 400, nativeStatus: 409 },
+    { kind: "Groups", workosStatus: 400, nativeStatus: 409 },
+  ])(
+    "retains the $kind claim when WorkOS returns $workosStatus and native resolves the row with $nativeStatus",
+    async ({ kind, workosStatus, nativeStatus }) => {
+      const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+      const attribute = kind === "Users" ? "userName" : "displayName";
+      const nativeIds: string[] = [];
+      fake.route("native", "POST", `/${kind}`, (call) => {
+        const body = call.json() as Record<string, unknown>;
+        const id = body[attribute] === "first" ? "native-first" : "native-second";
+        nativeIds.push(id);
+        if (body[attribute] === "first" && nativeStatus === 409) {
+          return scimJson(409, { detail: "resource already exists" });
+        }
+        return scimJson(201, { ...body, id });
+      });
+      fake.route(
+        "native",
+        "GET",
+        new RegExp(`^/${kind}\\?`),
+        scimJson(200, { Resources: [{ id: "native-first", [attribute]: "first" }] }),
+      );
+      fake.route(
+        "workos",
+        "PUT",
+        `/${kind}/idp-first`,
+        scimJson(workosStatus, { detail: "WorkOS rejected the create" }),
+      );
+      fake.route("workos", "PUT", `/${kind}/native-first`, (call) =>
+        scimJson(200, { ...(call.json() as Record<string, unknown>), id: "native-first" }),
+      );
+      const create = (name: string, externalId: string) =>
+        proxyWorker.fetch(
+          proxyRequest(directory, "POST", `/scim/v2/${kind}`, {
+            [attribute]: name,
+            externalId,
+          }),
+          env,
+          createCtx(),
+        );
+
+      const first = await create("first", "idp-first");
+      // A new identity must not use the orphan's native id to mint a WorkOS id
+      // while the bridge has no mapping that distinguishes the two resources.
+      const retry = await create("second", "native-first");
+      expect(retry.status).toBe(503);
+      expect(retry.headers.get("Retry-After")).toBe("1");
+      expect(first.status).toBe(502);
+      expect(await first.json()).toMatchObject({
+        detail: expect.stringContaining("recovers the create claim"),
+      });
+      expect(nativeIds).toEqual(["native-first"]);
+      expect(await getMapping(env.DB, directory.id, kind, "native-first")).toBeNull();
+      expect(await getMapping(env.DB, directory.id, kind, "native-second")).toBeNull();
+      expect(fake.callsTo("native")).toHaveLength(nativeStatus === 409 ? 2 : 1);
+      expect(fake.callsTo("workos")).toHaveLength(1);
+      expect(await listNativeWriteFailures(env.DB, directory.id)).toEqual([]);
+      const claim = await env.DB.prepare(
+        "SELECT token FROM workos_primary_create_claims WHERE directory_id = ? AND resource_type = ?",
+      )
+        .bind(directory.id, kind)
+        .first();
+      expect(claim).not.toBeNull();
+    },
+  );
+
   it.each<{ kind: ResourceType; nativeStatus: number }>([
     { kind: "Users", nativeStatus: 400 },
     { kind: "Groups", nativeStatus: 400 },

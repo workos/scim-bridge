@@ -202,4 +202,36 @@ describe("workos-primary create claims", () => {
     expect(fake.callsTo("native")).toHaveLength(1);
     expect(fake.callsTo("workos")).toHaveLength(1);
   });
+
+  it("releases after persisting the mapping and logs a successful create without an error", async () => {
+    const directory = await seedDirectory(env.DB, {
+      mode: "workos-primary",
+      log_persistence: 1,
+    });
+    fake.route("native", "POST", "/Users", scimJson(201, { id: "native-1" }));
+    fake.route("workos", "PUT", "/Users/idp-1", scimJson(200, { id: "idp-1" }));
+    const ctx = createCtx();
+
+    const response = await proxyWorker.fetch(
+      proxyRequest(directory, "POST", "/scim/v2/Users", {
+        userName: "ada@example.com",
+        externalId: "idp-1",
+      }),
+      env,
+      ctx,
+    );
+    await ctx.drain();
+
+    expect(response.status).toBe(201);
+    expect(await readClaim(directory.id)).toBeNull();
+    expect(await getMapping(env.DB, directory.id, "Users", "native-1")).toMatchObject({
+      workos_id: "idp-1",
+    });
+    const log = await env.DB.prepare(
+      "SELECT response_status, error FROM proxy_log WHERE directory_id = ?",
+    )
+      .bind(directory.id)
+      .first();
+    expect(log).toEqual({ response_status: 201, error: null });
+  });
 });

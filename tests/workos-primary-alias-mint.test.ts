@@ -392,7 +392,7 @@ describe("workos-primary id mints across resources", () => {
     });
   });
 
-  it("tells the IdP a colliding create will not converge, and pollutes no ledger", async () => {
+  it("requires recovery for a colliding native create without polluting the ledger", async () => {
     // A create with no externalId whose native-minted id happens to be another
     // resource's WorkOS-side id: mirrorUpsert refuses before writing. The IdP must
     // not be told to retry — the collision is permanent — and the refusal is not a
@@ -420,11 +420,18 @@ describe("workos-primary id mints across resources", () => {
       createCtx(),
     );
 
-    expect(created.status).toBe(409);
+    expect(created.status).toBe(502);
     const body = (await created.json()) as { detail?: string };
-    // Accurate: names the collision, and never advises the retry that would loop.
-    expect(body.detail).toContain("already the WorkOS-side id");
+    // Native committed an orphan, so recovery is required before further creates.
+    expect(body.detail).toContain("recovers the create claim");
     expect(body.detail).not.toContain("will converge");
+    expect(
+      await env.DB.prepare(
+        "SELECT token FROM workos_primary_create_claims WHERE directory_id = ? AND resource_type = ?",
+      )
+        .bind(directory.id, "Users")
+        .first(),
+    ).not.toBeNull();
     // The victim's WorkOS row was never written, and no ledger row was minted.
     expect(title).toBeUndefined();
     expect(await listNativeWriteFailures(env.DB, directory.id)).toEqual([]);
@@ -435,7 +442,7 @@ describe("workos-primary id mints across resources", () => {
     });
   });
 
-  it("refuses a native-raced retry without inverting the divergence card", async () => {
+  it("retains a native-raced retry claim without inverting the divergence card", async () => {
     // The pre-check resolves native to the claimed resource, but native then
     // answers the create POST with a third id — a race between the resolve and the
     // create. Nothing was written to WorkOS, so the two ids never collapsed. The
@@ -461,7 +468,25 @@ describe("workos-primary id mints across resources", () => {
       createCtx(),
     );
 
-    expect(created.status).toBe(409);
+    const retained = await env.DB.prepare(
+      "SELECT token FROM workos_primary_create_claims WHERE directory_id = ? AND resource_type = ?",
+    )
+      .bind(directory.id, "Users")
+      .first();
+    expect(retained).not.toBeNull();
+    const callsBeforeRetry = fake.calls.length;
+    const retry = await proxyWorker.fetch(
+      proxyRequest(directory, "POST", "/scim/v2/Users", {
+        userName: "second@example.com",
+        externalId: "nat_race",
+      }),
+      env,
+      createCtx(),
+    );
+    expect(retry.status).toBe(503);
+    expect(fake.calls).toHaveLength(callsBeforeRetry);
+
+    expect(created.status).toBe(502);
     const body = (await created.json()) as { detail?: string };
     expect(body.detail).not.toContain("will converge");
     // The divergence ledger stays empty, and the raced id earns no mapping.

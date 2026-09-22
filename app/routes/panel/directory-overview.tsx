@@ -285,11 +285,7 @@ export async function action({
       return { reconcile };
     } catch (error) {
       if (!(error instanceof ReconcileInFlightError)) throw error;
-      return {
-        error:
-          "A reconcile is already running for this directory — wait for it to finish. " +
-          "Two overlapping runs can retire a divergence the other is still responsible for.",
-      };
+      return { error: error.message };
     }
   }
 
