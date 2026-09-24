@@ -2,7 +2,7 @@ version: 2
 
 updates:
   # npm. Grouped so a week of patch bumps is one review rather than twenty, and
-  # majors are left ungrouped because those are the ones worth reading.
+  # majors are left ungrouped unless packages require matching versions.
   #
   # Note for reviewers: `npm run check:registry` fails the build if any lockfile
   # entry resolves from anywhere but registry.npmjs.org. Dependabot resolves from
@@ -15,6 +15,12 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
+      # The coverage provider requires the matching Vitest version, including
+      # across major upgrades; separate PRs cannot install independently.
+      vitest:
+        patterns:
+          - vitest
+          - "@vitest/*"
       minor-and-patch:
         update-types:
           - minor
