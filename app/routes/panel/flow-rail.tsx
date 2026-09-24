@@ -101,8 +101,8 @@ export const MODE_LABEL: Record<Mode, string> = {
   "workos-only": "WorkOS-only",
 };
 
-function usersLabel(n: number | null | undefined, truncated?: boolean): string {
-  return `${n ?? "—"}${truncated ? "+" : ""} users`;
+function usersLabel(n: number | null | undefined, truncated?: boolean, activeOnly = false): string {
+  return `${n ?? "—"}${truncated ? "+" : ""} ${activeOnly ? "active users" : "users"}`;
 }
 
 /**
@@ -139,8 +139,11 @@ function activeSuffix(active: number | null | undefined): string | undefined {
 export function FlowRail({
   mode,
   counts,
+  activeOnly = false,
 }: {
   mode: Mode;
+  /** Whether the native and WorkOS counts exclude inactive SCIM records. */
+  activeOnly?: boolean;
   counts: {
     idp?: number | null;
     native: number | null;
@@ -154,9 +157,8 @@ export function FlowRail({
      *  budget was full all the way down. Rendered as "N+ users". */
     nativeTruncated?: boolean;
     workos: number | null;
-    /** How many of `workos` are not deactivated. Optional: the per-directory
-     *  view reads a count without the per-user detail, and a box that cannot
-     *  say says nothing rather than guessing. See `activeSuffix`. */
+    /** How many of `workos` are not deactivated. An optional subtitle when
+     *  displaying total SCIM records. See `activeSuffix`. */
     workosActive?: number | null;
     /** As `nativeTruncated`, for the WorkOS node. */
     workosTruncated?: boolean;
@@ -218,7 +220,7 @@ export function FlowRail({
                   />
                   <Node
                     label="WorkOS"
-                    value={usersLabel(counts.workos, counts.workosTruncated)}
+                    value={usersLabel(counts.workos, counts.workosTruncated, activeOnly)}
                     sub={activeSuffix(counts.workosActive)}
                     tone="target"
                   />
@@ -230,7 +232,7 @@ export function FlowRail({
 
           <NativeApp
             flow={withBridge ? flow : BEFORE_FLOW}
-            databaseValue={usersLabel(counts.native, counts.nativeTruncated)}
+            databaseValue={usersLabel(counts.native, counts.nativeTruncated, activeOnly)}
             databaseSub={activeSuffix(counts.nativeActive)}
             showListener={withBridge}
           />

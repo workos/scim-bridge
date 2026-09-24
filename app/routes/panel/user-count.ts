@@ -2,70 +2,101 @@ import { joinScimUrl } from "../../../workers/shared/scim";
 
 export interface EndpointCount {
   reachable: boolean;
+  /** Users whose SCIM resource does not explicitly set active: false. */
   count: number | null;
-  /** True when `count` is a floor, not a total: every page the probe read was
-   *  full, so the collection continues beyond what it counted. A consumer must
-   *  not compare two counts for equality while either is truncated. */
+  /** True when unread or invalid pages prevent an exact active-user count. */
   truncated: boolean;
 }
 
-/** One page of the probe, and the budget it stops at. 200 matches the demo
- *  live view's cap. */
+/** Counts alone cannot prove that the users or their attributes are in sync. */
+export function getUserCountStatus(
+  native: EndpointCount,
+  workos: EndpointCount,
+): { color: "green" | "yellow" | "gray"; label: string } {
+  if (!native.reachable || !workos.reachable) {
+    return { color: "gray", label: "endpoint unreachable" };
+  }
+  if (native.count === null || workos.count === null) {
+    return { color: "gray", label: "counts unavailable" };
+  }
+  if (native.truncated || workos.truncated) {
+    return { color: "gray", label: "counts incomplete" };
+  }
+  return native.count === workos.count
+    ? { color: "green", label: "active counts match" }
+    : { color: "yellow", label: "active counts differ" };
+}
+
 const PAGE = 200;
+const MAX_PAGES = 2;
 
 /**
- * Live user count from an endpoint over SCIM.
+ * Count active users from SCIM resources, not totalResults: retained inactive
+ * records inflate that unfiltered total. Omitted active means active, matching
+ * the detailed live view and native endpoints that only retain live users.
  *
- * RFC 7644 makes `totalResults` the size of the whole collection, but a
- * hand-rolled SCIM server often reports the size of the page it returned — a
- * probe that trusts the field then undercounts, and a one-item probe reads
- * "1 users" forever (a real POC hit exactly this). So: read a full page and
- * take the larger of `totalResults` and the rows actually returned. That is
- * still ambiguous in one case — a full page whose total doesn't exceed it,
- * which is either a collection of exactly one page or a page-sized total with
- * more behind it — and one more probe at the next page tells those apart. A
- * second full page stops there and reports a floor (`truncated`) rather than
- * paginating an arbitrarily large directory from a status card.
+ * Read at most two pages to keep this status card bounded. A full page needs
+ * another probe even when totalResults says it is the last: some native servers
+ * report the page size instead of the collection size. Conversely, a larger
+ * reported total means more rows remain even if the server caps a page below
+ * our requested size. Neither case may produce a false matching-count badge.
  */
 export async function countUsers(url: string, token: string): Promise<EndpointCount> {
   if (!url) return { reachable: false, count: null, truncated: false };
 
-  const first = await listUsersPage(url, token, 1);
-  if (first === null) return { reachable: false, count: null, truncated: false };
-  const { reported, returned } = first;
-  if (reported === null && returned === null) {
-    return { reachable: true, count: null, truncated: false };
+  let count = 0;
+  let returned = 0;
+  let reported = 0;
+  const seen = new Set<string>();
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const result = await listUsersPage(url, token, returned + 1);
+    if (result === null || result.resources === null) {
+      return page === 0
+        ? { reachable: result !== null, count: null, truncated: false }
+        : { reachable: true, count, truncated: true };
+    }
+    reported = Math.max(reported, result.reported ?? 0);
+    let repeated = false;
+    for (const user of result.resources) {
+      if (seen.has(user.id)) {
+        repeated = true;
+        continue;
+      }
+      seen.add(user.id);
+      if (user.active !== false) count++;
+    }
+    returned += result.resources.length;
+    // A server ignoring startIndex must not inflate the count or appear exact.
+    if (repeated) return { reachable: true, count, truncated: true };
+    if (result.resources.length < PAGE && reported <= returned) {
+      return { reachable: true, count, truncated: false };
+    }
+    if (result.resources.length === 0) break;
   }
-
-  // Unambiguous when the page wasn't full (the collection ended inside it) or
-  // the reported total exceeds the page (a compliant server's real total).
-  const pageFull = returned === PAGE;
-  if (!pageFull || (reported !== null && reported > (returned ?? 0))) {
-    return { reachable: true, count: Math.max(reported ?? 0, returned ?? 0), truncated: false };
-  }
-
-  const second = await listUsersPage(url, token, PAGE + 1);
-  if (second === null || second.returned === null) {
-    // The endpoint answered the first page, so it is reachable; what's unknown
-    // is only whether the collection continues. Report the floor as such.
-    return { reachable: true, count: PAGE, truncated: true };
-  }
-  return {
-    reachable: true,
-    count: PAGE + second.returned,
-    truncated: second.returned === PAGE,
-  };
+  return { reachable: true, count, truncated: true };
 }
 
-/** One page of GET /Users, with a short timeout so an unreachable or
- *  not-yet-configured endpoint fails fast instead of hanging. Null on any
- *  failure; otherwise the reported totalResults and the returned row count,
- *  each null when the body doesn't carry it. */
+interface CountedUser {
+  id: string;
+  active?: boolean;
+}
+
+function isCountedUser(value: unknown): value is CountedUser {
+  if (!value || typeof value !== "object") return false;
+  const user = value as Record<string, unknown>;
+  return (
+    typeof user.id === "string" &&
+    user.id.length > 0 &&
+    (user.active === undefined || typeof user.active === "boolean")
+  );
+}
+
+/** Null distinguishes an unreachable endpoint from a readable but invalid list. */
 async function listUsersPage(
   url: string,
   token: string,
   startIndex: number,
-): Promise<{ reported: number | null; returned: number | null } | null> {
+): Promise<{ reported: number | null; resources: CountedUser[] | null } | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
   try {
@@ -78,10 +109,15 @@ async function listUsersPage(
       },
     );
     if (!response.ok) return null;
-    const body = (await response.json()) as { totalResults?: unknown; Resources?: unknown };
+    const body = (await response.json()) as { totalResults?: unknown; Resources?: unknown } | null;
+    const total = body?.totalResults;
+    const reported =
+      typeof total === "number" && Number.isSafeInteger(total) && total >= 0 ? total : null;
+    // SCIM permits Resources to be omitted for an empty collection only.
+    const rows = body?.Resources ?? (reported === 0 ? [] : null);
     return {
-      reported: typeof body.totalResults === "number" ? body.totalResults : null,
-      returned: Array.isArray(body.Resources) ? body.Resources.length : null,
+      reported,
+      resources: Array.isArray(rows) && rows.every(isCountedUser) ? rows : null,
     };
   } catch {
     return null;

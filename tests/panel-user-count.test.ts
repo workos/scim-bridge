@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { countUsers } from "../app/routes/panel/user-count";
-import { installFakeUpstreams, NATIVE_URL, scimJson, type FakeUpstreams } from "./helpers";
+import { countUsers, getUserCountStatus } from "../app/routes/panel/user-count";
+import {
+  installFakeUpstreams,
+  NATIVE_URL,
+  WORKOS_URL,
+  scimJson,
+  type FakeUpstreams,
+} from "./helpers";
 
 /**
  * The Live state card's user count, read over SCIM from each endpoint.
@@ -86,15 +92,20 @@ describe("countUsers", () => {
     expect(fake.calls).toHaveLength(2);
   });
 
-  it("still trusts a compliant totalResults beyond the returned page", async () => {
+  it("does not treat an unfiltered totalResults as the active-user count", async () => {
     fake = installFakeUpstreams();
-    fake.route("native", "GET", /^\/Users/, () => listPage(users(200), 500));
+    const all = users(500).map((user, i) => ({ ...user, active: i !== 0 && i !== 200 }));
+    fake.route("native", "GET", /^\/Users/, (call) => {
+      const start = Number(new URL(`https://x${call.path}`).searchParams.get("startIndex")) - 1;
+      return listPage(all.slice(start, start + 200), 500);
+    });
 
     const result = await countUsers(NATIVE_URL, "native-secret");
 
-    // totalResults exceeding the page is unambiguous: one request, no probe.
-    expect(result).toEqual({ reachable: true, count: 500, truncated: false });
-    expect(fake.calls).toHaveLength(1);
+    // The unread third page may contain inactive users. Only the 398 active
+    // users actually read are known; 500 is the raw collection size.
+    expect(result).toEqual({ reachable: true, count: 398, truncated: true });
+    expect(fake.calls).toHaveLength(2);
   });
 
   it("falls back to counting the returned resources when totalResults is missing", async () => {
@@ -121,5 +132,179 @@ describe("countUsers", () => {
     const result = await countUsers(NATIVE_URL, "native-secret");
 
     expect(result).toEqual({ reachable: true, count: null, truncated: false });
+  });
+
+  it("matches 78 native users with 78 active WorkOS users and one retained inactive record", async () => {
+    fake = installFakeUpstreams();
+    fake.route("native", "GET", /^\/Users/, listPage(users(78), 78));
+    fake.route(
+      "workos",
+      "GET",
+      /^\/Users/,
+      listPage(
+        [...users(78).map((user) => ({ ...user, active: true })), { id: "deleted", active: false }],
+        79,
+      ),
+    );
+
+    const native = await countUsers(NATIVE_URL, "native-secret");
+    const workos = await countUsers(WORKOS_URL, "workos-secret");
+
+    expect(native).toEqual({ reachable: true, count: 78, truncated: false });
+    expect(workos).toEqual({ reachable: true, count: 78, truncated: false });
+    expect(getUserCountStatus(native, workos)).toEqual({
+      color: "green",
+      label: "active counts match",
+    });
+  });
+
+  it("reveals different active counts even when raw record totals match", async () => {
+    fake = installFakeUpstreams();
+    fake.route("native", "GET", /^\/Users/, listPage(users(79), 79));
+    fake.route(
+      "workos",
+      "GET",
+      /^\/Users/,
+      listPage([...users(78), { id: "deleted", active: false }], 79),
+    );
+
+    const native = await countUsers(NATIVE_URL, "native-secret");
+    const workos = await countUsers(WORKOS_URL, "workos-secret");
+
+    expect(getUserCountStatus(native, workos)).toEqual({
+      color: "yellow",
+      label: "active counts differ",
+    });
+  });
+
+  it("counts an entirely inactive collection as exactly zero active users", async () => {
+    fake = installFakeUpstreams();
+    fake.route(
+      "native",
+      "GET",
+      /^\/Users/,
+      listPage(
+        users(3).map((user) => ({ ...user, active: false })),
+        3,
+      ),
+    );
+
+    expect(await countUsers(NATIVE_URL, "native-secret")).toEqual({
+      reachable: true,
+      count: 0,
+      truncated: false,
+    });
+  });
+
+  it("excludes inactive users on both pages of a complete collection", async () => {
+    fake = installFakeUpstreams();
+    const all = users(250).map((user, i) => ({ ...user, active: i !== 0 && i !== 200 }));
+    fake.route("native", "GET", /^\/Users/, (call) => {
+      const start = Number(new URL(`https://x${call.path}`).searchParams.get("startIndex")) - 1;
+      return listPage(all.slice(start, start + 200), 250);
+    });
+
+    expect(await countUsers(NATIVE_URL, "native-secret")).toEqual({
+      reachable: true,
+      count: 248,
+      truncated: false,
+    });
+  });
+
+  it.each([
+    { total: 75, want: 74, truncated: false },
+    { total: 150, want: 99, truncated: true },
+  ])(
+    "honors smaller upstream pages for a $total-record collection",
+    async ({ total, want, truncated }) => {
+      fake = installFakeUpstreams();
+      const all = users(total).map((user, i) => ({ ...user, active: i !== 50 }));
+      fake.route("native", "GET", /^\/Users/, (call) => {
+        const start = Number(new URL(`https://x${call.path}`).searchParams.get("startIndex")) - 1;
+        return listPage(all.slice(start, start + 50), total);
+      });
+
+      expect(await countUsers(NATIVE_URL, "native-secret")).toEqual({
+        reachable: true,
+        count: want,
+        truncated,
+      });
+      expect(fake.calls[1].path).toContain("startIndex=51");
+    },
+  );
+
+  it("keeps the first page as a lower bound when the next page fails", async () => {
+    fake = installFakeUpstreams();
+    fake.route("native", "GET", /^\/Users\?startIndex=1&/, listPage(users(200), 250));
+    fake.route("native", "GET", /^\/Users\?startIndex=201&/, scimJson(503, {}));
+
+    expect(await countUsers(NATIVE_URL, "native-secret")).toEqual({
+      reachable: true,
+      count: 200,
+      truncated: true,
+    });
+  });
+
+  it("does not inflate a count when an endpoint repeats a page", async () => {
+    fake = installFakeUpstreams();
+    fake.route("native", "GET", /^\/Users/, () => listPage(users(200), 250));
+
+    expect(await countUsers(NATIVE_URL, "native-secret")).toEqual({
+      reachable: true,
+      count: 200,
+      truncated: true,
+    });
+  });
+
+  it.each([
+    { totalResults: 79 },
+    { totalResults: 1, Resources: [null] },
+    { totalResults: 1, Resources: [{ id: "u1", active: "false" }] },
+  ])("keeps malformed resources unknown instead of trusting their raw total", async (body) => {
+    fake = installFakeUpstreams();
+    fake.route("native", "GET", /^\/Users/, scimJson(200, body));
+
+    expect(await countUsers(NATIVE_URL, "native-secret")).toEqual({
+      reachable: true,
+      count: null,
+      truncated: false,
+    });
+  });
+
+  it("accepts an empty SCIM collection that omits Resources", async () => {
+    fake = installFakeUpstreams();
+    fake.route("native", "GET", /^\/Users/, scimJson(200, { totalResults: 0 }));
+
+    expect(await countUsers(NATIVE_URL, "native-secret")).toEqual({
+      reachable: true,
+      count: 0,
+      truncated: false,
+    });
+  });
+});
+
+describe("getUserCountStatus", () => {
+  it("does not equate two unavailable counts", () => {
+    const unknown = { reachable: true, count: null, truncated: false };
+    expect(getUserCountStatus(unknown, unknown)).toEqual({
+      color: "gray",
+      label: "counts unavailable",
+    });
+  });
+
+  it("does not compare incomplete active counts", () => {
+    const partial = { reachable: true, count: 78, truncated: true };
+    expect(getUserCountStatus(partial, { ...partial, truncated: false })).toEqual({
+      color: "gray",
+      label: "counts incomplete",
+    });
+  });
+
+  it("reports an unreachable endpoint before comparing counts", () => {
+    const unreachable = { reachable: false, count: null, truncated: false };
+    expect(getUserCountStatus(unreachable, unreachable)).toEqual({
+      color: "gray",
+      label: "endpoint unreachable",
+    });
   });
 });
