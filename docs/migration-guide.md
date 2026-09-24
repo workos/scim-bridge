@@ -39,8 +39,12 @@ entry per directory to migrate. Each entry carries:
   and the idempotency key: re-running the import with the same `external_id`
   returns the directory that already exists (with its same endpoint and token)
   instead of creating a duplicate. Use something stable and unique per directory.
-- `type` (**required**) — the SCIM directory type (e.g. Generic SCIM). Only SCIM
-  directories can be migrated.
+- `type` (**required**) — the SCIM directory type matching the actual upstream
+  IdP (e.g. Okta SCIM, Azure SCIM for Microsoft Entra, or Generic SCIM). You
+  select it in the list/CSV you hand WorkOS; it is not auto-detected. Only SCIM
+  directories can be migrated. Confirm the stored type for existing imports
+  too: re-importing the same `external_id` reuses the directory rather than
+  correcting its type.
 - **How to attach it to a WorkOS organization** — one of: `organization_id` or
   `organization_external_id` to use an organization you already have, or
   `organization_name` to have WorkOS create one for you. You do not have to
@@ -65,10 +69,21 @@ Acme — Okta,,,https://api.workos.com/scim/v2.0/AbC…,se_…
   [Step B](#step-b--deploy-the-bridge-and-import-the-directories) with your
   existing app's SCIM endpoint and token.
 
-This CSV *is* the bridge's bulk-import file — you finish it and load it in Step B,
+This CSV _is_ the bridge's bulk-import file — you finish it and load it in Step B,
 no reshaping. Directories provisioned this way are **imported directories**:
 WorkOS marks them as migrated, which is what enables the
 [migrated-id contract](../README.md#how-workos-handles-each-scim-request).
+
+**Flag legacy users without IdP identifiers during this handoff.** A native
+user's SCIM `id` and the IdP's user `externalId` are separate identities. The
+bridge preserves native IDs through the migrated-id contract; it does not
+look up missing Okta or Entra identifiers. Before dual-write or backfill, have
+WorkOS confirm that the target environment supports trusted migrated creates
+with an omitted `externalId` and preserves an identifier learned later when
+a migrated replacement omits it. That server support is a prerequisite, not
+something installing the bridge enables. See the
+[provider and legacy-data checklist](./workos-scim-requirements.md#directory-setup-and-provider-identities)
+for the setup check, exact `400` errors, and recovery path.
 
 > **A note on the WorkOS directory id.** Your DSync listener and the bridge's
 > status endpoint key on the WorkOS `directory_id` (Step D). The import CSV above
@@ -83,11 +98,11 @@ that decides what a deactivation looks like on the event stream. It is a real
 choice with both options supported, and you should decide it **with** WorkOS
 during Step A, because it shapes how your listener interprets one event:
 
-| | Soft-delete **on** | Soft-delete **off** |
-| --- | --- | --- |
+|                                                                        | Soft-delete **on**                              | Soft-delete **off**                                                              |
+| ---------------------------------------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------- |
 | IdP deactivates a user (`active: false` — how Okta and Entra offboard) | `dsync.user.updated`, user retained as Inactive | `dsync.user.deleted` — while WorkOS still retains the user and their memberships |
-| User actually removed from the directory | `dsync.user.deleted` | `dsync.user.deleted` |
-| What `dsync.user.deleted` therefore means | The user is really gone | Ambiguous: deactivated *or* gone |
+| User actually removed from the directory                               | `dsync.user.deleted`                            | `dsync.user.deleted`                                                             |
+| What `dsync.user.deleted` therefore means                              | The user is really gone                         | Ambiguous: deactivated _or_ gone                                                 |
 
 Points to be aware of:
 
@@ -202,10 +217,12 @@ Before cutover your app must consume Directory Sync events:
 
 **Audit your data first.** WorkOS validates every user and group it is handed:
 a user without a non-empty `userName` and a usable email is rejected and held
-on the WorkOS side; quieter violations degrade silently. Every check is a
-query you can run against your users database today, before anything migrates
-— [workos-scim-requirements.md](./workos-scim-requirements.md) is the
-checklist, and the decoder for the errors the backfill summary reports.
+on the WorkOS side; provider-specific `externalId` setup validation can also
+reject a create before any user row exists. Complete the data audit and
+confirm the provider type and any required legacy migration support with
+WorkOS before advancing —
+[workos-scim-requirements.md](./workos-scim-requirements.md) is the checklist,
+and the decoder for the errors the backfill summary reports.
 
 **Pilot first.** Take one low-stakes directory through every rung below — all
 the way to `workos-only` and one post-cutover change observed arriving through
@@ -222,13 +239,13 @@ Per directory, advance the mode from its page, verifying convergence in the
 [runbook: run the migration](./runbook.md#run-the-migration) has the full
 operational detail, including what "safe to cut over" looks like:
 
-| Rung | What changes | Verify before the next rung |
-| --- | --- | --- |
-| `passthrough` | Nothing — traffic flows to your app | IdP traffic visible in Activity |
-| `dual-write` | New writes mirror to WorkOS | Writes land on both sides |
-| **Backfill** (button) | Existing state copies to WorkOS | Mappings shows a WorkOS id per resource |
-| `workos-primary` | WorkOS answers the IdP; the proxy still writes your app | The native-writes card is **empty** — dwell here |
-| `workos-only` | Cutover: your app is fed by DSync events only | Run **Reconcile from WorkOS** immediately after the flip |
+| Rung                  | What changes                                            | Verify before the next rung                              |
+| --------------------- | ------------------------------------------------------- | -------------------------------------------------------- |
+| `passthrough`         | Nothing — traffic flows to your app                     | IdP traffic visible in Activity                          |
+| `dual-write`          | New writes mirror to WorkOS                             | Writes land on both sides                                |
+| **Backfill** (button) | Existing state copies to WorkOS                         | Mappings shows a WorkOS id per resource                  |
+| `workos-primary`      | WorkOS answers the IdP; the proxy still writes your app | The native-writes card is **empty** — dwell here         |
+| `workos-only`         | Cutover: your app is fed by DSync events only           | Run **Reconcile from WorkOS** immediately after the flip |
 
 **Rollback** is a mode change at any rung — before cutover nothing needs
 reconciling first; after cutover, run **Reconcile from WorkOS** if you're unsure
@@ -241,7 +258,7 @@ symptoms. Two worth naming here because they look like bridge bugs and aren't:
 
 - **WorkOS shows more users than your app after cutover.** Deactivated users:
   WorkOS retains them as inactive records (with their memberships); your app
-  deprovisioned them. Compare *active* users and their memberships, not raw
+  deprovisioned them. Compare _active_ users and their memberships, not raw
   row counts.
 - **A rehired user is missing group memberships in your app.** Your listener
   hard-deleted on an event that was a deactivation — see Step A's soft-delete
