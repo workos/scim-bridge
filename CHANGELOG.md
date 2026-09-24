@@ -13,6 +13,45 @@ Container images for each version:
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-24
+
+### Fixed
+
+- **Consistent active-user counts across the control panel.** Directory
+  summaries, overview cards, and Live views exclude users with `active: false`.
+  Users without an `active` field still count as active. Inactive records remain
+  available for detailed comparison; SCIM protocol totals are unchanged.
+  Incomplete counts appear as lower bounds (`N+`), and unavailable or partial
+  results no longer imply that the directories match. Counting is bounded to
+  two pages and requires an empty page to establish an exact total.
+- **Serialize workos-primary creates and Reconcile from WorkOS.** Durable claims
+  prevent overlapping operations from assigning one WorkOS identity to different
+  native resources. Competing creates return `503` with `Retry-After: 1` before
+  contacting either upstream. Native replay responses must confirm the expected
+  identity, and mappings must persist before reconciliation releases its claims.
+
+### Changed
+
+- Clarify provider selection and identity requirements when importing legacy
+  directories without Okta or Entra identifiers.
+- Update runtime and development dependencies, including Vitest and its coverage
+  provider together, and protect CI and container dependency installs with
+  Socket Firewall. Keep the lockfile independent of a private registry.
+
+### Upgrading
+
+- The server automatically applies the new additive SQLite `0014` or PostgreSQL
+  `0008` migration at startup, before serving requests. Both add the
+  `workos_primary_create_claims` table.
+- **Drain old proxy instances and reconcile runners before routing creates or
+  reconciliation to updated instances.** Older versions do not acquire claims,
+  so running old and new instances together does not provide this protection.
+- Claims deliberately do not expire. Interrupted or uncertain upstream writes
+  can retain a claim, blocking subsequent creates and reconciliation until an
+  operator follows the [recovery procedure](https://github.com/workos/scim-bridge/blob/v0.4.2/docs/runbook.md#a-workos-primary-create-returns-503-with-retry-after).
+  The claims cover workos-primary creates and Reconcile from WorkOS; other write
+  modes and forward backfills are outside this protection.
+
 ## [0.4.0]
 
 ### Added
@@ -186,7 +225,8 @@ hardens the control panel — a minor bump on several fronts.
 - First release: the SCIM migration proxy (passthrough → dual-write → backfill →
   cut over, reversible until commit), the control panel, and a Docker image.
 
-[unreleased]: https://github.com/workos/scim-bridge/compare/v0.2.2...HEAD
+[unreleased]: https://github.com/workos/scim-bridge/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/workos/scim-bridge/compare/v0.4.1...v0.4.2
 [0.2.2]: https://github.com/workos/scim-bridge/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/workos/scim-bridge/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/workos/scim-bridge/compare/v0.1.0...v0.2.0
