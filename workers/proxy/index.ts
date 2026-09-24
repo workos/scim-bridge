@@ -1,6 +1,7 @@
 import type { Datastore } from "../shared/datastore";
 import type { Directory, PocEnv, ResourceType, WorkerHandler } from "../shared/types";
 import {
+  claimWorkosPrimaryCreate,
   clearNativeWriteFailure,
   deleteMapping,
   getDirectoryByToken,
@@ -9,6 +10,7 @@ import {
   insertProxyLog,
   type ProxyLogInsert,
   recordNativeWriteFailure,
+  releaseWorkosPrimaryCreate,
   shouldPersistLogs,
   upsertMapping,
 } from "../shared/db";
@@ -704,6 +706,61 @@ async function workosPrimaryCreate(
   log: ProxyLogInsert,
   finish: (response: Response) => Response,
 ): Promise<Response> {
+  const token = crypto.randomUUID();
+  if (!(await claimWorkosPrimaryCreate(env.DB, directory.id, kind, token))) {
+    log.error = `Another ${kind} create or reconcile is unresolved for this directory. Retry after it completes.`;
+    const response = scimError(503, log.error);
+    response.headers.set("Retry-After", "1");
+    return finish(response);
+  }
+
+  // Hold the database claim from before the collision snapshots until after the
+  // mapping is persisted. The native and WorkOS legs can still run concurrently.
+  // An unexpected exception (including an uncertain mapping commit) keeps the
+  // claim: releasing in finally would allow another create onto an unmapped row,
+  // potentially while an upstream leg is still writing. See the recovery runbook.
+  const { response, releaseClaim } = await workosPrimaryCreateClaimed(
+    env,
+    directory,
+    kind,
+    requestBody,
+    contentType,
+    url,
+    log,
+  );
+  if (releaseClaim) await releaseWorkosPrimaryCreate(env.DB, directory.id, kind, token);
+  return finish(response);
+}
+
+interface WorkosPrimaryCreateOutcome {
+  response: Response;
+  releaseClaim: boolean;
+}
+
+async function workosPrimaryCreateClaimed(
+  env: PocEnv,
+  directory: Directory,
+  kind: ResourceType,
+  requestBody: string | null,
+  contentType: string | null,
+  url: URL,
+  log: ProxyLogInsert,
+): Promise<WorkosPrimaryCreateOutcome> {
+  let releaseClaim = true;
+  const finish = (response: Response): WorkosPrimaryCreateOutcome => {
+    if (!releaseClaim) {
+      log.error ??= "Create claim retained: upstream writes are unresolved or lack a mapping.";
+      return {
+        response: scimError(
+          502,
+          "The create's upstream writes are unresolved. Further creates of this resource type " +
+            "are blocked until an operator checks both upstreams and recovers the create claim.",
+        ),
+        releaseClaim,
+      };
+    }
+    return { response, releaseClaim };
+  };
   const parsed = parseJson(requestBody) ?? {};
   const maps = await loadIdMaps(env.DB, directory.id);
   const toWorkos = makeTranslator(maps.nativeToWorkos);
@@ -810,7 +867,18 @@ async function workosPrimaryCreate(
   log.native_ms = native.result?.ms ?? null;
   log.native_body = native.result?.bodyText ?? null;
 
+  // Once either side accepted (or may have accepted) the create, keep the claim
+  // until both sides are linked by a persisted mapping. A resolved native 409
+  // counts too: its id names a real row even though this POST did not create it.
+  // Only explicit rejections on both sides, or a rejected native-first leg that
+  // never attempted WorkOS, can safely release before completing the mapping.
   const workosOk = mirror !== null && mirror.ok;
+  releaseClaim =
+    native.id === null &&
+    native.result !== null &&
+    !isSuccess(native.result.status) &&
+    (mirror === null || (!mirror.ok && mirror.status !== null && !isSuccess(mirror.status)));
+
   // Before native answers, the only handle on the resource is the id the IdP will
   // retry with, so a create that never reached native is recorded under that.
   const failureKey = externalId ?? uniqueAttributeValue(kind, parsed) ?? `POST /${kind}`;
@@ -832,8 +900,8 @@ async function workosPrimaryCreate(
     // The claim was resolved against native above and matched, so reaching here
     // means native then answered the create with a THIRD id — a native-side race
     // between the resolve and the create. Nothing was written to WorkOS (the
-    // mirror leg resolved to null), so the two ids the mapping separates never
-    // collapsed onto one row: the refusal holds, before either side committed.
+    // mirror leg resolved to null), but native may now hold an orphan. Keep the
+    // claim until an operator repairs that row and its missing identity link.
     //
     // Deliberately not recorded in `native_write_failures`. That card answers
     // "what did WorkOS accept that native is missing" — the exact opposite of
@@ -852,8 +920,8 @@ async function workosPrimaryCreate(
     if (mirror?.mintConflict) {
       // A create with no externalId whose native-minted id collides with another
       // resource's WorkOS-side id: `mirrorUpsert` refused before writing anything.
-      // This is permanent, so it must not be dressed as the transient WorkOS
-      // failure below — telling the IdP to retry would loop it forever.
+      // Native already committed, so keep the claim for operator recovery;
+      // repeating the create cannot repair the collision safely.
       log.error = mirror.error;
       return finish(scimError(409, mirror.error ?? "The create collides with another resource."));
     }
@@ -861,7 +929,7 @@ async function workosPrimaryCreate(
       scimError(
         mirror && mirror.status !== null && mirror.status >= 400 ? mirror.status : 502,
         `The WorkOS endpoint rejected the create: ${mirror?.error ?? "unknown error"}. The ` +
-          "native app has the resource; retrying the create will converge.",
+          "native app has the resource without a completed mapping; operator recovery is required.",
       ),
     );
   }
@@ -887,12 +955,12 @@ async function workosPrimaryCreate(
   const created = parseJson(mirror.body) ?? { ...workosBody };
   const rewritten = translateResourceIds(created, kind, toNative);
   rewritten.id = native.id;
-  return finish(
-    new Response(JSON.stringify(rewritten), {
-      status: 201,
-      headers: { "Content-Type": SCIM_CONTENT_TYPE },
-    }),
-  );
+  const response = new Response(JSON.stringify(rewritten), {
+    status: 201,
+    headers: { "Content-Type": SCIM_CONTENT_TYPE },
+  });
+  releaseClaim = true;
+  return finish(response);
 }
 
 /**

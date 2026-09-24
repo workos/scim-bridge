@@ -102,27 +102,7 @@ export const MODE_LABEL: Record<Mode, string> = {
 };
 
 function usersLabel(n: number | null | undefined, truncated?: boolean): string {
-  return `${n ?? "—"}${truncated ? "+" : ""} users`;
-}
-
-/**
- * The WorkOS box's second line.
- *
- * WorkOS keeps SCIM resources and directory users in separate tables (the SCIM
- * decoupling), and deactivating a user removes the directory user while the
- * SCIM resource stays behind carrying `active: false`. So `GET /Users` — the
- * only thing a directory's `se_` SCIM token can reach — reports every record
- * ever provisioned, while the WorkOS dashboard lists just the active ones. A
- * real directory here read 14 records against 4 in the dashboard, which looks
- * exactly like a migration that lost ten people.
- *
- * Reading the dashboard's own number is not an option: `/directory_users` needs
- * an environment API key, and WorkOS API keys are not scopeable, so the panel
- * would be asking an operator for full environment access to render a subtitle.
- * The active count is derived from the same listing instead.
- */
-function activeSuffix(active: number | null | undefined): string | undefined {
-  return active === null || active === undefined ? undefined : `${active} active`;
+  return `${n ?? "—"}${truncated ? "+" : ""} active users`;
 }
 
 /**
@@ -141,23 +121,14 @@ export function FlowRail({
   counts,
 }: {
   mode: Mode;
+  /** Every node reports active users, excluding retained inactive records. */
   counts: {
     idp?: number | null;
     native: number | null;
-    /** How many of `native` are not deactivated. The deactivate-in-place listener
-     *  keeps a deleted user as an inactive row, so `native` is inflated by those
-     *  tombstones exactly as `workos` is — showing the active count on both nodes
-     *  lets an operator read the living sets straight across and see the totals
-     *  differ only by each side's retained tombstones. See `activeSuffix`. */
-    nativeActive?: number | null;
     /** True when `native` is a floor rather than a total — the probe's page
-     *  budget was full all the way down. Rendered as "N+ users". */
+     *  budget did not establish the end. Rendered as "N+ active users". */
     nativeTruncated?: boolean;
     workos: number | null;
-    /** How many of `workos` are not deactivated. Optional: the per-directory
-     *  view reads a count without the per-user detail, and a box that cannot
-     *  say says nothing rather than guessing. See `activeSuffix`. */
-    workosActive?: number | null;
     /** As `nativeTruncated`, for the WorkOS node. */
     workosTruncated?: boolean;
   };
@@ -219,7 +190,6 @@ export function FlowRail({
                   <Node
                     label="WorkOS"
                     value={usersLabel(counts.workos, counts.workosTruncated)}
-                    sub={activeSuffix(counts.workosActive)}
                     tone="target"
                   />
                   <Leg state={flow.workosToListener} label="dsync" />
@@ -231,7 +201,6 @@ export function FlowRail({
           <NativeApp
             flow={withBridge ? flow : BEFORE_FLOW}
             databaseValue={usersLabel(counts.native, counts.nativeTruncated)}
-            databaseSub={activeSuffix(counts.nativeActive)}
             showListener={withBridge}
           />
         </Flex>

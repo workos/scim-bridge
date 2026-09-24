@@ -890,6 +890,8 @@ describe("runReconcileFromWorkos", () => {
 
     expect(summary.users).toEqual({ total: 2, mirrored: 0, failed: 2 });
     expect(summary.errors).toEqual([
+      "Create claims retained: a native replay is unresolved. An operator must check both " +
+        "upstreams and recover the claims before another create or reconcile.",
       "Users: WorkOS resource is missing an id",
       "Users/wos_1: link down",
     ]);
