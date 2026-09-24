@@ -16,6 +16,7 @@ import { runBackfill } from "../../../workers/shared/backfill";
 import { joinScimUrl } from "../../../workers/shared/scim";
 import { callIdpSimulator } from "./idp-simulator";
 import { FlowRail } from "./flow-rail";
+import { readUserSnapshot, type EndpointCount } from "./user-count";
 import { FieldLabel } from "./ui";
 import {
   reconcileGroups,
@@ -81,20 +82,20 @@ interface ScimResource {
 async function fetchWorkosDirectory(
   url: string,
   token: string,
-): Promise<{ reachable: boolean; users: DirRow[]; groups: GroupRow[] }> {
-  if (!url || !token) return { reachable: false, users: [], groups: [] };
+): Promise<EndpointCount & { users: DirRow[]; groups: GroupRow[] }> {
+  const unavailable = { reachable: false, count: null, truncated: false, users: [], groups: [] };
+  if (!url || !token) return unavailable;
   const headers = { Authorization: `Bearer ${token}` };
   try {
     // joinScimUrl + redirect:"manual": a saved base can neither fold the path into
     // a query nor bounce this bearer-token read to an internal/metadata host.
-    const [uRes, gRes] = await Promise.all([
-      fetch(`${joinScimUrl(url, "/Users")}?count=200`, { headers, redirect: "manual" }),
+    const [snapshot, gRes] = await Promise.all([
+      readUserSnapshot(url, token),
       fetch(`${joinScimUrl(url, "/Groups")}?count=200`, { headers, redirect: "manual" }),
     ]);
-    if (!uRes.ok || !gRes.ok) return { reachable: false, users: [], groups: [] };
-    const uBody = (await uRes.json()) as { Resources?: ScimResource[] };
+    if (!snapshot.reachable || !gRes.ok) return unavailable;
     const gBody = (await gRes.json()) as { Resources?: ScimResource[] };
-    const users = (uBody.Resources ?? []).map((r) => ({
+    const users = snapshot.users.map((r) => ({
       name: r.userName ?? "",
       active: r.active === false ? 0 : 1,
     }));
@@ -102,10 +103,10 @@ async function fetchWorkosDirectory(
     // the /Users listing this same call fetched — that resolution is what lets
     // `reconcileGroups` ask whether a member is one of WorkOS's retained inactive
     // records, so it lives in the module the test can reach.
-    const groups = workosGroupRows(gBody.Resources ?? [], uBody.Resources ?? []);
-    return { reachable: true, users, groups };
+    const groups = workosGroupRows(gBody.Resources ?? [], snapshot.users);
+    return { ...snapshot, users, groups };
   } catch {
-    return { reachable: false, users: [], groups: [] };
+    return unavailable;
   }
 }
 
@@ -221,6 +222,11 @@ export async function loader({ context }: Route.LoaderArgs) {
   return {
     directory: { id: directory.id, name: directory.name, mode: directory.mode },
     workosReachable: workos.reachable,
+    workosCount: {
+      reachable: workos.reachable,
+      count: workos.count,
+      truncated: workos.truncated,
+    },
     workosConfigured: directory.workos_url !== "",
     workosIsMock: directory.workos_url.includes("/mock-workos/"),
     auto: auto ?? null,
@@ -458,22 +464,22 @@ export default function PanelLive() {
     );
   }
 
-  const { directory, users, groups, workosReachable, workosConfigured, auto, events } = data;
+  const { directory, users, groups, workosReachable, workosCount, workosConfigured, auto, events } =
+    data;
   const mode = directory.mode as Mode;
   // Gate the native-side tombstone exclusion on WorkOS having actually
   // responded: an unreachable WorkOS returns an empty listing, and reading that
   // as genuine absence would reclassify every native-inactive/idp-absent user as
   // a deleted tombstone during the outage, hiding real drift.
-  const userRows = reconcileUsers(users, { workosReachable });
-  const groupRows = reconcileGroups(groups, users, { workosReachable });
+  const workosComplete = workosReachable && workosCount.count !== null && !workosCount.truncated;
+  const userRows = reconcileUsers(users, { workosReachable: workosComplete });
+  const groupRows = reconcileGroups(groups, users, { workosReachable: workosComplete });
   const userDiffs = userRows.filter((r) => r.diverged).length;
   const groupDiffs = groupRows.filter((r) => r.diverged).length;
   // Split tombstones by orientation so the headline describes each accurately:
   // WorkOS keeps the inactive record after native dropped it, vs the native app
   // keeps it (deactivate-in-place) after WorkOS and the IdP dropped it.
   const tombs = tombstoneSummary(userRows, groupRows);
-  const tombstones = tombs.users.workos + tombs.users.native;
-  const liveUsers = userRows.length - tombstones;
   const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
   const userTombClauses = [
     tombs.users.workos > 0 &&
@@ -489,16 +495,17 @@ export default function PanelLive() {
   ].filter(Boolean);
   const excludedText = [...userTombClauses, ...memberTombClauses].join(", and ");
   const converged = userDiffs === 0 && groupDiffs === 0;
-  const showDiff = workosConfigured && workosReachable;
+  const showDiff = workosConfigured && workosComplete;
   const settingMode = navigation.formData?.get("intent") === "set-mode";
   const backfilling = navigation.formData?.get("intent") === "run-backfill";
 
-  // Named for what it returns. It used to be `activeCount`, which it never was:
-  // a deactivated SCIM user is still a record, and reading the WorkOS box as a
-  // headcount is what made "14 users" here look like a contradiction of the 4
-  // in the WorkOS dashboard. Both were right about different tables.
-  const recordCount = (rows: DirRow[]) => rows.length;
   const activeCount = (rows: DirRow[]) => rows.filter((r) => r.active === 1).length;
+  const counts = {
+    idp: activeCount(users.idp),
+    native: activeCount(users.native),
+    workos: workosCount.count,
+    workosTruncated: workosCount.truncated,
+  };
 
   return (
     <Flex direction="column" gap="4">
@@ -536,16 +543,7 @@ export default function PanelLive() {
 
       <Card size="3">
         <Flex direction="column" gap="4">
-          <FlowRail
-            mode={mode}
-            counts={{
-              idp: recordCount(users.idp),
-              native: recordCount(users.native),
-              nativeActive: activeCount(users.native),
-              workos: recordCount(users.workos),
-              workosActive: activeCount(users.workos),
-            }}
-          />
+          <FlowRail mode={mode} counts={counts} />
           <Flex align="center" gap="3" wrap="wrap">
             <Text size="2" weight="medium">
               Proxy mode
@@ -606,13 +604,21 @@ export default function PanelLive() {
             be computed. Check the endpoint URL and bearer token on the directory page.
           </Callout.Text>
         </Callout.Root>
+      ) : !workosComplete ? (
+        <Callout.Root color="gray">
+          <Callout.Text>
+            The WorkOS user listing is incomplete or unavailable. Its active-user count is a lower
+            bound when shown, and convergence cannot be determined from these records.
+          </Callout.Text>
+        </Callout.Root>
       ) : converged ? (
         <Callout.Root color="green">
           <Callout.Text>
-            Native app and WorkOS hold the same directory — {liveUsers}{" "}
-            {liveUsers === 1 ? "user" : "users"}, {groupRows.length}{" "}
-            {groupRows.length === 1 ? "group" : "groups"}, fully converged.
-            {excludedText ? ` Not counted: ${excludedText}, listed below.` : ""}
+            Native app and WorkOS agree on the loaded records — {counts.native} active{" "}
+            {counts.native === 1 ? "user" : "users"}, {groups.native.length}{" "}
+            {groups.native.length === 1 ? "group" : "groups"}. Inactive users are excluded from the
+            user count and remain listed below.
+            {excludedText ? ` Excluded from divergence: ${excludedText}.` : ""}
           </Callout.Text>
         </Callout.Root>
       ) : (
