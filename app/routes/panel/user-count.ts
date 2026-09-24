@@ -30,30 +30,46 @@ export function getUserCountStatus(
 const PAGE = 200;
 const MAX_PAGES = 2;
 
+export interface ScimCountUser {
+  id: string;
+  active?: boolean;
+  userName?: string;
+}
+
+/** Only return the count to the overview, not the fetched user records. */
+export async function countUsers(url: string, token: string): Promise<EndpointCount> {
+  const { reachable, count, truncated } = await readUserSnapshot(url, token);
+  return { reachable, count, truncated };
+}
+
 /**
  * Count active users from SCIM resources, not totalResults: retained inactive
  * records inflate that unfiltered total. Omitted active means active, matching
  * the detailed live view and native endpoints that only retain live users.
  *
- * Read at most two pages to keep this status card bounded. A full page needs
- * another probe even when totalResults says it is the last: some native servers
- * report the page size instead of the collection size. Conversely, a larger
- * reported total means more rows remain even if the server caps a page below
- * our requested size. Neither case may produce a false matching-count badge.
+ * Read at most two pages to keep the panel bounded. Only an empty page confirms
+ * completion: native endpoints may cap pages below our requested size and report
+ * a page-sized totalResults or omit it. Even a consistent total is not proof the
+ * next page is empty. A larger reported total also prevents an early empty page
+ * from appearing complete. Keep inactive rows for the detailed comparison.
  */
-export async function countUsers(url: string, token: string): Promise<EndpointCount> {
-  if (!url) return { reachable: false, count: null, truncated: false };
+export async function readUserSnapshot(
+  url: string,
+  token: string,
+): Promise<EndpointCount & { users: ScimCountUser[] }> {
+  if (!url) return { reachable: false, count: null, truncated: false, users: [] };
 
   let count = 0;
   let returned = 0;
   let reported = 0;
   const seen = new Set<string>();
+  const users: ScimCountUser[] = [];
   for (let page = 0; page < MAX_PAGES; page++) {
     const result = await listUsersPage(url, token, returned + 1);
     if (result === null || result.resources === null) {
       return page === 0
-        ? { reachable: result !== null, count: null, truncated: false }
-        : { reachable: true, count, truncated: true };
+        ? { reachable: result !== null, count: null, truncated: false, users }
+        : { reachable: true, count, truncated: true, users };
     }
     reported = Math.max(reported, result.reported ?? 0);
     let repeated = false;
@@ -63,31 +79,27 @@ export async function countUsers(url: string, token: string): Promise<EndpointCo
         continue;
       }
       seen.add(user.id);
+      users.push(user);
       if (user.active !== false) count++;
     }
     returned += result.resources.length;
     // A server ignoring startIndex must not inflate the count or appear exact.
-    if (repeated) return { reachable: true, count, truncated: true };
-    if (result.resources.length < PAGE && reported <= returned) {
-      return { reachable: true, count, truncated: false };
+    if (repeated) return { reachable: true, count, truncated: true, users };
+    if (result.resources.length === 0) {
+      return { reachable: true, count, truncated: reported > returned, users };
     }
-    if (result.resources.length === 0) break;
   }
-  return { reachable: true, count, truncated: true };
+  return { reachable: true, count, truncated: true, users };
 }
 
-interface CountedUser {
-  id: string;
-  active?: boolean;
-}
-
-function isCountedUser(value: unknown): value is CountedUser {
+function isCountedUser(value: unknown): value is ScimCountUser {
   if (!value || typeof value !== "object") return false;
   const user = value as Record<string, unknown>;
   return (
     typeof user.id === "string" &&
     user.id.length > 0 &&
-    (user.active === undefined || typeof user.active === "boolean")
+    (user.active === undefined || typeof user.active === "boolean") &&
+    (user.userName === undefined || typeof user.userName === "string")
   );
 }
 
@@ -96,7 +108,7 @@ async function listUsersPage(
   url: string,
   token: string,
   startIndex: number,
-): Promise<{ reported: number | null; resources: CountedUser[] | null } | null> {
+): Promise<{ reported: number | null; resources: ScimCountUser[] | null } | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
   try {

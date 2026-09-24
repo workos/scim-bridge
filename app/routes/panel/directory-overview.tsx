@@ -682,7 +682,7 @@ function LiveStateCard({ mode }: { mode: Mode }) {
             </Button>
           </Flex>
         </Flex>
-        <FlowRail counts={counts} mode={mode} activeOnly />
+        <FlowRail counts={counts} mode={mode} />
       </Flex>
     </Card>
   );
