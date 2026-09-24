@@ -37,7 +37,7 @@ import {
 } from "../../../workers/shared/client-tokens";
 import { checkNativeNamespace } from "../../../workers/shared/native-namespace";
 import { joinScimUrl } from "../../../workers/shared/scim";
-import { countUsers, type EndpointCount } from "./user-count";
+import { countUsers, getUserCountStatus, type EndpointCount } from "./user-count";
 import { validateUpstreamUrl } from "../../../workers/shared/upstream-url";
 import type { BackfillSummary, Mode, NativeWriteFailure } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
@@ -285,11 +285,7 @@ export async function action({
       return { reconcile };
     } catch (error) {
       if (!(error instanceof ReconcileInFlightError)) throw error;
-      return {
-        error:
-          "A reconcile is already running for this directory — wait for it to finish. " +
-          "Two overlapping runs can retire a divergence the other is still responsible for.",
-      };
+      return { error: error.message };
     }
   }
 
@@ -665,20 +661,7 @@ function LiveStateCard({ mode }: { mode: Mode }) {
     workosTruncated: topo?.workos.truncated,
   };
 
-  let sync: { color: "green" | "yellow" | "gray"; label: string } | null = null;
-  if (topo) {
-    if (!topo.native.reachable || !topo.workos.reachable) {
-      sync = { color: "gray", label: "endpoint unreachable" };
-    } else if (topo.native.truncated || topo.workos.truncated) {
-      // A truncated count is a floor, so equality (and inequality) between the
-      // two sides proves nothing — say so instead of claiming either.
-      sync = { color: "gray", label: "counts capped" };
-    } else if (topo.native.count === topo.workos.count) {
-      sync = { color: "green", label: "in sync" };
-    } else {
-      sync = { color: "yellow", label: "drift" };
-    }
-  }
+  const sync = topo ? getUserCountStatus(topo.native, topo.workos) : null;
 
   return (
     <Card size="3">
@@ -686,7 +669,7 @@ function LiveStateCard({ mode }: { mode: Mode }) {
         <Flex align="center" gap="3" justify="between">
           <CardHeader
             title="Live state"
-            description="The native app and WorkOS for this directory, read live over SCIM. Counts are users."
+            description="The native app and WorkOS for this directory, read live over SCIM. Counts are active users."
           />
           <Flex align="center" gap="2">
             {sync && <Badge color={sync.color}>{sync.label}</Badge>}

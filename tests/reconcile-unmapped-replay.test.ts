@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import proxyWorker from "../workers/proxy/index";
-import { runReconcileFromWorkos } from "../workers/shared/backfill";
+import { ReconcileInFlightError, runReconcileFromWorkos } from "../workers/shared/backfill";
 import { MIGRATED_ID_HEADER, type PocEnv } from "../workers/shared/types";
 import {
   createCtx,
@@ -160,7 +160,16 @@ describe("reconcile replay of an unmapped WorkOS row in a shared namespace", () 
       active: false,
       displayName: "Attacker Controlled",
     });
-    expect(plant.status).toBe(409);
+    // Native's rejected adoption leaves a WorkOS row without a native identity,
+    // so the response requires recovery and the claim blocks further creates.
+    expect(plant.status).toBe(502);
+    expect(
+      await env.DB.prepare(
+        "SELECT token FROM workos_primary_create_claims WHERE directory_id = ? AND resource_type = ?",
+      )
+        .bind(attacker.id, "Users")
+        .first(),
+    ).not.toBeNull();
     expect(
       await env.DB.prepare("SELECT COUNT(*) AS n FROM id_mappings WHERE directory_id = ?")
         .bind(attacker.id)
@@ -172,9 +181,13 @@ describe("reconcile replay of an unmapped WorkOS row in a shared namespace", () 
     // is nothing for a replay to aim at even if a future sink forgets to check.
     expect(workos.has("vic-1")).toBe(false);
 
-    // 2. The operator's documented repair for the divergence the failed create
-    //    filed. It must not carry the attacker's row into the shared native app.
-    const summary = await runReconcileFromWorkos(env.DB, await reload(env.DB, attacker));
+    // 2. Reconcile cannot snapshot or replay this unresolved create. The operator
+    //    must recover its retained claim before any repair can touch either side.
+    const callsBeforeReconcile = fake.calls.length;
+    await expect(
+      runReconcileFromWorkos(env.DB, await reload(env.DB, attacker)),
+    ).rejects.toBeInstanceOf(ReconcileInFlightError);
+    expect(fake.calls).toHaveLength(callsBeforeReconcile);
 
     // 3. The victim's row is untouched, whichever way the reconcile handled it.
     expect(native.users.get("vic-1")).toMatchObject({
@@ -186,11 +199,7 @@ describe("reconcile replay of an unmapped WorkOS row in a shared namespace", () 
       userName: "victim.user@orgb.example",
       active: true,
     });
-    // And the operator is told, rather than the run reading green over the skip.
-    expect(summary.users.mirrored).toBe(0);
-    expect(summary.errors.join(" ")).toContain("another directory fronts this native app");
-    // The divergence stays on the operator's list: a skipped resource is not a
-    // repaired one.
+    // The divergence stays on the operator's list: a blocked repair cannot clear it.
     expect(
       await env.DB.prepare("SELECT COUNT(*) AS n FROM native_write_failures").first<{
         n: number;
