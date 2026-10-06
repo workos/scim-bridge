@@ -2,7 +2,6 @@ import type { Datastore } from "./datastore";
 import type { BackfillSummary, Directory, ResourceType } from "./types";
 import { getEventLinkByNativeId } from "./event-links";
 import {
-  AmbiguousScimMappingError,
   claimReconcileRun,
   claimWorkosPrimaryCreate,
   clearReplayedDivergenceForResource,
@@ -354,32 +353,33 @@ export async function runReconcileFromWorkos(
       throw error;
     }
 
-    // Legacy duplicate owners cannot authorize either a resource PUT or a group
-    // member translation. Validate under the claims before any upstream work.
+    const state: ReconcileReplayState = { unresolvedWrite: false, writeStarted: false };
     try {
-      await loadIdMaps(db, directory.id);
+      // Reconciliation addresses the whole directory, so reject every ambiguous
+      // owner before snapshots or native writes.
+      await loadIdMaps(db, directory.id, { strict: true });
+      const summary = await reconcileFromWorkos(db, directory, state);
+      if (state.unresolvedWrite) {
+        summary.errors.unshift(
+          "Create claims retained: a native replay is unresolved. An operator must check both " +
+            "upstreams and recover the claims before another create or reconcile.",
+        );
+        summary.errors.length = Math.min(summary.errors.length, ERROR_CAP);
+      } else {
+        await releaseReconcileCreateClaims(db, directory.id, runToken);
+      }
+      return summary;
     } catch (error) {
-      if (error instanceof AmbiguousScimMappingError) {
+      // A failed read cannot have created an unowned native row. Release only
+      // this run's tokens; once a write starts, uncertain ownership stays held.
+      if (!state.writeStarted) {
         await releaseReconcileCreateClaims(db, directory.id, runToken);
       }
       throw error;
     }
-
-    const state: ReconcileReplayState = { unresolvedWrite: false };
-    const summary = await reconcileFromWorkos(db, directory, state);
-    if (state.unresolvedWrite) {
-      summary.errors.unshift(
-        "Create claims retained: a native replay is unresolved. An operator must check both " +
-          "upstreams and recover the claims before another create or reconcile.",
-      );
-      summary.errors.length = Math.min(summary.errors.length, ERROR_CAP);
-    } else {
-      await releaseReconcileCreateClaims(db, directory.id, runToken);
-    }
-    return summary;
   } finally {
     // The legacy run lease is only an additional reconcile guard. Unexpected
-    // exceptions leave the non-expiring resource claims held for recovery.
+    // exceptions after a native write leave resource claims held for recovery.
     await releaseReconcileRun(db, directory.id, runToken);
   }
 }
@@ -396,6 +396,7 @@ async function releaseReconcileCreateClaims(
 
 interface ReconcileReplayState {
   unresolvedWrite: boolean;
+  writeStarted: boolean;
 }
 
 async function reconcileFromWorkos(
@@ -619,6 +620,7 @@ async function pushToNative(
   let method = nativeId ? "PUT" : "POST";
   let result: UpstreamResult;
   try {
+    state.writeStarted = true;
     result = nativeId
       ? await putNative(directory, kind, nativeId, resource)
       : await postNative(directory, kind, resource);

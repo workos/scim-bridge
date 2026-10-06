@@ -852,7 +852,7 @@ describe("getMappingByWorkosId", () => {
 
 describe("loadIdMaps", () => {
   it.each(["Users", "Groups"] as const)(
-    "refuses ambiguous %s reverse mappings instead of overwriting an owner",
+    "refuses touched ambiguous %s ids in both translation directions",
     async (kind) => {
       const env = await createEnv();
       const directory = await seedDirectory(env.DB);
@@ -864,7 +864,71 @@ describe("loadIdMaps", () => {
           workos_id: "workos-shared",
           strategy: "fallback-post",
         });
-      await expect(loadIdMaps(env.DB, directory.id)).rejects.toBeInstanceOf(
+      const maps = await loadIdMaps(env.DB, directory.id);
+      const toWorkos = makeTranslator(maps.nativeToWorkos);
+      const toNative = makeTranslator(maps.workosToNative);
+      for (const nativeId of ["native-first", "native-second"]) {
+        expect(() => toWorkos(kind, nativeId)).toThrow(AmbiguousScimMappingError);
+        expect(() => maps.nativeToWorkos[kind].has(nativeId)).toThrow(AmbiguousScimMappingError);
+      }
+      expect(() => toWorkos(kind, "workos-shared")).toThrow(AmbiguousScimMappingError);
+      expect(() => toNative(kind, "workos-shared")).toThrow(AmbiguousScimMappingError);
+      expect(() => maps.workosToNative[kind].has("workos-shared")).toThrow(
+        AmbiguousScimMappingError,
+      );
+      expect(() => Array.from(maps.workosToNative[kind])).toThrow(AmbiguousScimMappingError);
+      expect(() => Array.from(maps.nativeToWorkos[kind].values())).toThrow(
+        AmbiguousScimMappingError,
+      );
+      expect(() => maps.workosToNative[kind].forEach(() => {})).toThrow(AmbiguousScimMappingError);
+    },
+  );
+
+  it.each(["Users", "Groups"] as const)(
+    "loads unrelated ids despite three ambiguous %s owners",
+    async (kind) => {
+      const env = await createEnv();
+      const directory = await seedDirectory(env.DB);
+      for (const nativeId of ["native-first", "native-second", "native-third"])
+        await upsertMapping(env.DB, {
+          directory_id: directory.id,
+          resource_type: kind,
+          native_id: nativeId,
+          workos_id: "workos-shared",
+          strategy: "fallback-post",
+        });
+      await upsertMapping(env.DB, {
+        directory_id: directory.id,
+        resource_type: kind,
+        native_id: "native-safe",
+        workos_id: "workos-safe",
+        strategy: "fallback-post",
+      });
+      const maps = await loadIdMaps(env.DB, directory.id);
+      expect(makeTranslator(maps.nativeToWorkos)(kind, "native-safe")).toBe("workos-safe");
+      expect(makeTranslator(maps.workosToNative)(kind, "workos-safe")).toBe("native-safe");
+      expect(maps.workosToNative[kind].has("workos-safe")).toBe(true);
+      expect(makeTranslator(maps.nativeToWorkos)(kind, "unknown")).toBe("unknown");
+      expect(() => makeTranslator(maps.nativeToWorkos)(kind, "native-third")).toThrow(
+        AmbiguousScimMappingError,
+      );
+    },
+  );
+
+  it.each(["Users", "Groups"] as const)(
+    "retains strict whole-directory %s ambiguity preflight",
+    async (kind) => {
+      const env = await createEnv();
+      const directory = await seedDirectory(env.DB);
+      for (const nativeId of ["native-first", "native-second"])
+        await upsertMapping(env.DB, {
+          directory_id: directory.id,
+          resource_type: kind,
+          native_id: nativeId,
+          workos_id: "workos-shared",
+          strategy: "fallback-post",
+        });
+      await expect(loadIdMaps(env.DB, directory.id, { strict: true })).rejects.toBeInstanceOf(
         AmbiguousScimMappingError,
       );
     },

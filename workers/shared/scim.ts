@@ -374,7 +374,62 @@ export interface IdTranslationMaps {
 
 export type IdTranslator = (kind: ResourceType, id: string) => string;
 
-export async function loadIdMaps(db: Datastore, directoryId: string): Promise<IdTranslationMaps> {
+/** Lookup fails only when it consumes a contested id; value iteration cannot expose an arbitrary owner. */
+class CheckedIdMap extends Map<string, string> {
+  constructor(
+    entries: Map<string, string>,
+    private readonly ambiguousIds: Set<string>,
+  ) {
+    super(entries);
+  }
+
+  assertUnambiguous(): void {
+    if (this.ambiguousIds.size) throw new AmbiguousScimMappingError();
+  }
+
+  private assertId(id: string): void {
+    if (this.ambiguousIds.has(id)) throw new AmbiguousScimMappingError();
+  }
+
+  override get(id: string): string | undefined {
+    this.assertId(id);
+    return super.get(id);
+  }
+
+  override has(id: string): boolean {
+    this.assertId(id);
+    return super.has(id);
+  }
+
+  override entries(): ReturnType<Map<string, string>["entries"]> {
+    this.assertUnambiguous();
+    return super.entries();
+  }
+
+  override values(): ReturnType<Map<string, string>["values"]> {
+    this.assertUnambiguous();
+    return super.values();
+  }
+
+  override [Symbol.iterator](): ReturnType<Map<string, string>["entries"]> {
+    return this.entries();
+  }
+
+  override forEach(
+    callback: (value: string, key: string, map: Map<string, string>) => void,
+    thisArg?: unknown,
+  ): void {
+    this.assertUnambiguous();
+    super.forEach(callback, thisArg);
+  }
+}
+
+/** Ordinary traffic validates consumed ids; whole-directory replay opts into strict preflight. */
+export async function loadIdMaps(
+  db: Datastore,
+  directoryId: string,
+  options: { strict?: boolean } = {},
+): Promise<IdTranslationMaps> {
   const { results } = await withDatastoreRetry(() =>
     db
       .prepare("SELECT resource_type, native_id, workos_id FROM id_mappings WHERE directory_id = ?")
@@ -385,11 +440,23 @@ export async function loadIdMaps(db: Datastore, directoryId: string): Promise<Id
     nativeToWorkos: { Users: new Map(), Groups: new Map() },
     workosToNative: { Users: new Map(), Groups: new Map() },
   };
+  const ambiguousIds: Record<ResourceType, Set<string>> = { Users: new Set(), Groups: new Set() };
   for (const row of results) {
     const owner = maps.workosToNative[row.resource_type].get(row.workos_id);
-    if (owner !== undefined && owner !== row.native_id) throw new AmbiguousScimMappingError();
+    if (owner !== undefined && owner !== row.native_id) {
+      // Include the WorkOS spelling in both directions: a caller can address
+      // that raw id, and identity fallback must not send a contested write.
+      ambiguousIds[row.resource_type].add(row.workos_id).add(owner).add(row.native_id);
+    }
     maps.nativeToWorkos[row.resource_type].set(row.native_id, row.workos_id);
-    maps.workosToNative[row.resource_type].set(row.workos_id, row.native_id);
+    if (owner === undefined)
+      maps.workosToNative[row.resource_type].set(row.workos_id, row.native_id);
+  }
+  for (const kind of ["Users", "Groups"] as const) {
+    maps.nativeToWorkos[kind] = new CheckedIdMap(maps.nativeToWorkos[kind], ambiguousIds[kind]);
+    const reverse = new CheckedIdMap(maps.workosToNative[kind], ambiguousIds[kind]);
+    maps.workosToNative[kind] = reverse;
+    if (options.strict) reverse.assertUnambiguous();
   }
   return maps;
 }
@@ -631,6 +698,15 @@ export async function mirrorUpsert(
     if (existing) {
       const useHeader = existing.strategy === "migrated-id";
       const label = `PUT /${kind}/${existing.workos_id}${useHeader ? ` +${MIGRATED_ID_HEADER}` : " (fallback)"}`;
+      const claimed = await claimedByAnother(
+        db,
+        directory,
+        kind,
+        existing.workos_id,
+        nativeId,
+        sink,
+      );
+      if (claimed) return mintConflict(label, kind, existing.workos_id, claimed.native_id, acc);
       const put = await putWorkos(
         directory,
         kind,
@@ -730,16 +806,19 @@ async function recoverMappedResource(
 ): Promise<MirrorResult> {
   const label = `POST /${kind} +${MIGRATED_ID_HEADER} (mapped recovery)`;
   const token = crypto.randomUUID();
-  if (!(await claimWorkosPrimaryCreate(db, directory.id, kind, token))) {
-    return recoveryRefused(
-      label,
-      503,
-      "Another create or reconciliation owns this resource type; retry after it completes",
-      acc,
-    );
-  }
-  let releaseClaim = false;
+  // A lost acquisition acknowledgment may already have stored this token. Its
+  // owner-scoped cleanup is safe until recovery POST can write upstream.
+  let releaseClaim = true;
   try {
+    if (!(await claimWorkosPrimaryCreate(db, directory.id, kind, token))) {
+      releaseClaim = false;
+      return recoveryRefused(
+        label,
+        503,
+        "Another create or reconciliation owns this resource type; retry after it completes",
+        acc,
+      );
+    }
     const current = await getMapping(db, directory.id, kind, nativeId);
     if (
       !current ||
@@ -754,6 +833,7 @@ async function recoverMappedResource(
         acc,
       );
     }
+    releaseClaim = false;
     const result = await createViaPost(db, directory, kind, nativeId, resource, acc, sink);
     // A completed mapping links the two sides durably. Explicit client errors
     // rejected every attempted write; 408, server errors, missing ids and thrown
@@ -952,12 +1032,19 @@ async function claimedByAnother(
   nativeId: string,
   sink: MappingSink | undefined,
 ): Promise<NewMapping | IdMapping | null> {
-  const claimed =
+  // Always inspect durable owners: a queued self row cannot hide ambiguous
+  // legacy mappings. Queued competitors count even when the durable row is self.
+  const claimed = await getMappingByWorkosId(db, directory.id, kind, workosId);
+  if (claimed && claimed.native_id !== nativeId) return claimed;
+  return (
     sink?.find(
       (m) =>
-        m.directory_id === directory.id && m.resource_type === kind && m.workos_id === workosId,
-    ) ?? (await getMappingByWorkosId(db, directory.id, kind, workosId));
-  return claimed && claimed.native_id !== nativeId ? claimed : null;
+        m.directory_id === directory.id &&
+        m.resource_type === kind &&
+        m.workos_id === workosId &&
+        m.native_id !== nativeId,
+    ) ?? null
+  );
 }
 
 /** A mint refused because the id is another resource's. Permanent, not transient. */

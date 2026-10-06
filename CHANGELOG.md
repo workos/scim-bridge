@@ -37,7 +37,10 @@ Container images for each version:
   Resolve both membership endpoints before provisioning, and return retryable
   webhook failures for unresolved identities.
 - Reject ambiguous legacy SCIM mappings in the direct consumer lookup, and
-  forward the optional WorkOS API key through the Cloudflare container adapter.
+  in the IDs a request translates, preserving unrelated directory traffic.
+  Release unused create, delete, mapped recovery, and reconciliation claims
+  after read failures before their writes begin. Forward the optional WorkOS API key through the
+  Cloudflare container adapter.
 
 ### Upgrading
 

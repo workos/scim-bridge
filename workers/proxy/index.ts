@@ -498,56 +498,61 @@ async function workosPrimary(
   finish: (response: Response) => Response,
 ): Promise<Response> {
   const deleteToken = method === "DELETE" ? crypto.randomUUID() : null;
-  const deleteClaim = deleteToken ? { canRelease: false } : null;
-  if (
-    deleteToken &&
-    !(await claimWorkosPrimaryCreate(
-      env.DB,
-      directory.id,
-      scimPath.kind as ResourceType,
-      deleteToken,
-    ))
-  ) {
-    log.error =
-      "Another create, recovery or reconciliation owns this resource type. Retry after it completes.";
-    const response = scimError(503, log.error);
-    response.headers.set("Retry-After", "1");
-    return finish(response);
-  }
+  const deleteClaim = deleteToken ? { canRelease: false, writesStarted: false } : null;
   // DELETE excludes identity acquisition until both legs and mapping cleanup
   // settle. An uncertain upstream or prune outcome retains the claim so a late
   // delete cannot remove a replacement created by recovery.
-  if (deleteToken) {
-    try {
-      // workosOnly also reads these maps, but starting its promise alongside
-      // native would send the native DELETE even when that read rejects.
-      await loadIdMaps(env.DB, directory.id);
-    } catch (error) {
-      if (!(error instanceof AmbiguousScimMappingError)) throw error;
-      // This typed failure is from a read before either upstream leg started.
-      await releaseWorkosPrimaryCreate(
+  let response: Response;
+  try {
+    if (
+      deleteToken &&
+      !(await claimWorkosPrimaryCreate(
         env.DB,
         directory.id,
         scimPath.kind as ResourceType,
         deleteToken,
-      );
-      return finish(ambiguousMappingResponse(log));
+      ))
+    ) {
+      log.error =
+        "Another create, recovery or reconciliation owns this resource type. Retry after it completes.";
+      const busy = scimError(503, log.error);
+      busy.headers.set("Retry-After", "1");
+      return finish(busy);
     }
+    if (deleteToken) {
+      // workosOnly also reads these maps, but starting its promise alongside
+      // native would send the native DELETE even when that read rejects. Touch
+      // only the addressed id; unrelated legacy duplicates are not this write.
+      const maps = await loadIdMaps(env.DB, directory.id);
+      if (scimPath.id !== null) maps.nativeToWorkos[scimPath.kind as ResourceType].get(scimPath.id);
+    }
+    response = await workosPrimaryWrite(
+      env,
+      ctx,
+      directory,
+      scimPath,
+      method,
+      requestBody,
+      contentType,
+      conditional,
+      url,
+      log,
+      finish,
+      deleteClaim,
+    );
+  } catch (error) {
+    if (!deleteToken || deleteClaim?.writesStarted) throw error;
+    // No upstream write started. Owner-scoped deletion is safe even if the
+    // acquisition committed but its acknowledgment was lost. Cleanup errors
+    // remain visible rather than reporting that ownership was released.
+    await releaseWorkosPrimaryCreate(
+      env.DB,
+      directory.id,
+      scimPath.kind as ResourceType,
+      deleteToken,
+    );
+    return finish(prewriteFailureResponse(log, error));
   }
-  const response = await workosPrimaryWrite(
-    env,
-    ctx,
-    directory,
-    scimPath,
-    method,
-    requestBody,
-    contentType,
-    conditional,
-    url,
-    log,
-    finish,
-    deleteClaim,
-  );
   if (deleteToken && deleteClaim?.canRelease) {
     await releaseWorkosPrimaryCreate(
       env.DB,
@@ -559,9 +564,17 @@ async function workosPrimary(
   return response;
 }
 
-function ambiguousMappingResponse(log: ProxyLogInsert): Response {
-  log.error = "SCIM mapping ownership is ambiguous. Repair the mappings before retrying.";
-  const response = scimError(503, log.error);
+interface PrimaryWriteStage {
+  writesStarted: boolean;
+}
+
+function prewriteFailureResponse(log: ProxyLogInsert, error: unknown): Response {
+  const detail =
+    error instanceof AmbiguousScimMappingError
+      ? "SCIM mapping ownership is ambiguous. Repair the mappings before retrying."
+      : "The write's preflight checks could not be completed. Retry after the datastore is available.";
+  log.error = `Prewrite checks failed: ${errorMessage(error)}`;
+  const response = scimError(503, detail);
   response.headers.set("Retry-After", "1");
   return response;
 }
@@ -578,7 +591,7 @@ async function workosPrimaryWrite(
   url: URL,
   log: ProxyLogInsert,
   finish: (response: Response) => Response,
-  deleteClaim: { canRelease: boolean } | null,
+  deleteClaim: (PrimaryWriteStage & { canRelease: boolean }) | null,
 ): Promise<Response> {
   const kind = scimPath.kind as ResourceType;
 
@@ -635,6 +648,7 @@ async function workosPrimaryWrite(
   // Both legs are started before either is awaited — that is what makes the
   // request cost max(native, workos) instead of the sum, and it is asserted in
   // tests/workos-primary.test.ts rather than left to reading this comment.
+  if (deleteClaim) deleteClaim.writesStarted = true;
   const workosLeg = workosOnly(
     env,
     ctx,
@@ -873,27 +887,35 @@ async function workosPrimaryCreate(
   finish: (response: Response) => Response,
 ): Promise<Response> {
   const token = crypto.randomUUID();
-  if (!(await claimWorkosPrimaryCreate(env.DB, directory.id, kind, token))) {
-    log.error = `Another ${kind} create or reconcile is unresolved for this directory. Retry after it completes.`;
-    const response = scimError(503, log.error);
-    response.headers.set("Retry-After", "1");
-    return finish(response);
-  }
-
+  const stage: PrimaryWriteStage = { writesStarted: false };
   // Hold the database claim from before the collision snapshots until after the
   // mapping is persisted. The native and WorkOS legs can still run concurrently.
-  // An unexpected exception (including an uncertain mapping commit) keeps the
-  // claim: releasing in finally would allow another create onto an unmapped row,
-  // potentially while an upstream leg is still writing. See the recovery runbook.
-  const { response, releaseClaim } = await workosPrimaryCreateClaimed(
-    env,
-    directory,
-    kind,
-    requestBody,
-    contentType,
-    url,
-    log,
-  );
+  // Prewrite exceptions release only this owner; once either leg can write, an
+  // exception keeps the claim until verified recovery. Never release in finally.
+  let outcome: WorkosPrimaryCreateOutcome;
+  try {
+    if (!(await claimWorkosPrimaryCreate(env.DB, directory.id, kind, token))) {
+      log.error = `Another ${kind} create or reconcile is unresolved for this directory. Retry after it completes.`;
+      const busy = scimError(503, log.error);
+      busy.headers.set("Retry-After", "1");
+      return finish(busy);
+    }
+    outcome = await workosPrimaryCreateClaimed(
+      env,
+      directory,
+      kind,
+      requestBody,
+      contentType,
+      url,
+      log,
+      stage,
+    );
+  } catch (error) {
+    if (stage.writesStarted) throw error;
+    await releaseWorkosPrimaryCreate(env.DB, directory.id, kind, token);
+    return finish(prewriteFailureResponse(log, error));
+  }
+  const { response, releaseClaim } = outcome;
   if (releaseClaim) await releaseWorkosPrimaryCreate(env.DB, directory.id, kind, token);
   return finish(response);
 }
@@ -911,6 +933,7 @@ async function workosPrimaryCreateClaimed(
   contentType: string | null,
   url: URL,
   log: ProxyLogInsert,
+  stage: PrimaryWriteStage,
 ): Promise<WorkosPrimaryCreateOutcome> {
   let releaseClaim = true;
   const finish = (response: Response): WorkosPrimaryCreateOutcome => {
@@ -928,15 +951,7 @@ async function workosPrimaryCreateClaimed(
     return { response, releaseClaim };
   };
   const parsed = parseJson(requestBody) ?? {};
-  let maps: Awaited<ReturnType<typeof loadIdMaps>>;
-  try {
-    maps = await loadIdMaps(env.DB, directory.id);
-  } catch (error) {
-    if (!(error instanceof AmbiguousScimMappingError)) throw error;
-    // No native or WorkOS request has started, so the wrapper may release this
-    // unused claim. A later mapping error keeps the claim for verified recovery.
-    return finish(ambiguousMappingResponse(log));
-  }
+  const maps = await loadIdMaps(env.DB, directory.id);
   const toWorkos = makeTranslator(maps.nativeToWorkos);
   // Group members are addressed in WorkOS-id space on the WorkOS leg only; the
   // native leg gets the IdP's bytes untouched.
@@ -1005,6 +1020,9 @@ async function workosPrimaryCreateClaimed(
       ? await getMapping(env.DB, directory.id, kind, workosMintId)
       : null;
   if (aliasedNative) {
+    // The forward map rejects this native owner if another mapping also owns
+    // its WorkOS id. Prove that before even the read-only native retry lookup.
+    maps.nativeToWorkos[kind].get(aliasedNative.native_id);
     const priorNativeId = uniqueAttributeValue(kind, parsed)
       ? await findNativeByUniqueAttribute(directory, kind, parsed)
       : null;
@@ -1020,6 +1038,7 @@ async function workosPrimaryCreateClaimed(
   // `native_id` is what native must echo for the create to be adopted, and the
   // mirror runs native-first so it lands on the claimed row rather than minting one.
   const claimed = claimedMint ?? aliasedNative;
+  stage.writesStarted = true;
   const nativeCreatePromise = nativeCreate(env, directory, kind, requestBody, contentType, url);
   // The mappings mirrorUpsert would write are collected instead of written: the
   // row has to be keyed on the id NATIVE reports, which is not known until its

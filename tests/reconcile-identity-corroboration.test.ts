@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleScim } from "../workers/native/scim-server";
 import { NATIVE_TABLES, ScimStore } from "../workers/native/store";
 import { runReconcileFromWorkos } from "../workers/shared/backfill";
@@ -25,7 +25,10 @@ describe("reconcile corroboration before adopting a name match", () => {
     env = await createEnv();
     fake = installFakeUpstreams();
   });
-  afterEach(() => fake.restore());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fake.restore();
+  });
 
   async function fixture(
     kind: ResourceType,
@@ -238,6 +241,78 @@ describe("reconcile corroboration before adopting a name match", () => {
     expect(
       (await env.DB.prepare("SELECT token FROM workos_primary_create_claims").all()).results,
     ).toEqual([]);
+  });
+
+  it.each<ResourceType>(["Users", "Groups"])(
+    "releases unused %s reconciliation claims after any mapping preflight read error",
+    async (kind) => {
+      const { directory } = await fixture(kind, "same-idp-id", "same-idp-id");
+      const prepare = env.DB.prepare.bind(env.DB);
+      vi.spyOn(env.DB, "prepare").mockImplementation((sql) => {
+        if (sql.startsWith("SELECT resource_type, native_id, workos_id FROM id_mappings")) {
+          throw new Error("mapping snapshot read unavailable");
+        }
+        return prepare(sql);
+      });
+
+      await expect(runReconcileFromWorkos(env.DB, directory)).rejects.toThrow(
+        "mapping snapshot read unavailable",
+      );
+
+      expect(fake.calls).toEqual([]);
+      expect(
+        (await env.DB.prepare("SELECT token FROM workos_primary_create_claims").all()).results,
+      ).toEqual([]);
+    },
+  );
+
+  it.each(["resource owner", "event reservation"])(
+    "releases unused reconciliation claims after a %s read failure following read-only upstream lookups",
+    async (phase) => {
+      const { directory } = await fixture("Users", "same-idp-id", "same-idp-id");
+      const prepare = env.DB.prepare.bind(env.DB);
+      vi.spyOn(env.DB, "prepare").mockImplementation((sql) => {
+        if (
+          (phase === "resource owner" && sql.startsWith("SELECT * FROM id_mappings")) ||
+          (phase === "event reservation" && sql.includes("FROM dsync_event_links"))
+        ) {
+          throw new Error("mapping read unavailable");
+        }
+        return prepare(sql);
+      });
+
+      await expect(runReconcileFromWorkos(env.DB, directory)).rejects.toThrow(
+        "mapping read unavailable",
+      );
+
+      expect(fake.calls.some((call) => call.method !== "GET")).toBe(false);
+      expect(
+        (await env.DB.prepare("SELECT token FROM workos_primary_create_claims").all()).results,
+      ).toEqual([]);
+    },
+  );
+
+  it("retains reconciliation claims when an ownership read fails after native replay", async () => {
+    const { directory } = await fixture("Users", "same-idp-id", "same-idp-id");
+    const prepare = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementation((sql) => {
+      if (
+        sql.startsWith("SELECT * FROM id_mappings") &&
+        fake.callsTo("native").some((call) => call.method === "PUT")
+      ) {
+        throw new Error("postwrite ownership read unavailable");
+      }
+      return prepare(sql);
+    });
+
+    await expect(runReconcileFromWorkos(env.DB, directory)).rejects.toThrow(
+      "postwrite ownership read unavailable",
+    );
+
+    expect(fake.callsTo("native").map((call) => call.method)).toEqual(["GET", "PUT"]);
+    expect(
+      (await env.DB.prepare("SELECT token FROM workos_primary_create_claims").all()).results,
+    ).toHaveLength(2);
   });
 
   it.each<ResourceType>(["Users", "Groups"])(

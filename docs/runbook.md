@@ -613,6 +613,14 @@ without contacting either upstream; retry it after the active create completes.
 Completed creates still run the existing ownership checks on retry, so reusing
 another resource's id returns a permanent `409`.
 
+An ownership or datastore read failure before create, delete, or native replay
+begins releases only the current operation's owned claim. Mapped recovery after
+a definitive WorkOS `404` likewise releases its claim if a read fails before
+its recovery `POST`. Retryable `503` responses can be retried
+after the read problem is corrected. Ambiguous mappings reject the affected ids;
+requests using unrelated valid mappings continue. Reconciliation checks the
+whole directory because it replays all resources.
+
 Primary deletes use the same claim before resolving their mapping and hold it
 through both upstream deletes and mapping cleanup. A busy claim returns `503`
 with `Retry-After: 1` before either delete runs, preventing creation or recovery
@@ -638,9 +646,10 @@ id and never rebinds it through an attribute lookup. A mapped `404` or `409`
 keeps the mapping and reports the resource as failed; its definite rejection
 releases the claims because that mapping already reserves the identity.
 Changing the established identity requires verified operator recovery.
-A read-only snapshot failure releases them if no replay left an unresolved
-outcome. The older 30-minute reconcile lease does not expire these
-resource claims.
+A snapshot or datastore failure before the first native replay releases the
+owned claims. An unexpected ownership failure after a write starts retains them
+until the outcome is verified. The older 30-minute reconcile lease does not
+expire these resource claims.
 
 Claims live in `workos_primary_create_claims` and do not expire. A slow upstream
 may still commit a write after any lease deadline, so automatic expiry would
@@ -655,7 +664,7 @@ failed or timed-out deletes. Outside that confirmed compensation, an accepted
 or resolved row keeps the claim until its mapping is complete, even when the
 other side returned a 4xx or 5xx. An unmatched row could otherwise let another
 identity reuse its id. A transport failure, a successful create response without
-an id, a process crash, or an unexpected exception (including a failed mapping
+an id, a process crash after writes begin, or an unexpected write exception (including a failed mapping
 commit) also retains the claim until an operator resolves the writes. Handled
 unresolved outcomes return a `502` explaining that recovery is required; uncaught
 exceptions use the server's error handling. Later creates return the busy `503`
