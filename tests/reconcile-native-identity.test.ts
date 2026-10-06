@@ -178,6 +178,42 @@ describe("reconcile native identity ownership", () => {
     expect(await claims(directory.id)).toEqual([]);
   });
 
+  it.each([
+    { label: "missing totalResults", body: { Resources: [] } },
+    {
+      label: "missing totalResults with an ignored filter",
+      body: { Resources: [{ id: "456", userName: "other@example.test" }] },
+    },
+    {
+      label: "page-sized totalResults with an ignored filter",
+      body: {
+        totalResults: 1,
+        Resources: [{ id: "456", userName: "other@example.test" }],
+      },
+    },
+    { label: "negative totalResults", body: { totalResults: -1, Resources: [] } },
+    { label: "fractional totalResults", body: { totalResults: 0.5, Resources: [] } },
+    {
+      label: "a later empty page",
+      body: { totalResults: 0, startIndex: 2, Resources: [] },
+    },
+    {
+      label: "inconsistent itemsPerPage",
+      body: { totalResults: 0, itemsPerPage: 1, Resources: [] },
+    },
+  ])("never infers absence from $label", async ({ body }) => {
+    const directory = await seedDirectory(env.DB);
+    fake.route("native", "GET", "/Users", scimJson(200, body));
+    fake.route("native", "POST", "/Users", scimJson(201, { id: "789" }));
+
+    const summary = await runReconcileFromWorkos(env.DB, directory);
+
+    expect(summary.users.failed).toBe(1);
+    expect(fake.callsTo("native").map((call) => call.method)).toEqual(["GET"]);
+    expect(await getMappingByWorkosId(env.DB, directory.id, "Users", orphan.id)).toBeNull();
+    expect(await claims(directory.id)).toEqual([]);
+  });
+
   it("refuses a matching native row already mapped to another WorkOS resource", async () => {
     const directory = await seedDirectory(env.DB);
     await upsertMapping(env.DB, {

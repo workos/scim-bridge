@@ -279,27 +279,79 @@ its bridge id or its configured WorkOS directory id. A successful response is:
 
 The response uses `Cache-Control: no-store`; an absent mapping returns `404`.
 Only the authenticated directory's mappings are queried. The input is a
-**WorkOS SCIM id**, not a Directory Sync id. When an event's `idp_id` contains
-that SCIM id, a successful lookup confirms its native id; use the returned
-`native_id` to find the native group/user. Resolve both membership endpoints
-before applying an add or remove. This also handles `fallback-post`, where
-the returned native id differs from the WorkOS SCIM id.
+**WorkOS SCIM id**, not a Directory Sync id. A successful lookup confirms the
+recorded SCIM/native pair, but does not prove that an event's `idp_id` names that
+SCIM resource. An identity attribute can happen to equal another resource's
+SCIM id. Use a verified Directory Sync association before targeting the native
+row; an existing native name or external identity alone cannot establish a
+first binding. The resolver below corroborates the exact Directory Sync resource
+and WorkOS SCIM identity, then returns its `native_id`. This also
+handles `fallback-post`, where native and WorkOS SCIM ids differ.
 
-`idp_id` is an identity attribute and does **not** always equal the SCIM id.
-SCIM users normally derive it from `externalId`, or `userName` when absent;
-current groups use `externalId`, while older groups may retain a display name.
-A mapping miss does not establish identity. Locate an existing native row by
-its external identity or unique `userName`/`displayName`, preserving the row's
-native id, and confirm its bridge mapping. If those attributes are insufficient,
-reconcile or recover the identity explicitly before applying the event. The
-reference listener checks confirmed mappings first, keeps attribute lookup for
-legacy events, and leaves an unresolved Directory Sync id retryable instead of
-creating a row under it.
+`idp_id` does **not** always equal the SCIM id. SCIM users normally derive it
+from `externalId`, or `userName` when absent; current groups use `externalId`,
+while older groups may retain a display name. If no verified Directory Sync
+association exists, use the bridge's identity resolver:
 
-A confirmed mapping is authoritative even when its native row is missing.
-Do not fall back to another row with a reused email, external identity, or group
-name. A delete/remove is then a no-op; an upsert can recreate the mapped native
-id or remain retryable if a native uniqueness constraint prevents that repair.
+```http
+GET /status/directories/{directory_id}/event-mapping/Users?dsync_id=directory_user_example&idp_id=new%40example.com&userName=new%40example.com
+Authorization: Bearer <this directory's proxy token>
+```
+
+For groups, use `/event-mapping/Groups` with its `directory_group_…` as `dsync_id`,
+plus `idp_id` and `displayName`. Include
+`externalId` when the event's `raw_attributes.externalId` supplies it, and encode
+query values with `URLSearchParams`. Before learning a binding, the bridge uses
+its configured `WORKOS_API_KEY` to fetch the exact Directory Sync resource and
+verify its id, type, directory, `idp_id`, and username/group name. It then uses
+that directory's WorkOS SCIM credential. The customer listener needs only the
+directory proxy token; neither WorkOS secret is returned. A candidate SCIM id
+requires a verified WorkOS resource identity; otherwise the bridge filters by the exact `userName` /
+`displayName`, validates one complete unique match and its external identity,
+then loads the durable mapping by its returned SCIM id. This provisions a
+post-cutover user with no `externalId`, whose randomly minted SCIM id differs
+from the event's username-valued `idp_id`. An unavailable, absent, ambiguous,
+unmapped or mismatched identity returns `503` with `Retry-After: 5`; keep the
+event retryable. An absent bridge API key also leaves an unlinked identity
+retryable. Missing required attributes return `400`. A learned response includes
+`dsync_id` alongside the mapping fields shown above, and persists an immutable
+directory-scoped association between the Directory Sync, native and SCIM ids.
+Conflicting ownership on any of those ids is refused.
+
+Persist the verified Directory Sync association under the consumer's own
+directory key before writing the native resource. The standalone reference
+listener uses its local WorkOS directory id, which differs from the bridge's
+returned `directory_id`, and refuses to overwrite a conflicting local pair.
+Later events use the stable association before interpreting mutable attributes.
+For deletes, removals or an inactive-user update without a local association,
+request the same resolver with `existing_only=1`. That only returns a previously
+verified bridge binding and never learns ownership from a reused current name.
+Cached binding responses include `dsync_id` and omit `strategy`; they survive
+both WorkOS resource deletion and SCIM mapping pruning, and require neither
+WorkOS API key nor upstream reads.
+
+Before cutover, preload each existing Directory Sync user/group by calling the
+resolver above while both upstream identities and mappings exist. This records
+the bridge binding; a standalone listener can fetch it on its first later event,
+including a deletion. The same calls can populate a custom consumer's durable
+cache. If neither side recorded a verified association before removal, keep the
+event retryable and recover with verified operator evidence. A native name match
+does not establish ownership. Once confirmed,
+a missing mapped native row stays missing for delete/remove. Do not redirect it
+to reused email, external identity, or group name. An upsert can recreate the
+mapped id only after corroborating identity, or remain retryable if a uniqueness
+constraint prevents that repair.
+
+Resolve and validate both membership endpoints, every new native id, and stale
+resource guards before creating either stub. A failed group resolution must not
+leave an active user behind. The reference webhook returns `503` with
+`Retry-After: 5` for a handler failure and records it without a deduplication id,
+so redelivery can repair it. The Events API poller likewise keeps its cursor
+before a failed event. Intentional pre-cutover ignores still acknowledge receipt.
+Modern resource and membership ordering uses directory-scoped Directory Sync
+ids, so renaming an identity does not reset its high-water mark. The reference
+listener also checks the event's and linked native row's legacy attribute scopes
+to preserve protection from versions recorded before this upgrade.
 
 If a membership payload lacks `idp_id` or identity attributes, fetch the complete
 [Directory Group](https://workos.com/docs/reference/directory-sync/directory-group)

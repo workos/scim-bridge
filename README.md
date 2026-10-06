@@ -179,6 +179,8 @@ serialized create/reconcile mapping repair.
 If a mapped `PUT` needs to recreate a missing WorkOS row, its `POST` recovery
 and mapping commit acquire the same claim. Ordinary mapped updates remain
 concurrent and do not rewrite an unchanged mapping.
+Primary deletes hold that claim through both upstream deletes and mapping
+cleanup, preventing a concurrent recovery from creating an orphan replacement.
 
 | Your IdP sends (→ proxy) | Proxy sends to WorkOS | How WorkOS handles it |
 | --- | --- | --- |

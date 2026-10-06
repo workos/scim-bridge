@@ -122,7 +122,7 @@ driver does **not** move data.
 
 ### If you lose the database anyway
 
-Two things are gone, and they recover differently. **Re-importing the CSV restores
+Directory configuration and identity state recover differently. **Re-importing the CSV restores
 directory configuration, not mappings** — that part matters.
 
 1. **Directories.** Re-import them, including each `proxy_token` (see
@@ -150,6 +150,11 @@ directory configuration, not mappings** — that part matters.
 
    The directory's **Mappings** tab shows the strategy per row. Inventory both
    strategies when planning recovery; both need durable storage and backups.
+3. **`dsync_event_links`.** Back these up with the database. They preserve the
+   verified Directory Sync-to-native identity after remote resource deletion.
+   Rebuild missing links only through authenticated resolution while the
+   Directory Sync and SCIM resources still exist, or supervised recovery.
+   A reused display name or email cannot recover a deleted resource's link.
 
 ### One more reason not to leave the file lying around
 
@@ -383,18 +388,23 @@ Advance the directory's mode from its page, verifying convergence in the
    to `mode === "workos-only"`, so an older bridge still behaves correctly.
 
 **Rollback:** on any mode before cutover — `workos-primary` included — move the
-mode back toward passthrough. The proxy wrote native on every request, so native
-is current and there is nothing to reconcile or backfill first. After cutover
+mode back toward passthrough after confirming native writes converged. Inspect
+native-write failures and retained claims before treating native as current.
+After cutover
 (`workos-only`), native is kept current by the DSync listener; if you're unsure
 it stayed caught up, run **Reconcile from WorkOS** on the directory page first —
 it snapshots the live WorkOS directory and replays every resource back into
-native, guaranteeing parity before you flip the mode back.
+native. Verify that every resource succeeded before you flip the mode back.
 
 Two properties are required before rollback:
 
-- **Durable native mappings.** Events resolve existing native rows through
-  confirmed SCIM mappings or verified identity attributes. Directory Sync
+- **Durable native mappings.** Modern events resolve existing native rows through
+  verified Directory Sync associations. Directory Sync
   `data.id` is not an instruction to rename or create a native SCIM row.
+  A standalone listener must preload the verified pairs before cutover and
+  persist pairs resolved for new resources. Once a WorkOS row has been deleted,
+  its SCIM lookup cannot establish a previously unknown linkage; recover that
+  identity under supervision instead of guessing from reused attributes.
 - **Confirmed reconciliation.** Mapped resources are replayed with `PUT` to
   `native_id`, without a migrated-id header. A mapped `404` fails without
   dropping the mapping or creating a replacement. For an unmapped WorkOS row,
@@ -402,6 +412,10 @@ Two properties are required before rollback:
   exact identity lookup, then an update of the matched native row or a native
   `POST` that adopts the native service's returned id. Shared namespaces
   require explicit attribution before an unmapped row can be repaired.
+  Creation requires a complete empty filtered lookup: `totalResults` must be
+  a nonnegative integer matching the returned resource count, and any page
+  metadata must describe the first complete page. Missing totals, partial
+  pages, or unrelated-only rows cannot establish absence.
   Group membership replay requires mappings for every referenced user.
 
 Read the reconcile summary and verify the resulting mappings before rollback.
@@ -417,6 +431,13 @@ WorkOS row or changing its mapping. A busy claim returns `503` without that
 `POST`; successful mapping persistence or a definitive WorkOS rejection
 releases it, while uncertain recovery retains it. Ordinary mapped updates do
 not acquire a claim or rewrite their unchanged mapping.
+Primary `DELETE` acquires the same claim before reading its mapping and holds
+it until both upstream deletes and mapping cleanup settle. A busy claim returns
+`503` without upstream writes. Timeouts, `408`, server errors, or uncertain
+mapping cleanup retain the claim and require verified recovery; confirmed
+client rejections keep the mapping but release the claim for a retry.
+Reconciliation also releases claims after a definite rejection of a mapped
+`PUT`, preserving its existing mapping and reporting that resource as failed.
 
 ### Recovering retained create claims and invalid legacy mappings
 
@@ -453,6 +474,13 @@ service only issues numeric ids. New reconcile deliberately fails a mapped
 If any prior write outcome or ownership remains uncertain, keep the claim and
 mapping and investigate that resource. This release does not automatically
 repair or expire retained legacy claims.
+
+Verified `dsync_event_links` also retain their ownership after resource deletion.
+Each Directory Sync, WorkOS SCIM, and native id has one owner per directory and
+resource type. Keep valid deleted-resource links; name or email reuse does not
+authorize reassignment. If a link is proved invalid, drain all affected writers
+and listeners, inspect its complete identity pair, and remove only that exact
+guarded row before verified recovery. Never clear all links to bypass a conflict.
 
 **Multi-directory topology: one native app fronted by several directories is a
 shared namespace.** Several directories can front one native app (the same
@@ -575,6 +603,17 @@ without contacting either upstream; retry it after the active create completes.
 Completed creates still run the existing ownership checks on retry, so reusing
 another resource's id returns a permanent `409`.
 
+Primary deletes use the same claim before resolving their mapping and hold it
+through both upstream deletes and mapping cleanup. A busy claim returns `503`
+with `Retry-After: 1` before either delete runs, preventing creation or recovery
+of a replacement while deletion is in flight. Unreachable endpoints, `408`,
+server errors, and uncertain mapping cleanup retain the delete claim. Drain
+all writers, confirm the outstanding delete has finished, and inspect both
+upstreams and the mapping before releasing that exact claim through the
+verified recovery procedure below. Retrying an unresolved delete does not
+unlock it. Definitive client rejections retain the mapping and release the
+claim so the corrected delete can be retried.
+
 **Reconcile from WorkOS** acquires both the Users and Groups claims before reading
 its snapshot, so it cannot replay a create whose native id is still unresolved.
 While reconciliation holds the claims, new creates return the same busy `503`.
@@ -584,9 +623,11 @@ any new mapping must persist before the claims are released. Missing or differen
 response ids, lost native responses, and mapping failures retain both claims for
 operator recovery. Resolving an existing native row during drift repair also
 retains the claims if its repair is rejected before the mapping can persist.
-If the WorkOS row already maps to another native id, reconciliation refuses the
-drift repair before writing the newly found row and retains the claims. Changing
-that established identity requires operator recovery instead of a second mapping.
+If a WorkOS row already has a mapping, reconciliation updates only that native
+id and never rebinds it through an attribute lookup. A mapped `404` or `409`
+keeps the mapping and reports the resource as failed; its definite rejection
+releases the claims because that mapping already reserves the identity.
+Changing the established identity requires verified operator recovery.
 A read-only snapshot failure releases them if no replay left an unresolved
 outcome. The older 30-minute reconcile lease does not expire these
 resource claims.

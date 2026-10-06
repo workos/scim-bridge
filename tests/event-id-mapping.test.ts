@@ -1,14 +1,27 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import proxyWorker from "../workers/proxy/index";
 import { processDsyncEvent } from "../workers/native/listener";
 import { NATIVE_TABLES, ScimStore } from "../workers/native/store";
 import { upsertMapping } from "../workers/shared/db";
-import { createCtx, createEnv, proxyRequest, seedDirectory } from "./helpers";
+import { bindEventLink } from "../workers/shared/event-links";
+import {
+  createCtx,
+  createEnv,
+  installFakeUpstreams,
+  proxyRequest,
+  seedDirectory,
+  type FakeUpstreams,
+} from "./helpers";
 
 const GROUP_ID = "9c2f4728-7c45-4fb2-92e7-4053a77e8ddb";
 const WORKOS_DIRECTORY_ID = "directory_example";
 
 describe("Directory Sync resource ID mapping", () => {
+  let fake: FakeUpstreams | undefined;
+  afterEach(() => {
+    fake?.restore();
+    fake = undefined;
+  });
   it("resolves a WorkOS SCIM ID with the linked directory and its own token", async () => {
     const env = await createEnv();
     const directory = await seedDirectory(env.DB, { workos_directory_id: WORKOS_DIRECTORY_ID });
@@ -156,6 +169,20 @@ describe("Directory Sync resource ID mapping", () => {
       workos_id: GROUP_ID,
       strategy: "migrated-id",
     });
+    await bindEventLink(env.DB, {
+      directory_id: directory.id,
+      resource_type: "Users",
+      dsync_id: "directory_user_example",
+      native_id: "native-user",
+      workos_id: "workos-scim-user",
+    });
+    await bindEventLink(env.DB, {
+      directory_id: directory.id,
+      resource_type: "Groups",
+      dsync_id: "directory_group_example",
+      native_id: GROUP_ID,
+      workos_id: GROUP_ID,
+    });
     const data = {
       directory_id: WORKOS_DIRECTORY_ID,
       user: {
@@ -170,6 +197,23 @@ describe("Directory Sync resource ID mapping", () => {
         name: "Migrated group",
       },
     };
+    fake = installFakeUpstreams();
+    fake.route(
+      "workos",
+      "GET",
+      "/Users/workos-scim-user",
+      Response.json({
+        id: "workos-scim-user",
+        externalId: "workos-scim-user",
+        userName: "new@example.com",
+      }),
+    );
+    fake.route(
+      "workos",
+      "GET",
+      `/Groups/${GROUP_ID}`,
+      Response.json({ id: GROUP_ID, externalId: GROUP_ID, displayName: "Migrated group" }),
+    );
 
     expect(
       await processDsyncEvent(env.DB, {
@@ -236,6 +280,20 @@ describe("Directory Sync resource ID mapping", () => {
         workos_id: "workos-scim-group",
         strategy: "fallback-post",
       });
+      await bindEventLink(env.DB, {
+        directory_id: directory.id,
+        resource_type: "Users",
+        dsync_id: "directory_user_example",
+        native_id: "absent-mapped-user",
+        workos_id: "workos-scim-user",
+      });
+      await bindEventLink(env.DB, {
+        directory_id: directory.id,
+        resource_type: "Groups",
+        dsync_id: "directory_group_example",
+        native_id: "absent-mapped-group",
+        workos_id: "workos-scim-group",
+      });
       const user = {
         id: "directory_user_example",
         idp_id: "workos-scim-user",
@@ -256,11 +314,12 @@ describe("Directory Sync resource ID mapping", () => {
       const beforeUser = await store.userById("unrelated-user");
       const beforeGroup = await store.groupById("unrelated-group");
 
-      await processDsyncEvent(env.DB, {
+      const outcome = await processDsyncEvent(env.DB, {
         id: `event-${event}`,
         event,
         data: { ...data, directory_id: WORKOS_DIRECTORY_ID },
       });
+      expect(outcome).toEqual({ action: "skipped", handlerError: false });
 
       expect(await store.userById("unrelated-user")).toEqual(beforeUser);
       expect(await store.groupById("unrelated-group")).toEqual(beforeGroup);

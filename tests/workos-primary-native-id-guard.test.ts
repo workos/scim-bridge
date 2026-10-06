@@ -132,10 +132,12 @@ describe("workos-primary requires recorded native ids", () => {
     const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
     await map(directory, "Users", "18", "okta-ada");
     fake.route("workos", "DELETE", "/Users/okta-ada", new Response(null, { status: 204 }));
-    fake.route("native", "DELETE", "/Users/18", scimJson(500, { detail: "retry" }), { once: true });
+    fake.route("native", "DELETE", "/Users/18", scimJson(400, { detail: "rejected" }), {
+      once: true,
+    });
     fake.route("native", "DELETE", "/Users/18", new Response(null, { status: 204 }));
 
-    expect((await send(directory, "DELETE", "/scim/v2/Users/18")).status).toBe(502);
+    expect((await send(directory, "DELETE", "/scim/v2/Users/18")).status).toBe(400);
     expect(await getMapping(env.DB, directory.id, "Users", "18")).toMatchObject({
       workos_id: "okta-ada",
     });

@@ -293,7 +293,7 @@ describe("reconcile and workos-primary create claims", () => {
     },
   );
 
-  it("refuses drift onto a second native id when the WorkOS row already has a mapping", async () => {
+  it("keeps a mapped identity after a definite conflict without blocking creates", async () => {
     const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
     await upsertMapping(env.DB, {
       directory_id: directory.id,
@@ -328,7 +328,11 @@ describe("reconcile and workos-primary create claims", () => {
       workos_id: "workos-1",
     });
     expect(await getMapping(env.DB, directory.id, "Users", "native-new")).toBeNull();
-    expect(await claims(directory.id)).toHaveLength(2);
+    // A mapped PUT's definite conflict changes no identity and must not block
+    // unrelated creates. The existing mapping remains available for repair.
+    expect(await claims(directory.id)).toEqual([]);
+    expect(await claimWorkosPrimaryCreate(env.DB, directory.id, "Users", "next-user")).toBe(true);
+    expect(await claimWorkosPrimaryCreate(env.DB, directory.id, "Groups", "next-group")).toBe(true);
   });
 
   it("releases after read-only snapshot failure when no native replay began", async () => {

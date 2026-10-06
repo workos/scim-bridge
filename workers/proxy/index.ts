@@ -496,6 +496,65 @@ async function workosPrimary(
   log: ProxyLogInsert,
   finish: (response: Response) => Response,
 ): Promise<Response> {
+  const deleteToken = method === "DELETE" ? crypto.randomUUID() : null;
+  const deleteClaim = deleteToken ? { canRelease: false } : null;
+  if (
+    deleteToken &&
+    !(await claimWorkosPrimaryCreate(
+      env.DB,
+      directory.id,
+      scimPath.kind as ResourceType,
+      deleteToken,
+    ))
+  ) {
+    log.error =
+      "Another create, recovery or reconciliation owns this resource type. Retry after it completes.";
+    const response = scimError(503, log.error);
+    response.headers.set("Retry-After", "1");
+    return finish(response);
+  }
+  // DELETE excludes identity acquisition until both legs and mapping cleanup
+  // settle. An uncertain upstream or prune outcome retains the claim so a late
+  // delete cannot remove a replacement created by recovery.
+  const response = await workosPrimaryWrite(
+    env,
+    ctx,
+    directory,
+    scimPath,
+    method,
+    requestBody,
+    contentType,
+    conditional,
+    url,
+    log,
+    finish,
+    deleteClaim,
+  );
+  if (deleteToken && deleteClaim?.canRelease) {
+    await releaseWorkosPrimaryCreate(
+      env.DB,
+      directory.id,
+      scimPath.kind as ResourceType,
+      deleteToken,
+    );
+  }
+  return response;
+}
+
+async function workosPrimaryWrite(
+  env: PocEnv,
+  ctx: ExecutionContext,
+  directory: Directory,
+  scimPath: ScimPath,
+  method: string,
+  requestBody: string | null,
+  contentType: string | null,
+  conditional: Record<string, string>,
+  url: URL,
+  log: ProxyLogInsert,
+  finish: (response: Response) => Response,
+  deleteClaim: { canRelease: boolean } | null,
+): Promise<Response> {
   const kind = scimPath.kind as ResourceType;
 
   // Group members are addressed in native-id space too. Without a mapping,
@@ -528,6 +587,7 @@ async function workosPrimary(
       getMappingByWorkosId(env.DB, directory.id, kind, scimPath.id),
     ]);
     if (!asNativeId && asWorkosId) {
+      if (deleteClaim) deleteClaim.canRelease = true;
       return finish(
         scimError(
           404,
@@ -537,6 +597,7 @@ async function workosPrimary(
       );
     }
     if (!asNativeId) {
+      if (deleteClaim) deleteClaim.canRelease = true;
       return finish(
         scimError(
           409,
@@ -577,13 +638,24 @@ async function workosPrimary(
   log.native_status = native.result?.status ?? null;
   log.native_ms = native.result?.ms ?? null;
   log.native_body = native.result?.bodyText ?? null;
+  if (deleteClaim) {
+    deleteClaim.canRelease =
+      certainDeleteOutcome(native.result?.status) && certainDeleteOutcome(log.workos_status);
+  }
+  if (
+    method === "DELETE" &&
+    (incompleteDeleteOutcome(native.result?.status) || incompleteDeleteOutcome(log.workos_status))
+  ) {
+    log.error =
+      "The SCIM endpoints have not confirmed this deletion is complete; its mapping and recovery claim are retained.";
+    return finish(scimError(502, log.error));
+  }
 
   const workosCommitted = isSuccess(workosResponse.status);
   // A DELETE the WorkOS leg answered 404 is a delete that converged, not one
-  // that failed: the WorkOS row is gone either way, which is the rule the id
-  // mapping prune already follows. It matters on the retry of a partially failed
-  // delete — the prune ran when WorkOS committed, so the retry sends the
-  // untranslated path id and WorkOS answers 404. Calling that a failure would
+  // that failed: the WorkOS row is gone either way. The mapping stays until both
+  // sides converge, so a retry still addresses the same WorkOS id. Calling a
+  // missing WorkOS row a failure would
   // leave the IdP retrying a delete that is done and a divergence row standing
   // for a resource native no longer has.
   const workosGone = method === "DELETE" && workosResponse.status === 404;
@@ -663,6 +735,7 @@ async function workosPrimary(
       await deleteMapping(env.DB, directory.id, kind, scimPath.id);
     } catch (error) {
       log.error = `id mapping prune failed: ${errorMessage(error)}`;
+      if (deleteClaim) deleteClaim.canRelease = false;
     }
   }
   if (workosGone) {
@@ -687,6 +760,25 @@ async function workosPrimary(
   // complete, and an IdP that surfaces it strands the operator chasing a
   // deprovision that already landed.
   return finish(workosResponse);
+}
+
+function certainDeleteOutcome(status: number | null | undefined): boolean {
+  return (
+    status === 200 ||
+    status === 204 ||
+    (status !== null && status !== undefined && status >= 400 && status < 500 && status !== 408)
+  );
+}
+
+function incompleteDeleteOutcome(status: number | null | undefined): boolean {
+  return (
+    status !== null &&
+    status !== undefined &&
+    status >= 200 &&
+    status < 400 &&
+    status !== 200 &&
+    status !== 204
+  );
 }
 
 /** Member ids the unmodified native write will address, in either SCIM form. */

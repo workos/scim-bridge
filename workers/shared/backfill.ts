@@ -719,7 +719,8 @@ async function pushToNative(
       mapping && (result.status === 404 || result.status === 409)
         ? `; WorkOS already maps to native id ${mapping.native_id}; operator recovery is required before changing its mapping`
         : "";
-    if (mapping && result.status === 409) state.unresolvedWrite = true;
+    // A definite rejection of a mapped PUT leaves ownership durably reserved.
+    // Retaining both claims would block unrelated creates without resolving it.
     pushError(errors, `${kind}/${nativeId ?? workosId}: ${describeFailure(result)}${recovery}`);
   }
 }
@@ -796,7 +797,7 @@ async function findNativeIdByAttr(
   const escaped = value.replace(/([\\"])/g, "\\$1");
   const filter = encodeURIComponent(`${attr} eq "${escaped}"`);
   const page = await scimFetch(
-    `${joinScimUrl(directory.native_url, `/${kind}`)}?filter=${filter}`,
+    `${joinScimUrl(directory.native_url, `/${kind}`)}?filter=${filter}&startIndex=1&count=${PAGE_SIZE}`,
     {
       method: "GET",
       token: directory.native_token,
@@ -806,8 +807,15 @@ async function findNativeIdByAttr(
   const body = parseJson(page.bodyText);
   if (!Array.isArray(body?.Resources)) throw new Error("native returned an invalid list response");
   const resources = body.Resources;
-  if (typeof body.totalResults === "number" && body.totalResults > resources.length) {
-    throw new Error("native returned a partial identity lookup");
+  if (
+    typeof body.totalResults !== "number" ||
+    !Number.isSafeInteger(body.totalResults) ||
+    body.totalResults < 0 ||
+    body.totalResults !== resources.length ||
+    (body.startIndex !== undefined && body.startIndex !== 1) ||
+    (body.itemsPerPage !== undefined && body.itemsPerPage !== resources.length)
+  ) {
+    throw new Error("native returned an incomplete or inconsistent identity lookup");
   }
   const matches = resources.filter(
     (entry) =>
@@ -816,7 +824,12 @@ async function findNativeIdByAttr(
       entry[attr].toLowerCase() === value.toLowerCase(),
   );
   if (matches.length > 1) throw new Error(`native returned multiple ${attr} matches`);
-  if (matches.length === 0) return null;
+  if (matches.length === 0) {
+    // A server ignoring the filter can report only its current page as the
+    // total. Unrelated rows on that page do not prove the identity is absent.
+    if (resources.length !== 0) throw new Error("native did not honor the identity filter");
+    return null;
+  }
   const id = resourceId((matches[0] as Record<string, unknown>).id);
   if (!id) throw new Error("native match is missing an id");
   return id;
