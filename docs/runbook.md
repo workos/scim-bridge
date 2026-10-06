@@ -131,26 +131,25 @@ directory configuration, not mappings** — that part matters.
    it — the CSV *is* the recovery procedure, and since the tokens are hashed at
    rest it is now the *only* copy: you cannot read them back out of a surviving
    database, only rotate them and reconfigure the IdP.
-2. **`id_mappings`.** These re-derive themselves, but by two different routes,
-   and the second one is worth understanding before you decide how urgently to
-   act:
+2. **`id_mappings`.** Restore these from a backup when possible. Otherwise,
+   rebuild them through verified backfill or reconciliation in a namespace
+   that passes the ownership checks. Native-to-WorkOS backfill recovers the
+   two strategies differently:
 
    | strategy | what it is | how it comes back |
    | --- | --- | --- |
-   | `migrated-id` | `native_id == workos_id` — the shared id the migrated-id contract preserves | the next mirrored write PUTs the shared id, WorkOS already has it, and the mapping is recorded again. Effectively self-healing. |
-   | `fallback-post` | `native_id != workos_id` — WorkOS minted its own id, and this table was the only record of the pairing | the next write PUTs the native id (404), POSTs (409, because the resource already exists there), then the proxy looks it up by `userName`/`displayName`, repairs the content, and re-records the mapping. It works, but it costs a filter round-trip per resource. |
+   | `migrated-id` | `native_id == workos_id` — the shared id the migrated-id contract preserves | backfill PUTs the shared id; an existing WorkOS row is updated and its mapping recorded again. |
+   | `fallback-post` | `native_id != workos_id` — WorkOS minted its own id, and this table was the only record of the pairing | backfill PUTs the native id (404), POSTs (409 when the resource already exists), then looks up the directory's WorkOS row by its `userName`/`displayName` filter before updating it and recording the mapping. A lookup that cannot recover an id stays failed. |
 
-   So the exposure is **how many `fallback-post` rows a directory had**. A
-   directory whose mappings are all `migrated-id` barely notices a wipe; one with
-   `fallback-post` rows needs a write per resource to repair, and until that write
-   happens, requests for those resources translate to an id WorkOS does not have,
-   so the IdP sees 404s. If the WorkOS side ever stopped rejecting duplicate
-   `userName`s, the repair would instead create a second resource — the case the
-   "only POST creates" invariant exists to prevent.
+   In `workos-primary`, addressed writes return `409` and reads of unmapped
+   resources fail until mappings are restored. Live traffic does not reconstruct
+   them. Restore and verify both user and group mappings before resuming
+   provisioning; missing user mappings also prevent membership translation.
+   Do not infer a native id from a WorkOS or Directory Sync id to bypass this
+   recovery step.
 
-   The directory's **Mappings** tab shows the strategy per row and warns when any
-   are `fallback-post`, so that count is the number to check before trusting
-   ephemeral storage.
+   The directory's **Mappings** tab shows the strategy per row. Inventory both
+   strategies when planning recovery; both need durable storage and backups.
 
 ### One more reason not to leave the file lying around
 
