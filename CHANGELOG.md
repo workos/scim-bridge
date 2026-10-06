@@ -27,13 +27,17 @@ Container images for each version:
   preserves newer mappings when an older update completes late. Primary deletes
   hold the same claim through both delete legs and mapping cleanup.
   Reconciliation refuses incomplete native absence checks and releases claims
-  after a definite rejection of an already mapped update.
+  after a definite rejection of an already mapped update. Adopting an unmapped
+  name match requires matching nonempty external ids and respects retained event
+  identity reservations, preventing reused names from inheriting old access.
 - Resolve Directory Sync membership events through confirmed SCIM mappings,
   preserving migrated native ids even when event resource ids differ. Provide
   directory-token-scoped mapping endpoints and persist verified Directory Sync
   identity links so delayed deletions cannot target a row that reused a name.
   Resolve both membership endpoints before provisioning, and return retryable
   webhook failures for unresolved identities.
+- Reject ambiguous legacy SCIM mappings in the direct consumer lookup, and
+  forward the optional WorkOS API key through the Cloudflare container adapter.
 
 ### Upgrading
 

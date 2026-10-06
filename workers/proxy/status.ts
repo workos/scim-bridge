@@ -1,6 +1,11 @@
-import { getDirectoryByToken, getMappingByWorkosId } from "../shared/db";
+import { getDirectoryByToken } from "../shared/db";
 import { authorizationToken } from "../shared/scim";
-import { verifiedWorkosEventMapping, verifyDsyncEventIdentity } from "../shared/event-mapping";
+import {
+  AmbiguousScimMappingError,
+  getUniqueScimMapping,
+  verifiedWorkosEventMapping,
+  verifyDsyncEventIdentity,
+} from "../shared/event-mapping";
 import { bindEventLink, getEventLink } from "../shared/event-links";
 import { nativeIsAuthoritative, type Directory, type PocEnv } from "../shared/types";
 
@@ -150,10 +155,19 @@ export async function handleStatus(request: Request, env: PocEnv, url: URL): Pro
       return statusError(404, "Invalid WorkOS SCIM ID.");
     }
     try {
-      const mapping = await getMappingByWorkosId(env.DB, directory.id, kind, workosScimId);
+      const mapping = await getUniqueScimMapping(env.DB, directory.id, kind, workosScimId);
       if (!mapping) return statusError(404, "No mapping exists for this WorkOS SCIM ID.");
       return mappingResponse(directory, kind, mapping);
-    } catch {
+    } catch (error) {
+      if (error instanceof AmbiguousScimMappingError) {
+        return Response.json(
+          {
+            error:
+              "Multiple native owners exist for this WorkOS SCIM ID; repair the mapping before retrying.",
+          },
+          { status: 503, headers: { "Cache-Control": "no-store", "Retry-After": "5" } },
+        );
+      }
       return statusError(500, "The proxy could not resolve this SCIM mapping.");
     }
   }

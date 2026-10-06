@@ -86,7 +86,12 @@ describe("reconcile native identity ownership", () => {
 
   it("updates an existing native match even when its ID differs from externalId", async () => {
     const directory = await seedDirectory(env.DB);
-    let native = { id: "123", userName: "ADA@example.test", active: false };
+    let native = {
+      id: "123",
+      externalId: orphan.externalId,
+      userName: "ADA@example.test",
+      active: false,
+    };
     fake.route("native", "GET", "/Users", page([native]));
     fake.route("native", "PUT", "/Users/123", (call) => {
       native = call.json() as typeof native;

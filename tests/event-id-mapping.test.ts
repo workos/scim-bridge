@@ -117,6 +117,79 @@ describe("Directory Sync resource ID mapping", () => {
     expect(response.status).toBe(401);
   });
 
+  it.each(["Users", "Groups"] as const)(
+    "refuses an ambiguous %s mapping without returning an arbitrary native owner",
+    async (kind) => {
+      const env = await createEnv();
+      const directory = await seedDirectory(env.DB);
+      for (const nativeId of ["native-first", "native-second"]) {
+        await upsertMapping(env.DB, {
+          directory_id: directory.id,
+          resource_type: kind,
+          native_id: nativeId,
+          workos_id: "workos-shared",
+          strategy: "fallback-post",
+        });
+      }
+      const response = await proxyWorker.fetch(
+        proxyRequest(
+          directory,
+          "GET",
+          `/status/directories/${directory.id}/mappings/${kind}/workos-shared`,
+        ),
+        env,
+        createCtx(),
+      );
+      expect(response.status).toBe(503);
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+      expect(response.headers.get("Retry-After")).toBe("5");
+      expect(await response.json()).not.toHaveProperty("native_id");
+    },
+  );
+
+  it("keeps a unique mapping usable when other directories or resource types are ambiguous", async () => {
+    const env = await createEnv();
+    const directory = await seedDirectory(env.DB);
+    const other = await seedDirectory(env.DB);
+    await upsertMapping(env.DB, {
+      directory_id: directory.id,
+      resource_type: "Groups",
+      native_id: "native-group",
+      workos_id: "workos-shared",
+      strategy: "fallback-post",
+    });
+    for (const nativeId of ["native-first", "native-second"]) {
+      for (const [directoryId, kind] of [
+        [directory.id, "Users"],
+        [other.id, "Groups"],
+      ] as const) {
+        await upsertMapping(env.DB, {
+          directory_id: directoryId,
+          resource_type: kind,
+          native_id: nativeId,
+          workos_id: "workos-shared",
+          strategy: "fallback-post",
+        });
+      }
+    }
+    const response = await proxyWorker.fetch(
+      proxyRequest(
+        directory,
+        "GET",
+        `/status/directories/${directory.id}/mappings/Groups/workos-shared`,
+      ),
+      env,
+      createCtx(),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      directory_id: directory.id,
+      resource_type: "Groups",
+      native_id: "native-group",
+      workos_scim_id: "workos-shared",
+    });
+  });
+
   it("returns 404 for a Directory Sync ID that has no SCIM mapping", async () => {
     const env = await createEnv();
     const directory = await seedDirectory(env.DB);

@@ -1,6 +1,7 @@
 import type { Datastore } from "../shared/datastore";
 import type { Directory, PocEnv, ResourceType, WorkerHandler } from "../shared/types";
 import {
+  AmbiguousScimMappingError,
   claimWorkosPrimaryCreate,
   clearNativeWriteFailure,
   deleteMapping,
@@ -516,6 +517,23 @@ async function workosPrimary(
   // DELETE excludes identity acquisition until both legs and mapping cleanup
   // settle. An uncertain upstream or prune outcome retains the claim so a late
   // delete cannot remove a replacement created by recovery.
+  if (deleteToken) {
+    try {
+      // workosOnly also reads these maps, but starting its promise alongside
+      // native would send the native DELETE even when that read rejects.
+      await loadIdMaps(env.DB, directory.id);
+    } catch (error) {
+      if (!(error instanceof AmbiguousScimMappingError)) throw error;
+      // This typed failure is from a read before either upstream leg started.
+      await releaseWorkosPrimaryCreate(
+        env.DB,
+        directory.id,
+        scimPath.kind as ResourceType,
+        deleteToken,
+      );
+      return finish(ambiguousMappingResponse(log));
+    }
+  }
   const response = await workosPrimaryWrite(
     env,
     ctx,
@@ -538,6 +556,13 @@ async function workosPrimary(
       deleteToken,
     );
   }
+  return response;
+}
+
+function ambiguousMappingResponse(log: ProxyLogInsert): Response {
+  log.error = "SCIM mapping ownership is ambiguous. Repair the mappings before retrying.";
+  const response = scimError(503, log.error);
+  response.headers.set("Retry-After", "1");
   return response;
 }
 
@@ -903,7 +928,15 @@ async function workosPrimaryCreateClaimed(
     return { response, releaseClaim };
   };
   const parsed = parseJson(requestBody) ?? {};
-  const maps = await loadIdMaps(env.DB, directory.id);
+  let maps: Awaited<ReturnType<typeof loadIdMaps>>;
+  try {
+    maps = await loadIdMaps(env.DB, directory.id);
+  } catch (error) {
+    if (!(error instanceof AmbiguousScimMappingError)) throw error;
+    // No native or WorkOS request has started, so the wrapper may release this
+    // unused claim. A later mapping error keeps the claim for verified recovery.
+    return finish(ambiguousMappingResponse(log));
+  }
   const toWorkos = makeTranslator(maps.nativeToWorkos);
   // Group members are addressed in WorkOS-id space on the WorkOS leg only; the
   // native leg gets the IdP's bytes untouched.

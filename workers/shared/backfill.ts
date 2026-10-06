@@ -1,6 +1,8 @@
 import type { Datastore } from "./datastore";
 import type { BackfillSummary, Directory, ResourceType } from "./types";
+import { getEventLinkByNativeId } from "./event-links";
 import {
+  AmbiguousScimMappingError,
   claimReconcileRun,
   claimWorkosPrimaryCreate,
   clearReplayedDivergenceForResource,
@@ -352,6 +354,17 @@ export async function runReconcileFromWorkos(
       throw error;
     }
 
+    // Legacy duplicate owners cannot authorize either a resource PUT or a group
+    // member translation. Validate under the claims before any upstream work.
+    try {
+      await loadIdMaps(db, directory.id);
+    } catch (error) {
+      if (error instanceof AmbiguousScimMappingError) {
+        await releaseReconcileCreateClaims(db, directory.id, runToken);
+      }
+      throw error;
+    }
+
     const state: ReconcileReplayState = { unresolvedWrite: false };
     const summary = await reconcileFromWorkos(db, directory, state);
     if (state.unresolvedWrite) {
@@ -578,7 +591,7 @@ async function pushToNative(
       return;
     }
     try {
-      nativeId = await findNativeIdByAttr(directory, kind, attr, value);
+      nativeId = await findNativeIdByAttr(directory, kind, attr, value, resource.externalId);
     } catch (error) {
       counts.failed += 1;
       pushError(errors, `${kind}/${workosId}: resolving native ${attr}: ${errorMessage(error)}`);
@@ -620,7 +633,7 @@ async function pushToNative(
   // rejection earns another read and an attributed update, never a blind retry.
   if (method === "POST" && result.status === 409 && value) {
     try {
-      const resolved = await findNativeIdByAttr(directory, kind, attr, value);
+      const resolved = await findNativeIdByAttr(directory, kind, attr, value, resource.externalId);
       if (resolved) {
         const unowned = await unattributedReason(db, directory, kind, workosId, resolved);
         const current = await getMappingByWorkosId(db, directory.id, kind, workosId);
@@ -766,6 +779,12 @@ async function unattributedReason(
   workosId: string,
   nativeId: string,
 ): Promise<string | null> {
+  // Deleting a SCIM mapping does not release its event identity. A delayed
+  // Directory Sync delete still addresses this native ID through the saved link.
+  const link = await getEventLinkByNativeId(db, directory.id, kind, nativeId);
+  if (link && link.workos_id !== workosId) {
+    return `is reserved by Directory Sync ${link.dsync_id} for WorkOS ${link.workos_id}`;
+  }
   const others = await listOtherMappingsByNativeId(db, directory, kind, nativeId);
   const shared = await Promise.all(
     others.map((mapping) => sharesNativeNamespace(directory, mapping)),
@@ -793,6 +812,7 @@ async function findNativeIdByAttr(
   kind: ResourceType,
   attr: "userName" | "displayName",
   value: string,
+  expectedExternalId: unknown,
 ): Promise<string | null> {
   const escaped = value.replace(/([\\"])/g, "\\$1");
   const filter = encodeURIComponent(`${attr} eq "${escaped}"`);
@@ -832,6 +852,14 @@ async function findNativeIdByAttr(
   }
   const id = resourceId((matches[0] as Record<string, unknown>).id);
   if (!id) throw new Error("native match is missing an id");
+  // Names locate a row but can be reassigned to a different person or group.
+  // Adopting by name alone preserves the old native ID and its existing access.
+  const externalId = resourceId((matches[0] as Record<string, unknown>).externalId);
+  if (!externalId || externalId !== resourceId(expectedExternalId)) {
+    throw new Error(
+      "native name match lacks a matching externalId; verify ownership and restore a mapping before replay",
+    );
+  }
   return id;
 }
 

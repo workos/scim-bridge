@@ -278,6 +278,8 @@ its bridge id or its configured WorkOS directory id. A successful response is:
 ```
 
 The response uses `Cache-Control: no-store`; an absent mapping returns `404`.
+Ambiguous legacy mappings return retryable `503` without a native id; repair the
+conflicting owners before retrying.
 Only the authenticated directory's mappings are queried. The input is a
 **WorkOS SCIM id**, not a Directory Sync id. A successful lookup confirms the
 recorded SCIM/native pair, but does not prove that an event's `idp_id` names that

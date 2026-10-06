@@ -247,7 +247,12 @@ describe("reconcile and workos-primary create claims", () => {
     );
     fake.route("workos", "GET", "/Groups", page([]));
     fake.route("native", "PUT", "/Users/shared-id", scimJson(409, { detail: "userName exists" }));
-    fake.route("native", "GET", "/Users", page([{ id: "native-drift", userName: "first" }]));
+    fake.route(
+      "native",
+      "GET",
+      "/Users",
+      page([{ id: "native-drift", userName: "first", externalId: "native-drift" }]),
+    );
     fake.route("native", "PUT", "/Users/native-drift", () => {
       throw new Error("drift repair response lost");
     });
@@ -271,7 +276,12 @@ describe("reconcile and workos-primary create claims", () => {
       );
       fake.route("workos", "GET", "/Groups", page([]));
       fake.route("native", "PUT", "/Users/shared-id", scimJson(409, { detail: "userName exists" }));
-      fake.route("native", "GET", "/Users", page([{ id: "native-drift", userName: "first" }]));
+      fake.route(
+        "native",
+        "GET",
+        "/Users",
+        page([{ id: "native-drift", userName: "first", externalId: "native-drift" }]),
+      );
       fake.route("native", "PUT", "/Users/native-drift", scimJson(status, { detail: "rejected" }));
 
       const summary = await runReconcileFromWorkos(env.DB, directory);

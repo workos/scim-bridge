@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { deleteMapping, upsertMapping } from "../workers/shared/db";
-import { bindEventLink, getEventLink, type EventLink } from "../workers/shared/event-links";
+import {
+  bindEventLink,
+  getEventLink,
+  getEventLinkByNativeId,
+  type EventLink,
+} from "../workers/shared/event-links";
 import { createEnv, seedDirectory } from "./helpers";
 
 function link(directoryId: string, changes: Partial<EventLink> = {}): EventLink {
@@ -104,14 +109,32 @@ describe("immutable Directory Sync event links", () => {
     const env = await createEnv();
     const first = await seedDirectory(env.DB);
     const second = await seedDirectory(env.DB);
-    const entries = [link(first.id), link(second.id), link(first.id, { resource_type: "Groups" })];
+    const entries = [
+      link(first.id),
+      link(second.id, { dsync_id: "directory_user_other", workos_id: "workos-other" }),
+      link(first.id, {
+        resource_type: "Groups",
+        dsync_id: "directory_group_ada",
+        workos_id: "workos-group",
+      }),
+    ];
 
     await Promise.all(entries.map((entry) => bindEventLink(env.DB, entry)));
 
-    for (const entry of entries)
+    for (const entry of entries) {
       expect(
         await getEventLink(env.DB, entry.directory_id, entry.resource_type, entry.dsync_id),
       ).toEqual(entry);
+      expect(
+        await getEventLinkByNativeId(
+          env.DB,
+          entry.directory_id,
+          entry.resource_type,
+          entry.native_id,
+        ),
+      ).toEqual(entry);
+    }
+    expect(await getEventLinkByNativeId(env.DB, first.id, "Users", "absent")).toBeNull();
   });
 
   it("retains the association after its SCIM mapping is pruned", async () => {
@@ -132,6 +155,7 @@ describe("immutable Directory Sync event links", () => {
     expect(await getEventLink(env.DB, directory.id, "Users", "directory_user_ada")).toEqual(
       expected,
     );
+    expect(await getEventLinkByNativeId(env.DB, directory.id, "Users", "18")).toEqual(expected);
     await expect(
       bindEventLink(
         env.DB,

@@ -1025,7 +1025,7 @@ describe("runReconcileFromWorkos", () => {
     );
     fake.route("workos", "GET", "/Groups", listPage([]));
     fake.route("native", "GET", "/Users", () =>
-      listPage([{ id: "idp-1", userName: "one@x.test" }]),
+      listPage([{ id: "idp-1", userName: "one@x.test", externalId: "idp-1" }]),
     );
     fake.route("native", "PUT", "/Users/idp-1", (call) => scimJson(200, call.json()));
 
@@ -1252,7 +1252,7 @@ describe("runReconcileFromWorkos", () => {
     fake.route("workos", "GET", "/Groups", listPage([]));
     fake.route("native", "PUT", "/Users/shared-1", scimJson(409, { detail: "userName exists" }));
     fake.route("native", "GET", "/Users", () =>
-      listPage([{ id: "idp-1", userName: "one@x.test" }]),
+      listPage([{ id: "idp-1", userName: "one@x.test", externalId: "idp-1" }]),
     );
     fake.route("native", "PUT", "/Users/idp-1", (call) => scimJson(200, call.json()));
 
@@ -1410,7 +1410,9 @@ describe("runReconcileFromWorkos", () => {
       "/Groups/shared-g1",
       scimJson(409, { detail: "displayName exists" }),
     );
-    fake.route("native", "GET", "/Groups", () => listPage([{ id: "idp-g1", displayName: "Eng" }]));
+    fake.route("native", "GET", "/Groups", () =>
+      listPage([{ id: "idp-g1", displayName: "Eng", externalId: "idp-g1" }]),
+    );
     fake.route("native", "PUT", "/Groups/idp-g1", (call) => scimJson(200, call.json()));
 
     const summary = await runReconcileFromWorkos(env.DB, directory);
@@ -1449,7 +1451,7 @@ describe("runReconcileFromWorkos", () => {
     );
     fake.route("native", "PUT", "/Users/shared-1", scimJson(409, { detail: "userName exists" }));
     fake.route("native", "GET", "/Users", () =>
-      listPage([{ id: "idp-1", userName: "one@x.test" }]),
+      listPage([{ id: "idp-1", userName: "one@x.test", externalId: "idp-1" }]),
     );
     fake.route("native", "PUT", "/Users/idp-1", (call) => scimJson(200, call.json()));
     fake.route("native", "GET", "/Groups", listPage([]));

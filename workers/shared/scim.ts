@@ -2,6 +2,7 @@ import type { Directory, IdMapping, ResourceType } from "./types";
 import { MIGRATED_ID_HEADER } from "./types";
 import { isEncryptedSecret, timingSafeEqual } from "./crypto";
 import {
+  AmbiguousScimMappingError,
   claimWorkosPrimaryCreate,
   getMapping,
   getMappingByWorkosId,
@@ -385,6 +386,8 @@ export async function loadIdMaps(db: Datastore, directoryId: string): Promise<Id
     workosToNative: { Users: new Map(), Groups: new Map() },
   };
   for (const row of results) {
+    const owner = maps.workosToNative[row.resource_type].get(row.workos_id);
+    if (owner !== undefined && owner !== row.native_id) throw new AmbiguousScimMappingError();
     maps.nativeToWorkos[row.resource_type].set(row.native_id, row.workos_id);
     maps.workosToNative[row.resource_type].set(row.workos_id, row.native_id);
   }

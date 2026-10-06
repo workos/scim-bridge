@@ -409,14 +409,22 @@ Two properties are required before rollback:
   `native_id`, without a migrated-id header. A mapped `404` fails without
   dropping the mapping or creating a replacement. For an unmapped WorkOS row,
   an exclusive or explicitly token-partitioned native namespace permits an
-  exact identity lookup, then an update of the matched native row or a native
-  `POST` that adopts the native service's returned id. Shared namespaces
+  exact identity lookup. An existing name match requires nonempty, exactly equal
+  `externalId` values on both sides and must not be reserved by a saved Directory
+  Sync link for another WorkOS resource. Names alone do not prove ownership, even
+  for inactive native rows. Missing proof requires a verified operator mapping;
+  reconciliation neither overwrites that row nor creates a duplicate. Confirmed
+  absence permits a native `POST` that adopts the native service's returned id. Shared namespaces
   require explicit attribution before an unmapped row can be repaired.
   Creation requires a complete empty filtered lookup: `totalResults` must be
   a nonnegative integer matching the returned resource count, and any page
   metadata must describe the first complete page. Missing totals, partial
   pages, or unrelated-only rows cannot establish absence.
   Group membership replay requires mappings for every referenced user.
+  Duplicate native owners of a WorkOS SCIM id cause reconciliation to stop before
+  upstream requests. Repair those legacy mappings under verified operator
+  supervision; neither an arbitrary native target nor an arbitrary group member
+  is selected, and this read-only refusal releases its reconciliation claims.
 
 Read the reconcile summary and verify the resulting mappings before rollback.
 A failed resource remains unresolved; a partial run does not establish parity.
@@ -466,8 +474,10 @@ service only issues numeric ids. New reconcile deliberately fails a mapped
    for its directory, resource type, `native_id`, and `workos_id`. Release only
    the inspected claim with its expected owner. Do not clear all claims, use
    age as proof, or remove valid mappings to force a fresh create.
-4. Run reconcile in the drained, attributed namespace. It updates the exact
-   native identity match, or performs a native `POST` and durably records its
+4. Run reconcile in the drained, attributed namespace. It updates a native name
+   match only with matching nonempty external ids and no conflicting saved event
+   identity reservation. Verify and restore the mapping manually when that proof
+   is absent. Confirmed absence permits a native `POST` that durably records its
    returned id, then clears the reconciled claim. Confirm the numeric/native id
    mapping and membership parity before resuming provisioning or rollback.
 

@@ -27,6 +27,24 @@ export async function getEventLink(
   );
 }
 
+/** A retained event link reserves its native id even after the SCIM mapping is pruned. */
+export async function getEventLinkByNativeId(
+  db: Datastore,
+  directoryId: string,
+  kind: ResourceType,
+  nativeId: string,
+): Promise<EventLink | null> {
+  return withDatastoreRetry(() =>
+    db
+      .prepare(
+        "SELECT directory_id, resource_type, dsync_id, native_id, workos_id FROM dsync_event_links " +
+          "WHERE directory_id = ? AND resource_type = ? AND native_id = ?",
+      )
+      .bind(directoryId, kind, nativeId)
+      .first<EventLink>(),
+  );
+}
+
 /** Persist only an authenticated pair; later name reuse must not retarget it. */
 export async function bindEventLink(db: Datastore, link: EventLink): Promise<void> {
   const { directory_id, resource_type, dsync_id, native_id, workos_id } = link;

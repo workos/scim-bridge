@@ -1,4 +1,5 @@
-import { getDirectoryById, withDatastoreRetry } from "./db";
+import { getDirectoryById, getMappingByWorkosId } from "./db";
+export { AmbiguousScimMappingError } from "./db";
 import { isRecord, isSuccess, joinScimUrl, parseJson, scimFetch } from "./scim";
 import { getEventLink } from "./event-links";
 import type { Datastore } from "./datastore";
@@ -41,14 +42,14 @@ export async function nativeIdForEvent(
     return proof.remoteMapping();
   }
   if (explicitId && !isDirectorySyncResourceId(explicitId)) {
-    return (await uniqueEventMapping(db, directoryId, kind, explicitId))?.native_id ?? explicitId;
+    return (await getUniqueScimMapping(db, directoryId, kind, explicitId))?.native_id ?? explicitId;
   }
   const candidates = [rawExternalId, resource.idp_id, resource.id];
   const unverified = [];
   const absent = [];
   for (const candidate of candidates) {
     if (typeof candidate !== "string" || !candidate) continue;
-    const mapping = await uniqueEventMapping(db, directoryId, kind, candidate);
+    const mapping = await getUniqueScimMapping(db, directoryId, kind, candidate);
     if (!mapping) continue;
     const native = await proof.nativeResource(mapping.native_id);
     if (native && matchesEventIdentity(kind, resource, native)) return mapping.native_id;
@@ -87,7 +88,7 @@ export async function verifiedWorkosEventMapping(
   const candidates = [stringValue(raw.externalId), stringValue(resource.idp_id)];
   for (const candidate of new Set(candidates)) {
     if (!candidate) continue;
-    const mapping = await uniqueEventMapping(db, directory.id, kind, candidate);
+    const mapping = await getUniqueScimMapping(db, directory.id, kind, candidate);
     if (!mapping) continue;
     const response = await scimFetch(
       joinScimUrl(directory.workos_url, `/${kind}/${encodeURIComponent(mapping.workos_id)}`),
@@ -133,26 +134,17 @@ export async function verifiedWorkosEventMapping(
   }
   const scimId = stringValue(resolved.id);
   if (!scimId) throw new Error("WorkOS SCIM identity has no resource id");
-  return uniqueEventMapping(db, directory.id, kind, scimId);
+  return getUniqueScimMapping(db, directory.id, kind, scimId);
 }
 
 /** Legacy databases may contain several native ids for one WorkOS resource. */
-async function uniqueEventMapping(
+export async function getUniqueScimMapping(
   db: Datastore,
   directoryId: string,
   kind: ResourceType,
   workosId: string,
 ): Promise<IdMapping | null> {
-  const { results } = await withDatastoreRetry(() =>
-    db
-      .prepare(
-        "SELECT * FROM id_mappings WHERE directory_id = ? AND resource_type = ? AND workos_id = ? LIMIT 2",
-      )
-      .bind(directoryId, kind, workosId)
-      .all<IdMapping>(),
-  );
-  if (results.length > 1) throw new Error("Event SCIM mapping is ambiguous");
-  return results[0] ?? null;
+  return getMappingByWorkosId(db, directoryId, kind, workosId);
 }
 
 function stringValue(value: unknown): string | null {
