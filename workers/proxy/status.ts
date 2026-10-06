@@ -1,4 +1,4 @@
-import { getDirectoryByToken } from "../shared/db";
+import { getDirectoryByToken, getMappingByWorkosId } from "../shared/db";
 import { authorizationToken } from "../shared/scim";
 import { nativeIsAuthoritative, type Directory, type PocEnv } from "../shared/types";
 
@@ -60,7 +60,8 @@ export async function handleStatus(request: Request, env: PocEnv, url: URL): Pro
 
   const rest = url.pathname.slice(STATUS_PREFIX.length);
   const segments = rest.split("/").filter(Boolean);
-  if (segments.length !== 1) {
+  const mappingRoute = segments.length === 4 && segments[1] === "mappings";
+  if (segments.length !== 1 && !mappingRoute) {
     return statusError(404, `Nothing is served at ${url.pathname}. Try ${STATUS_PREFIX}/{id}.`);
   }
   let requestedId: string;
@@ -87,6 +88,34 @@ export async function handleStatus(request: Request, env: PocEnv, url: URL): Pro
   // probe which directory ids exist.
   if (requestedId !== directory.id && requestedId !== directory.workos_directory_id) {
     return statusError(404, `This token's directory is not ${requestedId}.`);
+  }
+
+  if (mappingRoute) {
+    const kind = segments[2];
+    if (kind !== "Users" && kind !== "Groups") return statusError(404, "Unknown resource type.");
+    let workosScimId: string;
+    try {
+      workosScimId = decodeURIComponent(segments[3]);
+    } catch {
+      return statusError(404, "Invalid WorkOS SCIM ID.");
+    }
+    try {
+      const mapping = await getMappingByWorkosId(env.DB, directory.id, kind, workosScimId);
+      if (!mapping) return statusError(404, "No mapping exists for this WorkOS SCIM ID.");
+      return Response.json(
+        {
+          directory_id: directory.id,
+          workos_directory_id: directory.workos_directory_id,
+          resource_type: kind,
+          workos_scim_id: mapping.workos_id,
+          native_id: mapping.native_id,
+          strategy: mapping.strategy,
+        },
+        { headers: { "Cache-Control": "no-store" } },
+      );
+    } catch {
+      return statusError(500, "The proxy could not resolve this SCIM mapping.");
+    }
   }
 
   const applyDsyncEvents = appliesDsyncEvents(directory.mode);

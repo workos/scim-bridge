@@ -498,23 +498,31 @@ async function workosPrimary(
 ): Promise<Response> {
   const kind = scimPath.kind as ResourceType;
 
+  // Group members are addressed in native-id space too. Without a mapping,
+  // neither forwarding the supplied value to native nor translating it for
+  // WorkOS is safe, including on a group create.
+  if (kind === "Groups" && method !== "DELETE") {
+    const memberIds = workosPrimaryMemberIds(parseJson(requestBody), method);
+    for (const memberId of memberIds) {
+      if (!(await getMapping(env.DB, directory.id, "Users", memberId))) {
+        return finish(
+          scimError(
+            409,
+            "A group member has no native id mapping for this directory. Repair the mapping before writing the group.",
+          ),
+        );
+      }
+    }
+  }
+
   if (method === "POST") {
     return workosPrimaryCreate(env, directory, kind, requestBody, contentType, url, log, finish);
   }
 
-  // A DELETE addressed by a resource's WorkOS-side id resolves in a different id
-  // space on each leg: the WorkOS leg falls through `makeTranslator`'s identity
-  // fallback onto a live row, while the native leg forwards the same bytes as a
-  // native id it never held and truthfully answers 404. Neither leg is wrong on
-  // its own, and no downstream reading of the pair can recover which resource
-  // was meant — so refuse before either leg runs, rather than half-applying the
-  // delete and then deciding what native's 404 proved.
-  //
-  // Narrow by construction: it takes a path id this directory maps as some
-  // resource's `workos_id` while mapping no resource under it as a `native_id`.
-  // An id both sides share ('migrated-id') is a native id and passes; so does an
-  // id no mapping claims at all, which is the first-touch case.
-  if (method === "DELETE" && scimPath.id !== null) {
+  // A WorkOS id must never become a native id through the translator's identity
+  // fallback. Identity acquisition belongs to serialized create/reconcile;
+  // a first-touch live write cannot safely establish its own mapping.
+  if (scimPath.id !== null) {
     const [asNativeId, asWorkosId] = await Promise.all([
       getMapping(env.DB, directory.id, kind, scimPath.id),
       getMappingByWorkosId(env.DB, directory.id, kind, scimPath.id),
@@ -525,6 +533,14 @@ async function workosPrimary(
           404,
           `No ${kind} resource with id ${scimPath.id}. Address the resource by the id this ` +
             "directory returned for it.",
+        ),
+      );
+    }
+    if (!asNativeId) {
+      return finish(
+        scimError(
+          409,
+          "This id has no native mapping for this directory. Run backfill or reconciliation before writing the resource.",
         ),
       );
     }
@@ -642,6 +658,13 @@ async function workosPrimary(
   // it would let any holder of the directory's proxy token retire an unrelated
   // resource's deprovisioning gap by naming it in the body of a DELETE.
   await clearNativeWriteFailure(env.DB, directory.id, kind, resourceKey);
+  if (method === "DELETE" && scimPath.id !== null) {
+    try {
+      await deleteMapping(env.DB, directory.id, kind, scimPath.id);
+    } catch (error) {
+      log.error = `id mapping prune failed: ${errorMessage(error)}`;
+    }
+  }
   if (workosGone) {
     // The delete has converged; the IdP hears from the side that did the work.
     // Here that is native — WorkOS was already gone — so its answer is passed
@@ -664,6 +687,32 @@ async function workosPrimary(
   // complete, and an IdP that surfaces it strands the operator chasing a
   // deprovision that already landed.
   return finish(workosResponse);
+}
+
+/** Member ids the unmodified native write will address, in either SCIM form. */
+function workosPrimaryMemberIds(body: Record<string, unknown> | null, method: string): Set<string> {
+  const ids = new Set<string>();
+  const collect = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const entry of value) collect(entry);
+    } else if (isRecord(value)) {
+      if (typeof value.value === "string") ids.add(value.value);
+      if (value.members !== undefined) collect(value.members);
+    }
+  };
+  if (!body) return ids;
+  collect(body.members);
+  if (method === "PATCH" && Array.isArray(body.Operations)) {
+    for (const operation of body.Operations) {
+      if (!isRecord(operation)) continue;
+      const path = typeof operation.path === "string" ? operation.path : "";
+      for (const match of path.matchAll(/members\s*\[\s*value\s+eq\s+"([^"]+)"\s*\]/gi)) {
+        ids.add(match[1]);
+      }
+      if (path === "" || /^members(?:\b|\[)/i.test(path)) collect(operation.value);
+    }
+  }
+  return ids;
 }
 
 /**
@@ -870,20 +919,46 @@ async function workosPrimaryCreateClaimed(
   // Once either side accepted (or may have accepted) the create, keep the claim
   // until both sides are linked by a persisted mapping. A resolved native 409
   // counts too: its id names a real row even though this POST did not create it.
-  // Only explicit rejections on both sides, or a rejected native-first leg that
-  // never attempted WorkOS, can safely release before completing the mapping.
+  // Explicit 4xx rejections on both sides, or a rejected native-first leg that
+  // never attempted WorkOS, can release. A 408/409/5xx is not proof of absence.
   const workosOk = mirror !== null && mirror.ok;
   releaseClaim =
     native.id === null &&
-    native.result !== null &&
-    !isSuccess(native.result.status) &&
-    (mirror === null || (!mirror.ok && mirror.status !== null && !isSuccess(mirror.status)));
+    native.error === null &&
+    isDefinitiveCreateRejection(native.result?.status ?? null) &&
+    (mirror === null || (!mirror.ok && isDefinitiveCreateRejection(mirror.status)));
 
   // Before native answers, the only handle on the resource is the id the IdP will
   // retry with, so a create that never reached native is recorded under that.
   const failureKey = externalId ?? uniqueAttributeValue(kind, parsed) ?? `POST /${kind}`;
 
   if (native.id === null) {
+    // A freshly created WorkOS row can be removed after native explicitly
+    // refused the create. Both original legs have settled and this claim still
+    // excludes another create/reconcile. Never compensate a pre-existing row,
+    // a native 409, or a timeout/5xx that may have committed remotely.
+    if (
+      native.error === null &&
+      isDefinitiveCreateRejection(native.result?.status ?? null) &&
+      mirror?.createdId &&
+      !(await getMappingByWorkosId(env.DB, directory.id, kind, mirror.createdId))
+    ) {
+      try {
+        const rollback = await scimFetch(
+          joinScimUrl(directory.workos_url, `/${kind}/${encodeURIComponent(mirror.createdId)}`),
+          { method: "DELETE", token: directory.workos_token },
+        );
+        if (isSuccess(rollback.status) || rollback.status === 404) {
+          await clearNativeWriteFailure(env.DB, directory.id, kind, failureKey);
+          releaseClaim = true;
+          log.error = `Native refused the create; removed newly created WorkOS ${kind}/${mirror.createdId}.`;
+          return finish(nativeFailureResponse(native));
+        }
+        log.error = `Native refused the create; WorkOS compensation returned ${rollback.status}. Create claim retained.`;
+      } catch (error) {
+        log.error = `Native refused the create; WorkOS compensation is unresolved: ${errorMessage(error)}. Create claim retained.`;
+      }
+    }
     if (workosOk) {
       await recordNativeWriteFailure(env.DB, {
         directory_id: directory.id,
@@ -961,6 +1036,10 @@ async function workosPrimaryCreateClaimed(
   });
   releaseClaim = true;
   return finish(response);
+}
+
+function isDefinitiveCreateRejection(status: number | null): boolean {
+  return status !== null && status >= 400 && status < 500 && status !== 408 && status !== 409;
 }
 
 /**
@@ -1221,9 +1300,11 @@ async function workosOnly(
   let outPath = scimPath.rest;
   let outBody = requestBody;
   let toNative: ((kind: ResourceType, id: string) => string) | null = null;
+  let mappedWorkosIds: Awaited<ReturnType<typeof loadIdMaps>>["workosToNative"] | null = null;
 
   if (kind) {
     const maps = await loadIdMaps(env.DB, directory.id);
+    mappedWorkosIds = maps.workosToNative;
     const toWorkos = makeTranslator(maps.nativeToWorkos);
     toNative = makeTranslator(maps.workosToNative);
     // A create after cutover must still mint a migrated id (not let WorkOS
@@ -1278,7 +1359,7 @@ async function workosOnly(
   // Prune the mapping the same way the dual-write mirror does, so the table
   // never claims a deleted resource is live. A 404 counts: the resource is gone
   // on the WorkOS side either way.
-  if (method === "DELETE" && kind && scimPath.id) {
+  if (method === "DELETE" && directory.mode !== "workos-primary" && kind && scimPath.id) {
     if (isSuccess(workos.status) || workos.status === 404) {
       // The WorkOS delete already committed, so a failed prune must not turn a
       // completed delete into an error for the IdP — log it and let the next
@@ -1306,6 +1387,40 @@ async function workosOnly(
     toIdpId: (id) => translateId(kind, id),
   };
   const parsed = parseJson(workos.bodyText);
+  if (
+    directory.mode === "workos-primary" &&
+    method === "GET" &&
+    isSuccess(workos.status) &&
+    parsed &&
+    mappedWorkosIds
+  ) {
+    const resources = Array.isArray(parsed.Resources) ? parsed.Resources : [parsed];
+    const hasUnmappedResource = resources.some((resource) => {
+      if (
+        !isRecord(resource) ||
+        typeof resource.id !== "string" ||
+        !mappedWorkosIds[kind].has(resource.id)
+      )
+        return true;
+      return (
+        Array.isArray(resource.members) &&
+        resource.members.some(
+          (member) =>
+            !isRecord(member) ||
+            typeof member.value !== "string" ||
+            !mappedWorkosIds.Users.has(member.value),
+        )
+      );
+    });
+    if (hasUnmappedResource) {
+      return finish(
+        scimError(
+          scimPath.id === null ? 409 : 404,
+          "WorkOS returned a resource without a native id mapping for this directory. Repair the mapping before reading the resource.",
+        ),
+      );
+    }
+  }
   // Nothing to translate (304, 204, non-JSON): the IdP gets the upstream bytes,
   // so the upstream validator still describes them.
   if (!parsed) {
@@ -1417,7 +1532,15 @@ async function replaceWithMigratedId(
         "replaced. Create it first and use the id the response carries.",
     );
   }
-  const result = await mirrorUpsert(db, directory, kind, nativeId, body);
+  const result = await mirrorUpsert(
+    db,
+    directory,
+    kind,
+    nativeId,
+    body,
+    undefined,
+    directory.mode === "workos-primary",
+  );
   applyMirrorResult(log, result);
   if (!result.ok) {
     return scimError(

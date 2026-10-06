@@ -355,6 +355,11 @@ Advance the directory's mode from its page, verifying convergence in the
    This is the step that makes the listener — and therefore webhook delivery —
    load-bearing for the first time. Take it only once the listener has been
    verified end to end: reachable, verifying signatures, and applying events.
+   Verify that a real membership event resolves both user and group to their
+   existing native SCIM ids through the
+   [event mapping contract](./listener-status.md#applying-events).
+   Directory Sync `directory_user_…` / `directory_group_…` ids are expected
+   to differ from the preserved native SCIM ids.
 
    **Run Reconcile from WorkOS immediately after the flip.** The cutover is
    instantaneous on the proxy side — it stops writing the native app the same
@@ -386,47 +391,69 @@ it stayed caught up, run **Reconcile from WorkOS** on the directory page first �
 it snapshots the live WorkOS directory and replays every resource back into
 native, guaranteeing parity before you flip the mode back.
 
-Two properties make this safe:
+Two properties are required before rollback:
 
-- **Id-preserving.** When the listener creates a resource from an event it adopts
-  the event's WorkOS resource id (`data.id`), which for a migrated directory is
-  the pre-migration shared id and for a resource born after cutover is the id
-  WorkOS minted from the IdP `externalId`. Either way native, WorkOS, and the
-  proxy address the resource by one id, so reconcile's `PUT /Users/{id}` lands on
-  the same row.
-- **Functional even when ids drift.** Ids don't actually have to match for
-  rollback to work: the proxy translates through the `id_mappings` table, so a
-  native row under a *different* id but with a mapping row is addressable end to
-  end. What breaks rollback is a resource with **no** mapping — the case the
-  reconcile below repairs.
+- **Durable native mappings.** Events resolve existing native rows through
+  confirmed SCIM mappings or verified identity attributes. Directory Sync
+  `data.id` is not an instruction to rename or create a native SCIM row.
+- **Confirmed reconciliation.** Mapped resources are replayed with `PUT` to
+  `native_id`, without a migrated-id header. A mapped `404` fails without
+  dropping the mapping or creating a replacement. For an unmapped WorkOS row,
+  an exclusive or explicitly token-partitioned native namespace permits an
+  exact identity lookup, then an update of the matched native row or a native
+  `POST` that adopts the native service's returned id. Shared namespaces
+  require explicit attribution before an unmapped row can be repaired.
+  Group membership replay requires mappings for every referenced user.
 
-**Repairing a directory whose ids already drifted.** A directory cut over before
-this listener fix may hold native rows under the IdP id while WorkOS holds the
-shared id (e.g. an offboard-then-rehire re-created the row under `idp_id`). Run
-**Reconcile from WorkOS** and read its summary:
+Read the reconcile summary and verify the resulting mappings before rollback.
+A failed resource remains unresolved; a partial run does not establish parity.
 
-- Lines like `Users/{sharedId}: id drift — userName "…" is native id {driftedId},
-  WorkOS holds {sharedId}; reconciled via mapping` mean reconcile found the
-  drifted native row by its `userName`/`displayName`, updated it in place, and
-  wrote the mapping — the directory is now rollback-safe with no further action.
-- A line ending `native returned 409 (… drift unresolved)` means the collision
-  couldn't be attributed to a row (the userName/displayName didn't resolve);
-  investigate that resource by hand.
-- A line ending `drift left unrepaired` means the collision _did_ resolve to a
-  row, but that row isn't attributable to this directory: another directory in the
-  same native namespace maps it, or it is unmapped and its id isn't the
-  `externalId` WorkOS holds (the shape listener-adopted drift always takes).
-  `userName`/`displayName` are unique per native namespace, not per directory, so
-  in a deployment that bridges several directories into one namespace a match can
-  be another tenant's resource; reconcile refuses to write it. Line the ids up by
-  hand only once you've confirmed which directory the row belongs to.
-- A line ending `drift left unrepaired` means the collision *did* resolve to a
-  row, but that row isn't attributable to this directory — another directory maps
-  it, or its `externalId` isn't the one WorkOS holds. `userName`/`displayName` are
-  unique per native namespace, not per directory, so in a deployment that bridges
-  several directories into one namespace a match can be another tenant's
-  resource; reconcile refuses to write it. Line the ids up by hand only once
-  you've confirmed which directory the row belongs to.
+In `workos-primary`, addressed writes require an existing native-id mapping.
+An unknown id returns `409` before either upstream is contacted; use backfill or
+reconciliation to establish the mapping. This keeps identity acquisition under
+the create/reconcile claim instead of racing a first-touch live write against
+reconciliation. WorkOS-side aliases that are not native ids return `404`.
+Mapped `PUT` recovery also acquires that claim before recreating a missing
+WorkOS row or changing its mapping. A busy claim returns `503` without that
+`POST`; successful mapping persistence or a definitive WorkOS rejection
+releases it, while uncertain recovery retains it. Ordinary mapped updates do
+not acquire a claim or rewrite their unchanged mapping.
+
+### Recovering retained create claims and invalid legacy mappings
+
+A create
+claim has no TTL. New `workos-primary` creates release a claim after a confirmed
+native client rejection (4xx except `408`/`409`) only when the request freshly
+created the WorkOS row with `POST 201` and its compensating WorkOS `DELETE` is
+confirmed successful. A row found by `PUT` or adopted after a race is preexisting
+and is retained; a failed or timed-out compensating delete also retains the
+claim. Native timeouts, `408`, `409`, server failures, and uncertain mapping
+commits require verified recovery. Repeated requests do not unlock these cases.
+
+Claims retained by older bridge versions need an operator to establish what
+actually committed. A legacy failed native `PUT` may also have left an invalid
+`migrated-id` mapping, for example `native_id = workos_id = 00u…` when the native
+service only issues numeric ids. New reconcile deliberately fails a mapped
+`404` rather than guessing that this mapping should be rebound.
+
+1. Drain all proxy creators, listeners, and reconcile processes for the affected
+   native namespace, and pause upstream provisioning while inspecting it.
+2. Record the exact directory, resource type, native/WorkOS ids, and create-claim
+   owner. Verify the native service does not hold the alleged native id, identify
+   any real native row by authoritative identity attributes, and confirm which
+   orphan or preexisting row WorkOS holds. Account for ambiguous prior writes.
+3. Only after proving the mapping invalid, remove that single row with guards
+   for its directory, resource type, `native_id`, and `workos_id`. Release only
+   the inspected claim with its expected owner. Do not clear all claims, use
+   age as proof, or remove valid mappings to force a fresh create.
+4. Run reconcile in the drained, attributed namespace. It updates the exact
+   native identity match, or performs a native `POST` and durably records its
+   returned id, then clears the reconciled claim. Confirm the numeric/native id
+   mapping and membership parity before resuming provisioning or rollback.
+
+If any prior write outcome or ownership remains uncertain, keep the claim and
+mapping and investigate that resource. This release does not automatically
+repair or expire retained legacy claims.
 
 **Multi-directory topology: one native app fronted by several directories is a
 shared namespace.** Several directories can front one native app (the same
@@ -570,9 +597,13 @@ may still commit a write after any lease deadline, so automatic expiry would
 reopen the race. A completed create releases its claim only after both upstreams
 agree on the resource and the mapping is persisted. Explicit rejections on both
 sides also release it, as does a native rejection when WorkOS was never called.
-If either upstream accepted the create or resolved an existing row, the claim
-stays in place until the mapping is complete, even when the other side explicitly
-returned a 4xx or 5xx. An unmatched row on either side could otherwise let another
+A freshly created WorkOS row (`POST 201`) can be compensated after native
+explicitly rejects the create with a 4xx other than `408`/`409`: the claim is
+released only after the compensating WorkOS `DELETE` is confirmed successful.
+Preexisting rows resolved by `PUT` or adopted after a race are retained, as are
+failed or timed-out deletes. Outside that confirmed compensation, an accepted
+or resolved row keeps the claim until its mapping is complete, even when the
+other side returned a 4xx or 5xx. An unmatched row could otherwise let another
 identity reuse its id. A transport failure, a successful create response without
 an id, a process crash, or an unexpected exception (including a failed mapping
 commit) also retains the claim until an operator resolves the writes. Handled

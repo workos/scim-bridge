@@ -1,5 +1,6 @@
 import { getConfig, listDirectories, truncateBody, withDatastoreRetry } from "../shared/db";
 import { timingSafeEqual } from "../shared/crypto";
+import { idForNewEventResource, nativeIdForEvent } from "../shared/event-mapping";
 import { fetchDirectoryStatus } from "./status-client";
 import type { ReceivedDirectoryStatus } from "./status-client";
 import { NATIVE_TABLES, ScimStore } from "./store";
@@ -143,7 +144,14 @@ export async function processDsyncEvent(
     outcome = { action: "skipped", detail: "duplicate delivery", idpId: asString(data.idp_id) };
   } else {
     try {
-      outcome = await dispatch(db, new ScimStore(db, NATIVE_TABLES), eventType, data, eventAt);
+      outcome = await dispatch(
+        db,
+        new ScimStore(db, NATIVE_TABLES),
+        eventType,
+        data,
+        eventAt,
+        instruction.directoryId!,
+      );
     } catch (error) {
       recordEventId = null;
       handlerError = true;
@@ -184,6 +192,7 @@ async function dispatch(
   eventType: string,
   data: Json,
   eventAt: string | null,
+  directoryId: string,
 ): Promise<Outcome> {
   const scope = scopeFor(eventType, data);
   if (scope && !(await isNewestEvent(db, scope, eventAt))) {
@@ -193,15 +202,14 @@ async function dispatch(
       idpId: asString(data.idp_id),
     };
   }
-  const outcome = await applyEvent(db, store, eventType, data, eventAt);
+  const outcome = await applyEvent(db, store, eventType, data, eventAt, directoryId);
   if (scope) await recordEventVersion(db, scope, eventAt);
   return outcome;
 }
 
-/** A group's shared key. WorkOS reports a group's `idp_id` as its displayName,
- *  but carries the IdP's externalId in `raw_attributes.externalId` — the stable,
- *  URL-safe key that matches the id the proxy mints and WorkOS stores. Prefer it,
- *  falling back to idp_id/name for IdPs that omit a group externalId. */
+/** A group's identity attribute. Current SCIM groups use externalId as idp_id,
+ *  while older groups can retain a displayName there. Prefer the raw externalId
+ *  when present. This attribute is not itself proof of the native SCIM id. */
 function groupKeyFromEvent(group: Json): string | null {
   const raw = asObject(group.raw_attributes);
   return (raw ? asString(raw.externalId) : null) ?? asString(group.idp_id) ?? asString(group.name);
@@ -233,22 +241,23 @@ async function applyEvent(
   eventType: string,
   data: Json,
   eventAt: string | null,
+  directoryId: string,
 ): Promise<Outcome> {
   switch (eventType) {
     case "dsync.user.created":
     case "dsync.user.updated":
-      return upsertUserFromEvent(store, data);
+      return upsertUserFromEvent(db, store, data, directoryId);
     case "dsync.user.deleted":
-      return deleteUserFromEvent(db, store, data);
+      return deleteUserFromEvent(db, store, data, directoryId);
     case "dsync.group.created":
     case "dsync.group.updated":
-      return upsertGroupFromEvent(store, data);
+      return upsertGroupFromEvent(db, store, data, directoryId);
     case "dsync.group.deleted":
-      return deleteGroupFromEvent(store, data);
+      return deleteGroupFromEvent(db, store, data, directoryId);
     case "dsync.group.user_added":
-      return changeMembership(db, store, data, "add", eventAt);
+      return changeMembership(db, store, data, "add", eventAt, directoryId);
     case "dsync.group.user_removed":
-      return changeMembership(db, store, data, "remove", eventAt);
+      return changeMembership(db, store, data, "remove", eventAt, directoryId);
     case "dsync.activated":
       return { action: "ignored", detail: "directory activated; informational, no per-user work" };
     case "dsync.deleted":
@@ -264,21 +273,23 @@ async function applyEvent(
   }
 }
 
-async function upsertUserFromEvent(store: ScimStore, data: Json): Promise<Outcome> {
+async function upsertUserFromEvent(
+  db: Datastore,
+  store: ScimStore,
+  data: Json,
+  directoryId: string,
+): Promise<Outcome> {
   const idpId = asString(data.idp_id);
   if (!idpId) return { action: "ignored", detail: "user event carries no idp_id" };
   const userName = userNameFromEvent(data) ?? idpId;
   const active = data.state === "active";
 
-  const existing = await findUser(store, idpId, userName);
+  const nativeId = await nativeIdForEvent(db, directoryId, "Users", data);
+  const existing = await findUser(store, idpId, userName, nativeId);
   if (!existing) {
-    // Address the user by the id WorkOS already holds (the event's resource id).
-    // For a directory migrated before cutover that is the pre-migration shared
-    // id; for a user born in workos-only WorkOS minted it from externalId, so it
-    // equals idp_id. Adopting idp_id instead would keep the shared id only for
-    // the born-here case and permanently diverge a re-created pre-cutover user,
-    // breaking the id-preserving rollback. Fall back to idp_id if absent.
-    const id = asString(data.id) ?? idpId;
+    // A confirmed SCIM mapping preserves the native id. Directory Sync data.id
+    // has its own namespace and must never become an unconfirmed native id.
+    const id = idForNewEventResource(data, nativeId, idpId);
     const resource = userResourceFromEvent(id, idpId, userName, active, data, {});
     await store.upsertUser({ id, userName, externalId: idpId, active, resource });
     return { action: "applied", detail: active ? "onboard()" : "provisioned inactive", idpId };
@@ -351,11 +362,17 @@ async function upsertUserFromEvent(store: ScimStore, data: Json): Promise<Outcom
  * absent or unrecognized value stays `"soft"` so the production default can
  * never be regressed by a typo.
  */
-async function deleteUserFromEvent(db: Datastore, store: ScimStore, data: Json): Promise<Outcome> {
+async function deleteUserFromEvent(
+  db: Datastore,
+  store: ScimStore,
+  data: Json,
+  directoryId: string,
+): Promise<Outcome> {
   const idpId = asString(data.idp_id);
   if (!idpId) return { action: "ignored", detail: "user event carries no idp_id" };
   const userName = userNameFromEvent(data);
-  const existing = await findUser(store, idpId, userName);
+  const nativeId = await nativeIdForEvent(db, directoryId, "Users", data);
+  const existing = await findUser(store, idpId, userName, nativeId);
   if (!existing) return { action: "skipped", detail: "no-op: user already absent", idpId };
 
   if ((await getConfig(db, "native.delete_policy")) === "hard") {
@@ -384,22 +401,24 @@ async function deleteUserFromEvent(db: Datastore, store: ScimStore, data: Json):
   return { action: "applied", detail: "offboard() — deactivated in place", idpId };
 }
 
-async function upsertGroupFromEvent(store: ScimStore, data: Json): Promise<Outcome> {
-  // Key on the group's externalId (raw_attributes), the shared id the proxy and
-  // WorkOS use — not the displayName WorkOS surfaces as idp_id. Keeps the group
-  // addressable after a rollback and stops external_id churning to the name.
+async function upsertGroupFromEvent(
+  db: Datastore,
+  store: ScimStore,
+  data: Json,
+  directoryId: string,
+): Promise<Outcome> {
+  // Retain the external identity separately from the mapped native SCIM id.
   const idpId = groupKeyFromEvent(data);
   if (!idpId) return { action: "ignored", detail: "group event carries no key" };
   const name = asString(data.name);
 
-  const existing = await findGroup(store, idpId, name);
+  const nativeId = await nativeIdForEvent(db, directoryId, "Groups", data);
+  const existing = await findGroup(store, idpId, name, nativeId);
   if (!existing) {
     if (!name) return { action: "ignored", detail: "group event carries no name", idpId };
-    // As with users, adopt the id WorkOS holds (the event's resource id) so a
-    // re-created pre-cutover group keeps its shared id; fall back to the
-    // externalId key. externalId stays keyed on raw_attributes (idpId here), not
-    // data.idp_id — which for a group is the displayName WorkOS surfaces.
-    const id = asString(data.id) ?? idpId;
+    // As with users, create only under a confirmed SCIM id or the legacy
+    // no-resource-id fallback, never an unresolved Directory Sync id.
+    const id = idForNewEventResource(data, nativeId, idpId);
     const resource = groupResourceFromEvent(id, idpId, name, {});
     await store.upsertGroup({ id, displayName: name, externalId: idpId, resource });
     return { action: "applied", detail: `group "${name}" created`, idpId };
@@ -421,10 +440,16 @@ async function upsertGroupFromEvent(store: ScimStore, data: Json): Promise<Outco
   return { action: "applied", detail, idpId };
 }
 
-async function deleteGroupFromEvent(store: ScimStore, data: Json): Promise<Outcome> {
+async function deleteGroupFromEvent(
+  db: Datastore,
+  store: ScimStore,
+  data: Json,
+  directoryId: string,
+): Promise<Outcome> {
   const idpId = groupKeyFromEvent(data);
   if (!idpId) return { action: "ignored", detail: "group event carries no key" };
-  const existing = await findGroup(store, idpId, asString(data.name));
+  const nativeId = await nativeIdForEvent(db, directoryId, "Groups", data);
+  const existing = await findGroup(store, idpId, asString(data.name), nativeId);
   if (!existing) return { action: "skipped", detail: "no-op: group already absent", idpId };
   await store.deleteGroup(existing.id);
   return {
@@ -440,6 +465,7 @@ async function changeMembership(
   data: Json,
   op: "add" | "remove",
   eventAt: string | null,
+  directoryId: string,
 ): Promise<Outcome> {
   const userData = asObject(data.user);
   const groupData = asObject(data.group);
@@ -464,7 +490,9 @@ async function changeMembership(
   const idpId = userIdpId ?? groupIdpId;
 
   let stubs = 0;
-  const user = await findUser(store, userIdpId, userName);
+  const nativeUserId = await nativeIdForEvent(db, directoryId, "Users", userData);
+  const nativeGroupId = await nativeIdForEvent(db, directoryId, "Groups", groupData);
+  const user = await findUser(store, userIdpId, userName, nativeUserId);
   if (!user && op === "remove") {
     return { action: "skipped", detail: "no-op: user not present", idpId };
   }
@@ -481,10 +509,8 @@ async function changeMembership(
         idpId,
       };
     }
-    // Prefer the id WorkOS holds so a stub matches what a later full event (or a
-    // reconcile) addresses; the externalId key next, and a random id only when
-    // neither is present. A random id is guaranteed to diverge from WorkOS.
-    userId = asString(userData.id) ?? userIdpId ?? crypto.randomUUID();
+    // The same ID contract applies to a partial membership stub.
+    userId = idForNewEventResource(userData, nativeUserId, userIdpId ?? crypto.randomUUID());
     const active = userData.state === undefined ? true : userData.state === "active";
     await store.upsertUser({
       id: userId,
@@ -497,7 +523,7 @@ async function changeMembership(
     userOnboarded = active;
   }
 
-  const group = await findGroup(store, groupIdpId, groupName);
+  const group = await findGroup(store, groupIdpId, groupName, nativeGroupId);
   let groupId = group?.id ?? null;
   let groupLabel = group?.display_name ?? groupName ?? groupIdpId ?? "";
   if (!groupId && op === "remove") {
@@ -511,7 +537,7 @@ async function changeMembership(
         idpId,
       };
     }
-    groupId = asString(groupData.id) ?? groupIdpId ?? crypto.randomUUID();
+    groupId = idForNewEventResource(groupData, nativeGroupId, groupIdpId ?? crypto.randomUUID());
     const displayName = groupName ?? groupIdpId ?? "unknown group";
     groupLabel = displayName;
     await store.upsertGroup({
@@ -545,7 +571,10 @@ async function findUser(
   store: ScimStore,
   idpId: string | null,
   userName: string | null,
+  nativeId: string | null = null,
 ): Promise<UserRow | null> {
+  // A known SCIM identity cannot be redirected to attributes reused by another row.
+  if (nativeId) return store.userById(nativeId);
   if (idpId) {
     const byExternalId = await store.userByExternalId(idpId);
     if (byExternalId) return byExternalId;
@@ -557,7 +586,9 @@ async function findGroup(
   store: ScimStore,
   idpId: string | null,
   name: string | null,
+  nativeId: string | null = null,
 ): Promise<GroupRow | null> {
+  if (nativeId) return store.groupById(nativeId);
   if (idpId) {
     const byExternalId = await store.groupByExternalId(idpId);
     if (byExternalId) return byExternalId;
@@ -698,6 +729,7 @@ interface DsyncInstruction {
   apply: boolean;
   /** Reporting only. `null` when no directory could be resolved for the event. */
   mode: string | null;
+  directoryId: string | null;
 }
 
 /**
@@ -769,7 +801,7 @@ async function dsyncInstructionForEvent(db: Datastore, data: Json): Promise<Dsyn
   const unlinkedLone =
     directories.length === 1 && !directories[0].workos_directory_id ? directories[0] : undefined;
   const directory = byId ?? unlinkedLone;
-  if (!directory) return { apply: false, mode: null };
+  if (!directory) return { apply: false, mode: null, directoryId: null };
 
   const instruction = instructionFrom(directory, await fetchDirectoryStatus(db, directory));
   if (instruction.apply) return instruction;
@@ -815,10 +847,16 @@ function instructionFrom(
   directory: Directory,
   status: ReceivedDirectoryStatus | null,
 ): DsyncInstruction {
-  if (!status) return { apply: applyFromModeFallback(directory.mode), mode: directory.mode };
+  if (!status)
+    return {
+      apply: applyFromModeFallback(directory.mode),
+      mode: directory.mode,
+      directoryId: directory.id,
+    };
   return {
     apply: status.apply_dsync_events ?? applyFromModeFallback(status.mode),
     mode: status.mode,
+    directoryId: directory.id,
   };
 }
 

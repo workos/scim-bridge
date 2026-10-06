@@ -2,9 +2,11 @@ import type { Directory, IdMapping, ResourceType } from "./types";
 import { MIGRATED_ID_HEADER } from "./types";
 import { isEncryptedSecret, timingSafeEqual } from "./crypto";
 import {
+  claimWorkosPrimaryCreate,
   getMapping,
   getMappingByWorkosId,
   listDirectories,
+  releaseWorkosPrimaryCreate,
   upsertMapping,
   withDatastoreRetry,
 } from "./db";
@@ -475,6 +477,9 @@ export interface MirrorResult {
   ms: number | null;
   body: string | null;
   error: string | null;
+  /** Set only after a fresh POST returned 201 and its own resource id. An
+   * adopted PUT/409 row must never be removed to compensate a refused create. */
+  createdId?: string;
   /**
    * Set when the failure is an alias-mint refusal: the id is already another
    * resource's `workos_id`, so this is a permanent collision, not a transient
@@ -599,6 +604,7 @@ export async function mirrorUpsert(
   nativeId: string,
   rawResource: Record<string, unknown>,
   sink?: MappingSink,
+  serializeRecovery = false,
 ): Promise<MirrorResult> {
   // Every WorkOS-bound resource body funnels through here — live mirror,
   // backfill replay, and the workos-only create/replace legs — and does so after
@@ -611,6 +617,14 @@ export async function mirrorUpsert(
     // A resource WorkOS already knows: update it in place by the id it stored
     // (the shared migrated id, or a minted one for a fallback-post mapping).
     const existing = await getMapping(db, directory.id, kind, nativeId);
+    if (serializeRecovery && !existing) {
+      return recoveryRefused(
+        `PUT /${kind}/${nativeId}`,
+        409,
+        "The native id mapping is no longer present; run backfill or reconciliation before replacing the resource",
+        acc,
+      );
+    }
     if (existing) {
       const useHeader = existing.strategy === "migrated-id";
       const label = `PUT /${kind}/${existing.workos_id}${useHeader ? ` +${MIGRATED_ID_HEADER}` : " (fallback)"}`;
@@ -623,11 +637,15 @@ export async function mirrorUpsert(
         useHeader ? nativeId : undefined,
       );
       if (isSuccess(put.status)) {
-        await recordMapping(
-          db,
-          mappingRow(directory, kind, nativeId, existing.workos_id, existing.strategy),
-          sink,
-        );
+        // A primary update already has a durable mapping. Rewriting its old
+        // snapshot could rewind a recovery that completed while this PUT ran.
+        if (!serializeRecovery || sink) {
+          await recordMapping(
+            db,
+            mappingRow(directory, kind, nativeId, existing.workos_id, existing.strategy),
+            sink,
+          );
+        }
         return mirrorOk(label, put, acc);
       }
       if (put.status !== 404) {
@@ -635,6 +653,18 @@ export async function mirrorUpsert(
       }
       // The mapped resource is gone on WorkOS (e.g. the directory was cleaned) —
       // recreate it below. createViaPost's upsertMapping overwrites the stale row.
+      if (serializeRecovery) {
+        return await recoverMappedResource(
+          db,
+          directory,
+          kind,
+          nativeId,
+          existing,
+          resource,
+          acc,
+          sink,
+        );
+      }
     } else {
       // First touch: try the migrated-id PUT. It 404s when absent (only POST
       // creates now) but succeeds if the row already exists under the shared id.
@@ -684,6 +714,69 @@ export async function mirrorUpsert(
   }
 }
 
+/** Only recovery can change an existing primary resource's WorkOS id. */
+async function recoverMappedResource(
+  db: Datastore,
+  directory: Directory,
+  kind: ResourceType,
+  nativeId: string,
+  existing: IdMapping,
+  resource: Record<string, unknown>,
+  acc: Elapsed,
+  sink?: MappingSink,
+): Promise<MirrorResult> {
+  const label = `POST /${kind} +${MIGRATED_ID_HEADER} (mapped recovery)`;
+  const token = crypto.randomUUID();
+  if (!(await claimWorkosPrimaryCreate(db, directory.id, kind, token))) {
+    return recoveryRefused(
+      label,
+      503,
+      "Another create or reconciliation owns this resource type; retry after it completes",
+      acc,
+    );
+  }
+  let releaseClaim = false;
+  try {
+    const current = await getMapping(db, directory.id, kind, nativeId);
+    if (
+      !current ||
+      current.workos_id !== existing.workos_id ||
+      current.strategy !== existing.strategy
+    ) {
+      releaseClaim = true;
+      return recoveryRefused(
+        label,
+        409,
+        "The native id mapping changed while WorkOS was being updated; retry using the current mapping",
+        acc,
+      );
+    }
+    const result = await createViaPost(db, directory, kind, nativeId, resource, acc, sink);
+    // A completed mapping links the two sides durably. Explicit client errors
+    // rejected every attempted write; 408, server errors, missing ids and thrown
+    // persistence errors leave the outcome uncertain and retain the claim.
+    releaseClaim =
+      (result.ok && !sink) ||
+      (!result.ok &&
+        result.status !== null &&
+        result.status >= 400 &&
+        result.status < 500 &&
+        result.status !== 408);
+    return result;
+  } finally {
+    if (releaseClaim) await releaseWorkosPrimaryCreate(db, directory.id, kind, token);
+  }
+}
+
+function recoveryRefused(
+  workosRequest: string,
+  status: number,
+  error: string,
+  acc: Elapsed,
+): MirrorResult {
+  return { ok: false, workosRequest, status, ms: acc.ms || null, body: null, error };
+}
+
 /**
  * The 404 leg of the dance: create the resource with POST + the migrated-id
  * header. WorkOS echoes the id back — equal to nativeId when it honored the
@@ -719,7 +812,10 @@ async function createViaPost(
     // the migrated id; a different id ⇒ it minted its own (contract not honored).
     const strategy = workosId === nativeId ? "migrated-id" : "fallback-post";
     await recordMapping(db, mappingRow(directory, kind, nativeId, workosId, strategy), sink);
-    return mirrorOk(label, create, acc);
+    return {
+      ...mirrorOk(label, create, acc),
+      ...(create.status === 201 ? { createdId: workosId } : {}),
+    };
   }
 
   if (create.status === 409) {

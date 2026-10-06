@@ -243,21 +243,72 @@ reference listener (`workers/native/listener.ts`) deactivates in place on
 deactivation surfacing under a soft-delete flag that is off, or a stale
 delivery arriving after newer events it was emitted before.
 
-**Keep resource ids stable.** Locate an existing user by identity attributes —
-`idp_id` first, then `userName` — and only when nothing matches create the row
-**adopting the event's `data.id`**. On an imported directory that value is the
-shared migrated id — the same id WorkOS, the bridge's mappings, reconcile, and
-rollback all address — which is exactly why the reference listener
-(`workers/native/listener.ts`) adopts it rather than minting its own or using
-`idp_id`. The lookup-first order is what keeps a rehire landing on the existing
-row instead of creating a duplicate.
+**Keep SCIM and Directory Sync ids separate.** A membership event's
+`data.group.id` / `data.user.id` addresses the Directory Sync API. It can look
+like `directory_group_…` / `directory_user_…` even on a correctly imported
+migration directory. The native SCIM id preserved by `X-WorkOS-Migrated-Id`
+is a separate value; do not adopt a Directory Sync id as a native primary key.
+See the [Directory Sync event schema](https://workos.com/docs/directory-sync/understanding-events).
 
-> **Diagnostic:** if the `data.id` on your user events looks like
-> `directory_user_…`, the directory was **not** provisioned as imported
-> (migration guide, Step A) — that is WorkOS's internal id, adopting it produces
-> rows the bridge's reconcile cannot attribute, and the migration contract this
-> document assumes is not in effect. Stop and get the directory provisioned
-> correctly before cutover.
+Use the event's `data.directory_id` to select the bridge directory: configure
+`workos_directory_id` on that directory, and call the status endpoint with the
+WorkOS directory id and that directory's proxy bearer token. Its
+`directory_id` response is the bridge's id. The directory import's `external_id`
+identifies the customer's tenant; it is not a resource id or a bridge id.
+
+The bridge exposes a read-only SCIM mapping lookup under the same credential:
+
+```http
+GET /status/directories/{directory_id}/mappings/{Users|Groups}/{workos_scim_id}
+Authorization: Bearer <this directory's proxy token>
+```
+
+Encode each path value with `encodeURIComponent`. The directory accepts either
+its bridge id or its configured WorkOS directory id. A successful response is:
+
+```json
+{
+  "directory_id": "bridge-directory-id",
+  "workos_directory_id": "directory_example",
+  "resource_type": "Groups",
+  "workos_scim_id": "9c2f4728-7c45-4fb2-92e7-4053a77e8ddb",
+  "native_id": "9c2f4728-7c45-4fb2-92e7-4053a77e8ddb",
+  "strategy": "migrated-id"
+}
+```
+
+The response uses `Cache-Control: no-store`; an absent mapping returns `404`.
+Only the authenticated directory's mappings are queried. The input is a
+**WorkOS SCIM id**, not a Directory Sync id. When an event's `idp_id` contains
+that SCIM id, a successful lookup confirms its native id; use the returned
+`native_id` to find the native group/user. Resolve both membership endpoints
+before applying an add or remove. This also handles `fallback-post`, where
+the returned native id differs from the WorkOS SCIM id.
+
+`idp_id` is an identity attribute and does **not** always equal the SCIM id.
+SCIM users normally derive it from `externalId`, or `userName` when absent;
+current groups use `externalId`, while older groups may retain a display name.
+A mapping miss does not establish identity. Locate an existing native row by
+its external identity or unique `userName`/`displayName`, preserving the row's
+native id, and confirm its bridge mapping. If those attributes are insufficient,
+reconcile or recover the identity explicitly before applying the event. The
+reference listener checks confirmed mappings first, keeps attribute lookup for
+legacy events, and leaves an unresolved Directory Sync id retryable instead of
+creating a row under it.
+
+A confirmed mapping is authoritative even when its native row is missing.
+Do not fall back to another row with a reused email, external identity, or group
+name. A delete/remove is then a no-op; an upsert can recreate the mapped native
+id or remain retryable if a native uniqueness constraint prevents that repair.
+
+If a membership payload lacks `idp_id` or identity attributes, fetch the complete
+[Directory Group](https://workos.com/docs/reference/directory-sync/directory-group)
+and [Directory User](https://workos.com/docs/reference/directory-sync/directory-user)
+with the event's Directory Sync ids, using a WorkOS API key on the server.
+Validate their `directory_id` against the event's linked directory. These
+objects supply identity attributes; fetching them does not convert their `id`
+into a native SCIM id. Keep the API key separate from the directory-scoped
+proxy token used by the bridge lookup.
 
 ## Events API instead of webhooks
 

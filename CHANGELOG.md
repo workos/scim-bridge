@@ -13,6 +13,27 @@ Container images for each version:
 
 ## [Unreleased]
 
+### Fixed
+
+- Recover a refused `workos-primary` create by removing only the WorkOS row
+  freshly created by that request, then releasing its claim after confirmed
+  cleanup. Ambiguous writes and unsuccessful cleanup retain their claims.
+- Reconcile unmapped WorkOS resources through verified native identity lookup
+  or native `POST`, adopting the native service's returned id. Native writes
+  and primary reads no longer treat an unconfirmed WorkOS id as a native id.
+  Mapped WorkOS resource recreation shares the create/reconcile claim and
+  preserves newer mappings when an older update completes late.
+- Resolve Directory Sync membership events through confirmed SCIM mappings,
+  preserving migrated native ids even when event resource ids differ. Provide
+  a directory-token-scoped mapping endpoint and document the consumer contract.
+
+### Upgrading
+
+- Inspect and recover claims and invalid mappings retained by earlier versions
+  using the [runbook](docs/runbook.md#recovering-retained-create-claims-and-invalid-legacy-mappings).
+  Claims do not expire, and a valid mapped identity is never rebound on a native
+  `404`.
+
 ## [0.4.2] - 2026-09-24
 
 ### Fixed
