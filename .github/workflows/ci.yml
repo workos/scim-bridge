@@ -47,6 +47,9 @@ jobs:
       # Every dependency must come from the public registry: this repo is
       # published, and an internal proxy URL installs for nobody else (#45).
       - run: npm run check:registry
+      # The image scan itself only runs in the release workflow, against a real
+      # build. Its regression tests run here on every PR, against a fake docker.
+      - run: npm run test:image-secrets
       - run: npm run typecheck
       # Proves the gate above can actually fail (for months it could not).
       - run: npm run typecheck:gate
