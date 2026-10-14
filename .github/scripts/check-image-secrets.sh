@@ -84,7 +84,10 @@ mkdir -p "$WORK/extract"
 while IFS= read -r path; do
   [ -n "$path" ] || continue
   while IFS= read -r blob; do
-    tar -xf "$blob" -C "$WORK/extract" "$path" 2> /dev/null || true
+    # `--` ends option parsing: $path comes from a layer's own file list, so a
+    # member named like `--checkpoint-action=...` would otherwise be read by tar
+    # as an option and run on the runner instead of being extracted.
+    tar -xf "$blob" -C "$WORK/extract" -- "$path" 2> /dev/null || true
   done < <(find "$WORK/x" -type f)
 done < <(grep -E "$credential_files" "$WORK/paths.txt" | sort -u)
 
