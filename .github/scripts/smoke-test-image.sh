@@ -20,6 +20,13 @@
 set -euo pipefail
 
 IMAGE="${1:?usage: smoke-test-image.sh <image-ref>}"
+docker run --rm --entrypoint node "$IMAGE" -e '
+  const assert = require("node:assert/strict");
+  const zlib = require("node:zlib");
+  assert.equal(process.versions.node, "26.12.1");
+  const value = Buffer.from("scim-bridge");
+  assert.deepEqual(zlib.brotliDecompressSync(zlib.brotliCompressSync(value)), value);
+'
 USER_NAME="smoke"
 PASSWORD="smoke-$$-pw"
 
