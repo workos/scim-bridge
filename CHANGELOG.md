@@ -13,6 +13,26 @@ Container images for each version:
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-11-11
+
+### Security
+
+- Update the container runtime to Node.js 26.13.1, which fixes High-severity
+  vulnerabilities in `http2`, `tls`, `http` and `llhttp` from the
+  [November 2026 Node.js security releases](https://nodejs.org/en/blog/vulnerability/november-2026-security-releases).
+
+### Upgrading
+
+- Replace running bridge and native-app containers with
+  `ghcr.io/workos/scim-bridge:0.4.5` or the immutable digest in this release.
+  Preserve the existing database storage and configuration. This release adds no
+  application or database schema changes since 0.4.4.
+  For SQLite on a Cloudflare container's local disk, follow the
+  [storage guidance](deploy/cloudflare/README.md#read-this-before-you-deploy-the-containers-disk-does-not-survive-a-restart)
+  before replacing the container.
+- If you run the application outside the supplied container, use a patched
+  Node.js release: 22.23.5, 24.22.3, 26.13.1, or a later supported patch release.
+
 ## [0.4.4] - 2026-10-22
 
 ### Security
@@ -284,7 +304,8 @@ hardens the control panel — a minor bump on several fronts.
 - First release: the SCIM migration proxy (passthrough → dual-write → backfill →
   cut over, reversible until commit), the control panel, and a Docker image.
 
-[unreleased]: https://github.com/workos/scim-bridge/compare/v0.4.4...HEAD
+[unreleased]: https://github.com/workos/scim-bridge/compare/v0.4.5...HEAD
+[0.4.5]: https://github.com/workos/scim-bridge/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/workos/scim-bridge/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/workos/scim-bridge/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/workos/scim-bridge/compare/v0.4.1...v0.4.2
