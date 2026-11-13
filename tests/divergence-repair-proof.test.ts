@@ -194,4 +194,60 @@ describe("divergence rows retire only on proof of repair", () => {
 
     expect(await keys(directory.id)).toEqual([["idp-1", "POST"]]);
   });
+  it("keeps a create's record when a different create with the same externalId succeeds", async () => {
+    const directory = await seedDirectory(env.DB, { mode: "passthrough" });
+    await recordNativeWriteFailure(env.DB, {
+      directory_id: directory.id,
+      resource_type: "Users",
+      resource_key: "idp-1",
+      method: "POST",
+      native_status: 503,
+      detail: "WorkOS created the resource; native did not",
+      write_fingerprint: "the original create",
+    });
+    fake.route("native", "POST", "/Users", scimJson(201, { id: "native-2" }));
+
+    const ctx = createCtx();
+    await proxyWorker.fetch(
+      proxyRequest(directory, "POST", "/scim/v2/Users", {
+        externalId: "idp-1",
+        userName: "someone-else@example.com",
+      }),
+      env,
+      ctx,
+    );
+    await ctx.drain();
+
+    expect(await keys(directory.id)).toEqual([["idp-1", "POST"]]);
+  });
+
+  it("keeps a DELETE row's own status and detail when a later write to the key fails", async () => {
+    const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+    const base = {
+      directory_id: directory.id,
+      resource_type: "Users" as const,
+      resource_key: "u1",
+    };
+    await recordNativeWriteFailure(env.DB, {
+      ...base,
+      method: "DELETE",
+      native_status: 403,
+      detail: "native refused the delete",
+      write_fingerprint: "the delete",
+    });
+    await recordNativeWriteFailure(env.DB, {
+      ...base,
+      method: "PATCH",
+      native_status: 404,
+      detail: "native has no such user",
+      write_fingerprint: "a patch",
+    });
+
+    const [row] = await listNativeWriteFailures(env.DB, directory.id);
+    expect([row?.method, row?.native_status, row?.detail]).toEqual([
+      "DELETE",
+      403,
+      "native refused the delete",
+    ]);
+  });
 });

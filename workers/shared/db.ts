@@ -682,8 +682,11 @@ export async function recordNativeWriteFailure(
           "native_status, detail, write_fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?) " +
           "ON CONFLICT (directory_id, resource_type, resource_key) DO UPDATE SET " +
           "method = CASE WHEN native_write_failures.method = 'DELETE' THEN 'DELETE' " +
-          "ELSE excluded.method END, native_status = excluded.native_status, " +
-          "detail = excluded.detail, " +
+          "ELSE excluded.method END, " +
+          "native_status = CASE WHEN native_write_failures.method = 'DELETE' " +
+          "THEN native_write_failures.native_status ELSE excluded.native_status END, " +
+          "detail = CASE WHEN native_write_failures.method = 'DELETE' " +
+          "THEN native_write_failures.detail ELSE excluded.detail END, " +
           "write_fingerprint = CASE WHEN native_write_failures.write_fingerprint = " +
           "excluded.write_fingerprint THEN excluded.write_fingerprint ELSE NULL END, " +
           "attempts = native_write_failures.attempts + 1, " +
@@ -717,7 +720,7 @@ export async function recordNativeWriteFailure(
  */
 export type DivergenceRepair =
   | { kind: "deleted" }
-  | { kind: "created"; fingerprint?: string }
+  | { kind: "created"; fingerprint: string }
   | { kind: "retried"; fingerprint: string };
 
 /** Drop the divergence record for a resource when `repair` proves the write it
@@ -737,9 +740,7 @@ export async function retireNativeWriteFailure(
     repair.kind === "deleted"
       ? [base, []]
       : repair.kind === "created"
-        ? repair.fingerprint === undefined
-          ? [`${base} AND method = 'POST'`, []]
-          : [`${base} AND method = 'POST' AND write_fingerprint = ?`, [repair.fingerprint]]
+        ? [`${base} AND method = 'POST' AND write_fingerprint = ?`, [repair.fingerprint]]
         : [`${base} AND method != 'DELETE' AND write_fingerprint = ?`, [repair.fingerprint]];
   await withDatastoreRetry(() =>
     db

@@ -237,13 +237,14 @@ async function clearDivergenceForWrite(
   } else if (method === "POST") {
     const sent = parseJson(requestBody);
     const returned = parseJson(native.bodyText);
+    const fingerprint = await writeFingerprint(method, kind, null, requestBody);
     for (const key of [
       scimPath.id === null ? `${method} ${scimPath.rest}` : null,
       sent && typeof sent.externalId === "string" ? sent.externalId : null,
       sent ? uniqueAttributeValue(kind, sent) : null,
       returned && typeof returned.id === "string" ? returned.id : null,
     ]) {
-      repairs.push([key, { kind: "created" }]);
+      repairs.push([key, { kind: "created", fingerprint }]);
     }
   } else {
     const fingerprint = await writeFingerprint(method, kind, scimPath.id, requestBody);
@@ -1192,8 +1193,12 @@ async function workosPrimaryCreateClaimed(
   });
   // Native applied a create, which repairs a create it was missing and nothing
   // else: a resolved native 409 names a pre-existing row whose own gaps stand.
-  await retireNativeWriteFailure(env.DB, directory.id, kind, failureKey, { kind: "created" });
-  await retireNativeWriteFailure(env.DB, directory.id, kind, native.id, { kind: "created" });
+  for (const key of [failureKey, native.id]) {
+    await retireNativeWriteFailure(env.DB, directory.id, kind, key, {
+      kind: "created",
+      fingerprint,
+    });
+  }
 
   // WorkOS's representation, in the id space the IdP addresses: its own id for
   // this resource, and native ids for any group members.
