@@ -250,4 +250,32 @@ describe("divergence rows retire only on proof of repair", () => {
       "native refused the delete",
     ]);
   });
+
+  it("reports the latest error when the DELETE itself fails again", async () => {
+    const directory = await seedDirectory(env.DB, { mode: "workos-primary" });
+    const base = {
+      directory_id: directory.id,
+      resource_type: "Users" as const,
+      resource_key: "u1",
+    };
+    for (const [status, detail] of [
+      [403, "native refused the delete"],
+      [500, "native crashed"],
+    ] as const) {
+      await recordNativeWriteFailure(env.DB, {
+        ...base,
+        method: "DELETE",
+        native_status: status,
+        detail,
+        write_fingerprint: "the delete",
+      });
+    }
+
+    const [row] = await listNativeWriteFailures(env.DB, directory.id);
+    expect([row?.method, row?.native_status, row?.detail]).toEqual([
+      "DELETE",
+      500,
+      "native crashed",
+    ]);
+  });
 });

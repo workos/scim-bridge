@@ -684,8 +684,10 @@ export async function recordNativeWriteFailure(
           "method = CASE WHEN native_write_failures.method = 'DELETE' THEN 'DELETE' " +
           "ELSE excluded.method END, " +
           "native_status = CASE WHEN native_write_failures.method = 'DELETE' " +
+          "AND excluded.method != 'DELETE' " +
           "THEN native_write_failures.native_status ELSE excluded.native_status END, " +
           "detail = CASE WHEN native_write_failures.method = 'DELETE' " +
+          "AND excluded.method != 'DELETE' " +
           "THEN native_write_failures.detail ELSE excluded.detail END, " +
           "write_fingerprint = CASE WHEN native_write_failures.write_fingerprint = " +
           "excluded.write_fingerprint THEN excluded.write_fingerprint ELSE NULL END, " +
