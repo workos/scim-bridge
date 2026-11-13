@@ -113,7 +113,7 @@ replicating the file to S3 continuously.
 
 ```bash
 DATABASE_DRIVER=postgres
-DATABASE_URL=postgres://bridge:secret@scim-bridge-db.abc.eu-west-1.rds.amazonaws.com:5432/bridge?sslmode=verify-full&sslrootcert=/etc/ssl/rds-global-bundle.pem
+DATABASE_URL='postgres://bridge:secret@scim-bridge-db.abc.eu-west-1.rds.amazonaws.com:5432/bridge?sslmode=verify-full&sslrootcert=/etc/ssl/rds-global-bundle.pem'
 ```
 
 A remote database must use TLS that verifies the server: the bridge refuses to

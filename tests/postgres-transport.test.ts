@@ -1,9 +1,20 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { requireSecurePostgresTransport } from "../server/config";
 
 const remote = "postgres://bridge:secret@db.example.com:5432/bridge";
 
 describe("requireSecurePostgresTransport", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("judges the host and TLS mode PGHOST and PGSSLMODE fill in", () => {
+    vi.stubEnv("PGHOST", "db.example.com");
+    expect(() => requireSecurePostgresTransport("postgres:///bridge", false)).toThrow(
+      /db\.example\.com without verified TLS/,
+    );
+    vi.stubEnv("PGSSLMODE", "verify-full");
+    expect(() => requireSecurePostgresTransport("postgres:///bridge", false)).not.toThrow();
+  });
+
   it("refuses a remote database reached without verified TLS", () => {
     for (const url of [remote, `${remote}?sslmode=disable`, `${remote}?sslmode=no-verify`]) {
       expect(() => requireSecurePostgresTransport(url, false)).toThrow(/without verified TLS/);

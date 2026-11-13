@@ -23,7 +23,7 @@ import {
   partitionedNamespaceNotices,
 } from "../workers/shared/native-namespace";
 import { newScimToken } from "../workers/shared/ids";
-import { parse as parseConnectionString } from "pg-connection-string";
+import ConnectionParameters from "pg/lib/connection-parameters";
 import { isLoopbackHost } from "../workers/shared/upstream-url";
 import type { PocEnv } from "../workers/shared/types";
 
@@ -282,15 +282,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
  * reads, so a Postgres off this machine must be reached over TLS that verifies
  * the server. node-postgres only uses TLS when the URL asks for it, so a URL
  * that does not is refused at boot rather than connected in plaintext. The URL
- * is read with the parser node-postgres itself uses, so `sslmode`, `ssl` and
- * `uselibpqcompat` mean exactly what they will mean to the connection.
+ * is resolved by node-postgres itself, so `sslmode`, `ssl`, `uselibpqcompat` and
+ * the PGHOST/PGSSLMODE fallbacks mean exactly what they will mean to the connection.
  * `DATABASE_ALLOW_PLAINTEXT=true` is the escape hatch for a database on a
  * network you trust, and says so loudly.
  */
 export function requireSecurePostgresTransport(databaseUrl: string, allowPlaintext: boolean): void {
-  const config = parseConnectionString(databaseUrl);
+  // The settings the pool will actually connect with, PGHOST/PGSSLMODE included.
+  const config = new ConnectionParameters(databaseUrl);
   const host = config.host ?? "";
-  if (host === "" || host.startsWith("/") || isLoopbackHost(host)) return;
+  if (host.startsWith("/") || isLoopbackHost(host)) return;
   const verified =
     config.ssl === true ||
     (typeof config.ssl === "object" && config.ssl.rejectUnauthorized !== false);
