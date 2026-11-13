@@ -49,7 +49,7 @@ describe("the panel refuses to be framed", () => {
 describe("failed panel sign-ins are throttled", () => {
   it("answers 429 to a source after its failures run out, even with the right password", async () => {
     const t = clock();
-    const get = panel(new PanelAuthThrottle({ perSource: 3, total: 100, windowMs: 60_000, ...t }));
+    const get = panel(new PanelAuthThrottle({ perSource: 3, windowMs: 60_000, ...t }));
     for (let i = 0; i < 3; i++) expect((await get(basic("ada", `guess${i}`))).status).toBe(401);
 
     const locked = await get(basic("ada", "hunter2"));
@@ -63,11 +63,11 @@ describe("failed panel sign-ins are throttled", () => {
     expect((await get(basic("ada", "hunter2"))).status).toBe(200);
   });
 
-  it("caps guesses across all sources, so rotating addresses does not help", async () => {
-    const get = panel(new PanelAuthThrottle({ perSource: 10, total: 5, windowMs: 60_000 }));
-    for (let i = 0; i < 5; i++)
-      expect((await get(basic("ada", "x"), `10.0.0.${i}`)).status).toBe(401);
-    expect((await get(basic("ada", "hunter2"), "10.0.0.99")).status).toBe(429);
+  it("does not let guesses from other sources lock the operator out", async () => {
+    const get = panel(new PanelAuthThrottle({ perSource: 2 }));
+    for (let i = 0; i < 200; i++)
+      expect((await get(basic("ada", "x"), `10.0.${i >> 8}.${i & 255}`)).status).toBe(401);
+    expect((await get(basic("ada", "hunter2"), "203.0.113.9")).status).toBe(200);
   });
 
   it("does not count the browser's credential-less first request as a guess", async () => {
@@ -77,7 +77,7 @@ describe("failed panel sign-ins are throttled", () => {
   });
 
   it("holds a concurrent burst of guesses to the limit", async () => {
-    const get = panel(new PanelAuthThrottle({ perSource: 10, total: 100 }));
+    const get = panel(new PanelAuthThrottle({ perSource: 10 }));
     const burst = await Promise.all(
       Array.from({ length: 25 }, (_, i) => get(basic("ada", `wrong${i}`))),
     );
@@ -93,7 +93,7 @@ describe("failed panel sign-ins are throttled", () => {
   });
 
   it("admits overlapping correct sign-ins while guesses are still under the limit", async () => {
-    const get = panel(new PanelAuthThrottle({ perSource: 10, total: 100 }));
+    const get = panel(new PanelAuthThrottle({ perSource: 10 }));
     for (let i = 0; i < 9; i++) expect((await get(basic("ada", `wrong${i}`))).status).toBe(401);
     const overlapping = await Promise.all(
       Array.from({ length: 11 }, () => get(basic("ada", "hunter2"))),

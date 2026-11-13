@@ -20,26 +20,20 @@ export function antiFramingHeaders(): MiddlewareHandler {
 export interface PanelAuthThrottleOptions {
   /** Failed guesses one source may make per window. */
   perSource: number;
-  /** Failed guesses all sources together may make per window. */
-  total: number;
   windowMs: number;
   now?: () => number;
 }
 
 const DEFAULT_THROTTLE: PanelAuthThrottleOptions = {
   perSource: 10,
-  total: 100,
   windowMs: 15 * 60 * 1000,
 };
 
-const ALL_SOURCES = "*";
-
 /**
- * Counts failed Basic-auth guesses in fixed windows, per source and in total.
- * The total cap is what bounds an attacker rotating addresses: once it trips,
- * the panel answers 429 to everyone until the window ends, which fails closed.
- * Expired windows are dropped as new failures arrive, so the map never holds
- * more than `total` live sources.
+ * Counts failed Basic-auth guesses per source in fixed windows. There is no
+ * cap across sources: one would let anyone who can reach the panel lock the
+ * operator out, so an attacker rotating addresses is bounded by the password
+ * itself. Expired windows are dropped as new failures arrive.
  */
 export class PanelAuthThrottle {
   private readonly failures = new Map<string, { count: number; resetAt: number }>();
@@ -53,15 +47,9 @@ export class PanelAuthThrottle {
   /** Seconds until `source` may guess again, or null when it may guess now. */
   retryAfter(source: string): number | null {
     const now = this.options.now();
-    const blocked = [
-      { key: ALL_SOURCES, limit: this.options.total },
-      { key: source, limit: this.options.perSource },
-    ]
-      .map(({ key, limit }) => ({ entry: this.failures.get(key), limit }))
-      .filter(({ entry, limit }) => entry && entry.resetAt > now && entry.count >= limit)
-      .map(({ entry }) => entry?.resetAt ?? now);
-    if (blocked.length === 0) return null;
-    return Math.max(1, Math.ceil((Math.max(...blocked) - now) / 1000));
+    const entry = this.failures.get(source);
+    if (!entry || entry.resetAt <= now || entry.count < this.options.perSource) return null;
+    return Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
   }
 
   /**
@@ -83,11 +71,9 @@ export class PanelAuthThrottle {
     for (const [key, entry] of this.failures) {
       if (entry.resetAt <= now) this.failures.delete(key);
     }
-    for (const key of [ALL_SOURCES, source]) {
-      const entry = this.failures.get(key);
-      if (entry) entry.count += 1;
-      else this.failures.set(key, { count: 1, resetAt: now + this.options.windowMs });
-    }
+    const entry = this.failures.get(source);
+    if (entry) entry.count += 1;
+    else this.failures.set(source, { count: 1, resetAt: now + this.options.windowMs });
   }
 }
 
