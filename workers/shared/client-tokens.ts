@@ -29,8 +29,9 @@
  * Anything that mints or rotates a token is responsible for telling these stores
  * about it; there is no way to recompute it later.
  */
-import { getConfig, setConfig } from "./db";
+import { getConfig, getDirectoryById, setConfig } from "./db";
 import type { Datastore } from "./datastore";
+import type { Directory } from "./types";
 
 /** Config key naming the one directory the bundled simulators are allowed to drive. */
 export const DEMO_DIRECTORY_ID_KEY = "idp.demo_directory_id";
@@ -38,6 +39,39 @@ export const DEMO_DIRECTORY_ID_KEY = "idp.demo_directory_id";
 /** The bundled demo directory's id, or null when this deployment has none. */
 export async function demoDirectoryId(db: Datastore): Promise<string | null> {
   return getConfig(db, DEMO_DIRECTORY_ID_KEY);
+}
+
+/** Both upstream legs of the seeded demo directory: this process's own fakes. */
+export function bundledDemoEndpoints(loopbackBase: string): {
+  native_url: string;
+  workos_url: string;
+} {
+  return {
+    native_url: `${loopbackBase}/__demo/native/scim/v2`,
+    workos_url: `${loopbackBase}/__demo/native/mock-workos/scim/v2`,
+  };
+}
+
+/**
+ * The demo directory the unauthenticated simulators may drive, or null.
+ *
+ * The id alone is not enough: an operator can repoint the demo row at a real
+ * SCIM app, and the simulator's stored proxy token would then write to it. So
+ * the row is re-checked on every use and only qualifies while both upstream
+ * legs are still this process's bundled fakes.
+ */
+export async function drivableDemoDirectory(db: Datastore): Promise<Directory | null> {
+  const [id, loopbackBase] = await Promise.all([
+    demoDirectoryId(db),
+    getConfig(db, "proxy.loopback_url"),
+  ]);
+  if (!id || !loopbackBase) return null;
+  const directory = await getDirectoryById(db, id);
+  if (!directory) return null;
+  const bundled = bundledDemoEndpoints(loopbackBase);
+  return directory.native_url === bundled.native_url && directory.workos_url === bundled.workos_url
+    ? directory
+    : null;
 }
 
 /** Tokens this process was started with (native-app mode's DIRECTORIES_JSON). */

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import idpWorker from "../workers/idp/index";
+import { bundledDemoEndpoints } from "../workers/shared/client-tokens";
 import { setConfig } from "../workers/shared/db";
 import type { PocEnv } from "../workers/shared/types";
 import {
@@ -38,6 +39,14 @@ function call(env: PocEnv, path: string, init?: RequestInit): Promise<Response> 
   );
 }
 
+const LOOPBACK = "http://127.0.0.1:8787";
+
+/** The demo directory as boot seeds it: both legs on this process's own fakes. */
+async function seedDemo(env: PocEnv, opts: Parameters<typeof seedDirectory>[1] = {}) {
+  await setConfig(env.DB, "proxy.loopback_url", LOOPBACK);
+  return seedDirectory(env.DB, { ...bundledDemoEndpoints(LOOPBACK), ...opts });
+}
+
 let fake: FakeUpstreams | null = null;
 afterEach(() => {
   fake?.restore();
@@ -48,7 +57,7 @@ describe("IdP simulator routes", () => {
   describe("finding the directory a request is about", () => {
     it("accepts a JSON body", async () => {
       const env = await createEnv();
-      const directory = await seedDirectory(env.DB);
+      const directory = await seedDemo(env);
 
       const res = await call(env, "/state", {
         method: "POST",
@@ -62,7 +71,7 @@ describe("IdP simulator routes", () => {
     it("accepts a form-encoded body — the reported bug", async () => {
       // What `curl -d directoryId=…` sends, and what every form in the panel sends.
       const env = await createEnv();
-      const directory = await seedDirectory(env.DB);
+      const directory = await seedDemo(env);
 
       const res = await call(env, "/state", {
         method: "POST",
@@ -75,7 +84,7 @@ describe("IdP simulator routes", () => {
 
     it("accepts a multipart body", async () => {
       const env = await createEnv();
-      const directory = await seedDirectory(env.DB);
+      const directory = await seedDemo(env);
       const form = new FormData();
       form.set("directoryId", directory.id);
 
@@ -87,7 +96,7 @@ describe("IdP simulator routes", () => {
 
     it("accepts either encoding when the request carries no content type at all", async () => {
       const env = await createEnv();
-      const directory = await seedDirectory(env.DB);
+      const directory = await seedDemo(env);
 
       for (const body of [
         JSON.stringify({ directoryId: directory.id }),
@@ -101,7 +110,7 @@ describe("IdP simulator routes", () => {
 
     it("accepts a query parameter", async () => {
       const env = await createEnv();
-      const directory = await seedDirectory(env.DB);
+      const directory = await seedDemo(env);
 
       const res = await call(env, `/state?directoryId=${directory.id}`, { method: "POST" });
 
@@ -110,7 +119,7 @@ describe("IdP simulator routes", () => {
 
     it("trims an id pasted with whitespace", async () => {
       const env = await createEnv();
-      const directory = await seedDirectory(env.DB);
+      const directory = await seedDemo(env);
 
       const res = await call(env, "/state", {
         method: "POST",
@@ -125,7 +134,7 @@ describe("IdP simulator routes", () => {
   describe("saying which mistake was made", () => {
     it("names the three ways to send an id when none arrived", async () => {
       const env = await createEnv();
-      await seedDirectory(env.DB);
+      await seedDemo(env);
 
       const res = await call(env, "/state", { method: "POST" });
       const body = (await res.json()) as { error: string };
@@ -141,7 +150,7 @@ describe("IdP simulator routes", () => {
 
     it("names the id and lists the ones that exist when the id is unknown", async () => {
       const env = await createEnv();
-      const directory = await seedDirectory(env.DB, { name: "Demo directory" });
+      const directory = await seedDemo(env, { name: "Demo directory" });
 
       const res = await call(env, "/state?directoryId=dir_0000000000000000", { method: "POST" });
       const body = (await res.json()) as {
@@ -158,7 +167,7 @@ describe("IdP simulator routes", () => {
       // The rest of a directory row is credentials (hashes, encrypted upstream
       // tokens). A diagnostic that helpfully dumps the row would be a leak.
       const env = await createEnv();
-      await seedDirectory(env.DB, { proxy_token: "tok_secret_value" });
+      await seedDemo(env, { proxy_token: "tok_secret_value" });
 
       const res = await call(env, "/state?directoryId=dir_0000000000000000", { method: "POST" });
       const raw = await res.text();
@@ -178,7 +187,7 @@ describe("IdP simulator routes", () => {
   describe("the directories it refuses to drive", () => {
     it("refuses an operator's imported directory and does not name it", async () => {
       const env = await createEnv();
-      const demo = await seedDirectory(env.DB, { name: "Demo directory" });
+      const demo = await seedDemo(env, { name: "Demo directory" });
       const imported = await seedDirectory(env.DB, { name: "Acme Corp — Okta" });
 
       const res = await call(env, "/state", {
@@ -198,7 +207,7 @@ describe("IdP simulator routes", () => {
 
     it("refuses to provision into an imported directory", async () => {
       const env = await createEnv();
-      await seedDirectory(env.DB, { name: "Demo directory" });
+      await seedDemo(env, { name: "Demo directory" });
       const imported = await seedDirectory(env.DB, { name: "Acme Corp — Okta" });
       await setConfig(env.DB, "proxy.public_url", "https://native.test");
       fake = installFakeUpstreams();
@@ -222,10 +231,45 @@ describe("IdP simulator routes", () => {
     });
   });
 
+  /**
+   * An operator can repoint the demo row at a real SCIM app from the panel. The
+   * simulator still holds that row's proxy token, so it must stop driving the row
+   * the moment either upstream leg is no longer one of the bundled fakes.
+   */
+  describe("a demo directory repointed at a real upstream", () => {
+    for (const leg of ["native_url", "workos_url"] as const) {
+      it(`refuses to provision once ${leg} is repointed, and stops naming it`, async () => {
+        const env = await createEnv();
+        const demo = await seedDemo(env, { name: "Demo directory" });
+        await env.DB.prepare(`UPDATE scim_directories SET ${leg} = ? WHERE id = ?`)
+          .bind("https://scim.victim.example/scim/v2", demo.id)
+          .run();
+        await setConfig(env.DB, "proxy.public_url", "https://native.test");
+        fake = installFakeUpstreams();
+        fake.route("native", "POST", "/Users", () => scimJson(201, { id: "usr_1" }));
+
+        const res = await call(env, "/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            directoryId: demo.id,
+            action: "create-user",
+            userName: "backdoor@victim.example",
+            externalId: "attacker-1",
+          }),
+        });
+
+        expect(res.status).toBe(400);
+        expect(fake.calls).toHaveLength(0);
+        expect(((await res.json()) as { known: unknown[] }).known).toEqual([]);
+      });
+    }
+  });
+
   describe("the route the bug was reported against", () => {
     it("seeds the directory from a form-encoded POST /seed", async () => {
       const env = await createEnv();
-      const directory = await seedDirectory(env.DB);
+      const directory = await seedDemo(env);
       // The simulator posts SCIM to the proxy's public URL; point it at the fake.
       await setConfig(env.DB, "proxy.public_url", "https://native.test");
       fake = installFakeUpstreams();

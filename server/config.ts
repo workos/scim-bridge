@@ -10,6 +10,7 @@ import {
   type EnvDirectory,
 } from "../workers/shared/db";
 import {
+  bundledDemoEndpoints,
   DEMO_DIRECTORY_ID_KEY,
   clientTokenKey,
   rememberClientToken,
@@ -544,13 +545,8 @@ export async function reportNativeNamespaceDuplicates(env: PocEnv): Promise<numb
   return warnings.length;
 }
 
-/** Both upstream legs of the seeded demo directory: this process's own fakes. */
 function bundledEndpoints(config: AppConfig): { native_url: string; workos_url: string } {
-  const base = loopbackBase(config);
-  return {
-    native_url: `${base}/__demo/native/scim/v2`,
-    workos_url: `${base}/__demo/native/mock-workos/scim/v2`,
-  };
+  return bundledDemoEndpoints(loopbackBase(config));
 }
 
 /**
