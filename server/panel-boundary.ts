@@ -44,6 +44,7 @@ const ALL_SOURCES = "*";
 export class PanelAuthThrottle {
   private readonly failures = new Map<string, { count: number; resetAt: number }>();
   private readonly options: Required<PanelAuthThrottleOptions>;
+  private tail: Promise<void> = Promise.resolve();
 
   constructor(options: Partial<PanelAuthThrottleOptions> = {}) {
     this.options = { now: Date.now, ...DEFAULT_THROTTLE, ...options };
@@ -63,12 +64,18 @@ export class PanelAuthThrottle {
     return Math.max(1, Math.ceil((Math.max(...blocked) - now) / 1000));
   }
 
-  /** Undoes one `recordFailure`: the guess it was reserved for turned out right. */
-  forgive(source: string): void {
-    for (const key of [ALL_SOURCES, source]) {
-      const entry = this.failures.get(key);
-      if (entry && entry.count > 0) entry.count -= 1;
-    }
+  /**
+   * Runs `check` after every earlier one has settled. Checking a password is
+   * asynchronous, so without this a burst of guesses could all pass
+   * `retryAfter` before any of their failures was counted.
+   */
+  exclusive<T>(check: () => Promise<T>): Promise<T> {
+    const result = this.tail.then(check);
+    this.tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 
   recordFailure(source: string): void {
@@ -108,22 +115,21 @@ export function panelAuthGuard(
     if (panelAuthExempt(new URL(c.req.url).pathname, config)) return next();
 
     const source = sourceOf(c);
-    const retryAfter = throttle.retryAfter(source);
-    if (retryAfter !== null) {
+    const authorization = c.req.header("Authorization") ?? null;
+    const outcome = await throttle.exclusive(async () => {
+      const retryAfter = throttle.retryAfter(source);
+      if (retryAfter !== null) return retryAfter;
+      const decision = await decidePanelAuth(config, authorization);
+      if (decision === "denied" && authorization !== null) throttle.recordFailure(source);
+      return decision;
+    });
+
+    if (typeof outcome === "number") {
       return c.body("Too many failed sign-in attempts. Try again later.", 429, {
-        "Retry-After": String(retryAfter),
+        "Retry-After": String(outcome),
       });
     }
-
-    // Count the guess before the asynchronous check, so a burst of concurrent
-    // requests cannot all pass `retryAfter` before any failure is recorded.
-    const authorization = c.req.header("Authorization") ?? null;
-    if (authorization !== null) throttle.recordFailure(source);
-    const decision = await decidePanelAuth(config, authorization);
-    if (decision !== "denied") {
-      if (authorization !== null) throttle.forgive(source);
-      return next();
-    }
+    if (outcome !== "denied") return next();
     return c.body("Authentication required.", 401, {
       "WWW-Authenticate": 'Basic realm="scim-bridge", charset="UTF-8"',
     });

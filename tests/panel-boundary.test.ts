@@ -91,4 +91,13 @@ describe("failed panel sign-ins are throttled", () => {
     for (let i = 0; i < 5; i++) expect((await get(basic("ada", "hunter2"))).status).toBe(200);
     expect((await get(basic("ada", "wrong"))).status).toBe(401);
   });
+
+  it("admits overlapping correct sign-ins while guesses are still under the limit", async () => {
+    const get = panel(new PanelAuthThrottle({ perSource: 10, total: 100 }));
+    for (let i = 0; i < 9; i++) expect((await get(basic("ada", `wrong${i}`))).status).toBe(401);
+    const overlapping = await Promise.all(
+      Array.from({ length: 11 }, () => get(basic("ada", "hunter2"))),
+    );
+    expect(overlapping.map((r) => r.status)).toEqual(Array(11).fill(200));
+  });
 });
