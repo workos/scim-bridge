@@ -64,10 +64,16 @@ async function detectNgrokTunnel(): Promise<string | null> {
  *  no controller is registered. */
 function transportOptions(): TransportActionOptions {
   const controller = eventsPollerController();
+  const envKeyConfigured =
+    controller?.status().envKeyConfigured ?? Boolean(process.env.WORKOS_API_KEY?.trim());
   return {
     controller,
-    envKeyConfigured:
-      controller?.status().envKeyConfigured ?? Boolean(process.env.WORKOS_API_KEY?.trim()),
+    envKeyConfigured,
+    pinnedEventsUrl:
+      controller?.status().pinnedEventsUrl ??
+      (envKeyConfigured
+        ? trimTrailingSlash(process.env.WORKOS_EVENTS_URL?.trim() || "https://api.workos.com")
+        : null),
   };
 }
 
@@ -109,7 +115,10 @@ export async function loader({ context }: Route.LoaderArgs) {
       (targetChoice === "workos" || targetChoice === "mock"
         ? targetChoice
         : (poller?.defaultTarget ?? "mock")),
-    eventsUrl: eventsUrl ?? "https://api.workos.com",
+    // With WORKOS_API_KEY set the URL is not the panel's to choose — the key
+    // is only ever sent to WORKOS_EVENTS_URL — so show that one, read-only.
+    eventsUrl: poller?.pinnedEventsUrl ?? eventsUrl ?? "https://api.workos.com",
+    eventsUrlPinned: Boolean(poller?.pinnedEventsUrl),
     // Presence only — the stored key itself is never sent to the page.
     storedKeyConfigured: Boolean(storedKey),
     envKeyConfigured: opts.envKeyConfigured,
@@ -177,6 +186,7 @@ export default function PanelListener() {
     transport,
     pollTarget,
     eventsUrl,
+    eventsUrlPinned,
     storedKeyConfigured,
     envKeyConfigured,
     cursor,
@@ -346,12 +356,18 @@ export default function PanelListener() {
                           id="events-url"
                           name="url"
                           placeholder="https://api.workos.com"
+                          readOnly={eventsUrlPinned}
                         />
                       </Box>
                       <Button type="submit" variant="soft">
                         Save target
                       </Button>
                     </Flex>
+                    {eventsUrlPinned ? (
+                      <Text color="gray" size="2">
+                        Set by WORKOS_EVENTS_URL: WORKOS_API_KEY is never sent anywhere else.
+                      </Text>
+                    ) : null}
                   </Flex>
                 </Form>
               ) : null}

@@ -68,6 +68,9 @@ export interface EventsPollerStatus {
   baseUrl: string | null;
   keySource: EventsKeySource | null;
   envKeyConfigured: boolean;
+  /** The only Events API base WORKOS_API_KEY is ever sent to (see
+   *  `envKeyEventsUrl`); null when no env key is configured. */
+  pinnedEventsUrl: string | null;
   intervalMs: number;
   /** ISO time of the last poll that completed, across starts and stops. */
   lastPollAt: string | null;
@@ -121,6 +124,30 @@ async function storedApiKey(db: Datastore): Promise<string | null> {
   if (!raw) return null;
   const plain = await decryptSecret(db, raw);
   return plain && !isEncryptedSecret(plain) ? plain : null;
+}
+
+function envKeyPinned(pinned: string): string {
+  return (
+    `WORKOS_API_KEY is only ever sent to ${pinned} (WORKOS_EVENTS_URL). ` +
+    "Change WORKOS_EVENTS_URL to poll a different Events API."
+  );
+}
+
+function trimTrailingSlashes(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
+/**
+ * The one Events API base WORKOS_API_KEY is ever presented to: the
+ * deployment's own WORKOS_EVENTS_URL, or real WorkOS when that only points at
+ * the bundled mock. The env key is an environment-wide credential the panel
+ * never shows; pairing it with a panel-chosen URL would let anyone holding
+ * panel credentials have it delivered to their own server (VULN-3603).
+ */
+export function envKeyEventsUrl(
+  boot: Pick<EventsPollerBoot, "envEventsUrl" | "mockEventsUrl">,
+): string {
+  return boot.envEventsUrl !== boot.mockEventsUrl ? boot.envEventsUrl : DEFAULT_EVENTS_URL;
 }
 
 /** What an absent `native.events_target` means for this boot: the mock when
@@ -183,11 +210,34 @@ async function resolveDesired(db: Datastore, boot: EventsPollerBoot): Promise<De
     };
   }
 
-  const baseUrl =
-    (await getConfig(db, EVENTS_URL_KEY)) ??
-    (boot.envEventsUrl !== boot.mockEventsUrl ? boot.envEventsUrl : DEFAULT_EVENTS_URL);
-  const stored = boot.envApiKey ? null : await storedApiKey(db);
-  const apiKey = boot.envApiKey ?? stored;
+  const persistedUrl = await getConfig(db, EVENTS_URL_KEY);
+  if (boot.envApiKey) {
+    // Backs up the action's refusal: a URL already persisted (an older
+    // bridge, a hand edit) must park the poller, never receive the env key.
+    const pinned = envKeyEventsUrl(boot);
+    if (persistedUrl !== null && trimTrailingSlashes(persistedUrl) !== pinned) {
+      return {
+        ...off("poll"),
+        target,
+        baseUrl: persistedUrl,
+        blocked: envKeyPinned(pinned),
+      };
+    }
+    return {
+      transport,
+      target,
+      run: true,
+      baseUrl: pinned,
+      apiKey: boot.envApiKey,
+      keySource: "env",
+      blocked: null,
+    };
+  }
+
+  // A panel-stored key may go to a panel-chosen URL: whoever stored the key
+  // already holds it, so the URL grants them nothing new.
+  const baseUrl = persistedUrl ?? envKeyEventsUrl(boot);
+  const apiKey = await storedApiKey(db);
   if (!apiKey) {
     // The panel actions refuse to persist this state; reaching it anyway
     // (hand-edited config, a cleared key) must park the poller with a visible
@@ -200,7 +250,7 @@ async function resolveDesired(db: Datastore, boot: EventsPollerBoot): Promise<De
     run: true,
     baseUrl,
     apiKey,
-    keySource: boot.envApiKey ? "env" : "stored",
+    keySource: "stored",
     blocked: null,
   };
 }
@@ -220,6 +270,7 @@ export function createEventsPollerController(
     baseUrl: null,
     keySource: null,
     envKeyConfigured: Boolean(boot.envApiKey),
+    pinnedEventsUrl: boot.envApiKey ? envKeyEventsUrl(boot) : null,
     intervalMs,
     lastPollAt: null,
     lastError: null,
@@ -309,6 +360,9 @@ export function eventsPollerController(): EventsPollerController | null {
 export interface TransportActionOptions {
   controller: EventsPollerController | null;
   envKeyConfigured: boolean;
+  /** The only URL WORKOS_API_KEY may be sent to, for when no controller is
+   *  registered to report it; defaults to the controller's `pinnedEventsUrl`. */
+  pinnedEventsUrl?: string | null;
 }
 
 export interface TransportActionResult {
@@ -364,7 +418,8 @@ export async function setEventsPollTarget(
     return {};
   }
 
-  const url = (input.url ?? "").trim() || DEFAULT_EVENTS_URL;
+  const pinned = opts.pinnedEventsUrl ?? opts.controller?.status().pinnedEventsUrl ?? null;
+  const url = trimTrailingSlashes((input.url ?? "").trim()) || pinned || DEFAULT_EVENTS_URL;
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -382,8 +437,9 @@ export async function setEventsPollTarget(
         "in cleartext. (Loopback addresses are exempt.)",
     };
   }
+  if (pinned && url !== pinned) return { error: envKeyPinned(pinned) };
   if (!(await anyKeyAvailable(db, opts))) return { error: NEEDS_KEY };
-  await setConfig(db, EVENTS_URL_KEY, url.replace(/\/+$/, ""));
+  await setConfig(db, EVENTS_URL_KEY, url);
   await setConfig(db, EVENTS_TARGET_KEY, "workos");
   await opts.controller?.reconcile();
   return {};
