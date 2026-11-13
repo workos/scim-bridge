@@ -24,7 +24,7 @@ import {
 } from "../workers/shared/native-namespace";
 import { newScimToken } from "../workers/shared/ids";
 import ConnectionParameters from "pg/lib/connection-parameters";
-import { isLoopbackHost } from "../workers/shared/upstream-url";
+import { isLoopbackHost, privateHttpAllowed } from "../workers/shared/upstream-url";
 import type { PocEnv } from "../workers/shared/types";
 
 /**
@@ -176,6 +176,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
   if (driver === "postgres" && databaseUrl) {
     requireSecurePostgresTransport(databaseUrl, env.DATABASE_ALLOW_PLAINTEXT?.trim() === "true");
+  }
+  if (privateHttpAllowed(env)) {
+    console.warn(
+      "WARNING: UPSTREAM_ALLOW_PRIVATE_HTTP=true: SCIM bearer tokens may be sent over plain " +
+        "http to private upstream hosts. Anyone on that network path can read them.",
+    );
   }
   const webhookSecret = env.WEBHOOK_SECRET?.trim() || null;
   // Refuse to boot rather than serve /webhooks/dsync unauthenticated: the

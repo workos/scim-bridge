@@ -39,17 +39,53 @@ export function validateUpstreamUrl(raw: string): string | null {
   if (sendsTokenInPlaintext(url)) {
     return (
       `The endpoint URL must use https: plain http would send this directory's bearer ` +
-      `token unencrypted to ${url.hostname}. Only loopback addresses may use http.`
+      `token unencrypted to ${url.hostname}. Only loopback addresses may use http, unless ` +
+      `UPSTREAM_ALLOW_PRIVATE_HTTP=true accepts it for a private host.`
     );
   }
 
   return null;
 }
 
-/** Whether a request to `url` would carry a bearer token over a network in the
- *  clear: plain http to anything but this machine. */
-export function sendsTokenInPlaintext(url: URL): boolean {
-  return url.protocol === "http:" && !isLoopbackHost(url.hostname);
+/**
+ * Whether a request to `url` would carry a bearer token over a network in the
+ * clear: plain http to anything but this machine. With
+ * `UPSTREAM_ALLOW_PRIVATE_HTTP=true` the operator accepts plain http on a
+ * network they trust, for every host except a public IP address. A hostname
+ * counts as private because internal apps are often named under a public
+ * domain, and resolving it here would not prove where the request goes.
+ * Read from the environment, not set at boot, so the panel's separately
+ * bundled routes and the proxy agree.
+ */
+export function sendsTokenInPlaintext(
+  url: URL,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  if (url.protocol !== "http:" || isLoopbackHost(url.hostname)) return false;
+  return !(privateHttpAllowed(env) && !isPublicIpLiteral(url.hostname));
+}
+
+/** `UPSTREAM_ALLOW_PRIVATE_HTTP=true`: plain http to private upstreams is accepted. */
+export function privateHttpAllowed(env: Record<string, string | undefined> = process.env): boolean {
+  return env.UPSTREAM_ALLOW_PRIVATE_HTTP?.trim() === "true";
+}
+
+/** An IP literal outside the loopback, private (RFC 1918, CGNAT) and
+ *  unique-local IPv6 ranges. Hostnames are not IP literals. */
+function isPublicIpLiteral(hostname: string): boolean {
+  const host = normalizeHost(hostname);
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    const isPrivate =
+      a === 10 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127);
+    return !isPrivate;
+  }
+  if (host.includes(":")) return !/^f[cd][0-9a-f]{0,2}:/.test(host);
+  return false;
 }
 
 /** Loopback only: a request to it never leaves the machine. */
