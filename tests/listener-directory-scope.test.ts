@@ -207,6 +207,24 @@ describe("listener directory ownership is claimed and enforced in the write", ()
     expect(await owner(env)).not.toBeNull();
   });
 
+  it("fails a delete that matches only an unclaimed row once a second directory exists", async () => {
+    const env = await seedEnv(["directory_b"]);
+    await deliver(env, envelope("dsync.user.created", victim("directory_b", "active"), T1));
+    await unclaim(env);
+    await seedDirectory(env.DB, {
+      mode: "workos-only",
+      name: "directory_a",
+      workos_directory_id: "directory_a",
+    });
+
+    await deliver(env, envelope("dsync.user.deleted", victim("directory_b", "inactive"), T2));
+    expect(await lastDetail(env)).toContain("handler error");
+    const row = await env.DB.prepare("SELECT active FROM native_users WHERE external_id = ?")
+      .bind("shared-K")
+      .first<{ active: number }>();
+    expect(row?.active).toBe(1);
+  });
+
   it("refuses an owned write to a row another directory owns", async () => {
     const env = await createEnv();
     const store = new ScimStore(env.DB, NATIVE_TABLES);
