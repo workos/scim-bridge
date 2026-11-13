@@ -388,37 +388,21 @@ describe("events transport switcher", () => {
       expect(await getConfig(env.DB, EVENTS_TARGET_KEY)).toBeNull();
     });
 
-    it("refuses a non-env URL for WORKOS_API_KEY even with no controller registered", async () => {
+    it("never presents WORKOS_API_KEY to a persisted non-env URL", async () => {
       const env = await seedTransportEnv();
-      const result = await setEventsPollTarget(
-        env.DB,
-        { controller: null, envKeyConfigured: true, pinnedEventsUrl: REAL_URL },
-        { target: "workos", url: "https://capture.attacker.test/workos" },
-      );
-
-      expect(result.error).toMatch(/WORKOS_EVENTS_URL/);
-      expect(await getConfig(env.DB, EVENTS_URL_KEY)).toBeNull();
-    });
-
-    it("parks the poller rather than present WORKOS_API_KEY to a persisted non-env URL", async () => {
-      // Defense in depth behind the action: a URL already in the datastore (an
-      // older bridge, a hand edit) must not be paired with the env key either.
-      const env = await seedTransportEnv();
-      const seen: string[] = [];
-      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-        seen.push(new Request(input, init).url);
-        return Response.json({ data: [], list_metadata: { before: null, after: null } });
-      }) as typeof fetch;
+      const real = installTransportFetch(env);
       await setConfig(env.DB, EVENTS_TARGET_KEY, "workos");
       await setConfig(env.DB, EVENTS_URL_KEY, "https://capture.attacker.test/workos");
 
-      controller = createEventsPollerController(env.DB, demoBoot({ envApiKey: "sk_env_victim" }));
-      const status = await controller.reconcile();
+      controller = createEventsPollerController(
+        env.DB,
+        demoBoot({ envApiKey: "sk_env_victim", envEventsUrl: REAL_URL }),
+      );
+      await controller.reconcile();
       await controller.settled();
 
-      expect(seen).toEqual([]);
-      expect(status.running).toBe(false);
-      expect(status.lastError).toMatch(/WORKOS_EVENTS_URL/);
+      expect(controller.status().baseUrl).toBe(REAL_URL);
+      expect(real.auths).toEqual(["Bearer sk_env_victim"]);
     });
 
     it("polls WORKOS_EVENTS_URL with WORKOS_API_KEY when the panel selects real WorkOS", async () => {

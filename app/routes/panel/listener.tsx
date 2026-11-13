@@ -17,7 +17,6 @@ import {
   EVENTS_TRANSPORT_KEY,
   EVENTS_URL_KEY,
   clearEventsApiKey,
-  envKeyEventsUrl,
   eventsPollerController,
   setEventsPollTarget,
   setEventsTransport,
@@ -65,21 +64,10 @@ async function detectNgrokTunnel(): Promise<string | null> {
  *  no controller is registered. */
 function transportOptions(): TransportActionOptions {
   const controller = eventsPollerController();
-  const envKeyConfigured =
-    controller?.status().envKeyConfigured ?? Boolean(process.env.WORKOS_API_KEY?.trim());
   return {
     controller,
-    envKeyConfigured,
-    pinnedEventsUrl:
-      controller?.status().pinnedEventsUrl ??
-      (envKeyConfigured
-        ? envKeyEventsUrl({
-            envEventsUrl: trimTrailingSlash(
-              process.env.WORKOS_EVENTS_URL?.trim() || "https://api.workos.com",
-            ),
-            mockEventsUrl: `http://127.0.0.1:${process.env.PORT ?? "8080"}/__demo/native/mock-workos`,
-          })
-        : null),
+    envKeyConfigured:
+      controller?.status().envKeyConfigured ?? Boolean(process.env.WORKOS_API_KEY?.trim()),
   };
 }
 
@@ -121,10 +109,8 @@ export async function loader({ context }: Route.LoaderArgs) {
       (targetChoice === "workos" || targetChoice === "mock"
         ? targetChoice
         : (poller?.defaultTarget ?? "mock")),
-    // With WORKOS_API_KEY set the URL is not the panel's to choose — the key
-    // is only ever sent to WORKOS_EVENTS_URL — so show that one, read-only.
-    eventsUrl: opts.pinnedEventsUrl ?? eventsUrl ?? "https://api.workos.com",
-    eventsUrlPinned: Boolean(opts.pinnedEventsUrl),
+    eventsUrl: poller?.pinnedEventsUrl ?? eventsUrl ?? "https://api.workos.com",
+    eventsUrlPinned: Boolean(poller?.pinnedEventsUrl),
     // Presence only — the stored key itself is never sent to the page.
     storedKeyConfigured: Boolean(storedKey),
     envKeyConfigured: opts.envKeyConfigured,
@@ -371,7 +357,7 @@ export default function PanelListener() {
                     </Flex>
                     {eventsUrlPinned ? (
                       <Text color="gray" size="2">
-                        Set by WORKOS_EVENTS_URL: WORKOS_API_KEY is never sent anywhere else.
+                        Set by WORKOS_EVENTS_URL.
                       </Text>
                     ) : null}
                   </Flex>
