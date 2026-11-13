@@ -15,11 +15,9 @@ import {
   registerEventsPollerController,
 } from "../workers/native/events-transport";
 import {
-  decidePanelAuth,
   demoEventsUrl,
   eventsPollerEnabled,
   loadConfig,
-  panelAuthExempt,
   reportNativeNamespaceDuplicates,
   seedConfig,
   seedDemoDirectory,
@@ -27,6 +25,7 @@ import {
   seedNativeAppDirectories,
 } from "./config";
 import { panelCsrfGuard } from "./csrf";
+import { antiFramingHeaders, panelAuthGuard } from "./panel-boundary";
 import { openDatabase, SqliteDatastore, SqliteMigrator } from "./db/sqlite";
 import { inspectStorage } from "./db/storage-durability";
 import { openPostgres, PostgresDatastore, PostgresMigrator } from "./db/postgres";
@@ -169,6 +168,7 @@ const ctx = {
 } as unknown as ExecutionContext;
 
 const app = new Hono();
+app.use("*", antiFramingHeaders());
 
 /** Re-issue a request to a mounted worker with the mount prefix stripped. */
 function mounted(
@@ -189,20 +189,9 @@ async function mountBridge(): Promise<void> {
     "production",
   );
 
-  // Guard the control panel with HTTP Basic auth — required, unless the operator
-  // set PANEL_AUTH_DISABLED to say something in front of us does it instead
-  // (loadConfig refuses to boot otherwise). What is deliberately not gated, and
-  // why, is `panelAuthExempt`.
-  app.use("*", async (c, next) => {
-    const path = new URL(c.req.url).pathname;
-    if (panelAuthExempt(path, config)) return next();
-
-    const decision = await decidePanelAuth(config, c.req.header("Authorization") ?? null);
-    if (decision !== "denied") return next();
-    return c.body("Authentication required.", 401, {
-      "WWW-Authenticate": 'Basic realm="scim-bridge", charset="UTF-8"',
-    });
-  });
+  // Basic auth is required unless the operator set PANEL_AUTH_DISABLED to say
+  // something in front of us does it instead (loadConfig refuses to boot otherwise).
+  app.use("*", panelAuthGuard(config));
 
   // Reject cross-site mutations of the panel. Basic credentials ride along on
   // cross-site form POSTs, so this is what stops a forged save/mode/backfill.
