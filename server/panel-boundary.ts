@@ -63,6 +63,14 @@ export class PanelAuthThrottle {
     return Math.max(1, Math.ceil((Math.max(...blocked) - now) / 1000));
   }
 
+  /** Undoes one `recordFailure`: the guess it was reserved for turned out right. */
+  forgive(source: string): void {
+    for (const key of [ALL_SOURCES, source]) {
+      const entry = this.failures.get(key);
+      if (entry && entry.count > 0) entry.count -= 1;
+    }
+  }
+
   recordFailure(source: string): void {
     const now = this.options.now();
     for (const [key, entry] of this.failures) {
@@ -107,10 +115,15 @@ export function panelAuthGuard(
       });
     }
 
+    // Count the guess before the asynchronous check, so a burst of concurrent
+    // requests cannot all pass `retryAfter` before any failure is recorded.
     const authorization = c.req.header("Authorization") ?? null;
-    const decision = await decidePanelAuth(config, authorization);
-    if (decision !== "denied") return next();
     if (authorization !== null) throttle.recordFailure(source);
+    const decision = await decidePanelAuth(config, authorization);
+    if (decision !== "denied") {
+      if (authorization !== null) throttle.forgive(source);
+      return next();
+    }
     return c.body("Authentication required.", 401, {
       "WWW-Authenticate": 'Basic realm="scim-bridge", charset="UTF-8"',
     });

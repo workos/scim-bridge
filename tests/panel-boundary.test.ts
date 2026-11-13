@@ -75,4 +75,20 @@ describe("failed panel sign-ins are throttled", () => {
     for (let i = 0; i < 5; i++) expect((await get(null)).status).toBe(401);
     expect((await get(basic("ada", "hunter2"))).status).toBe(200);
   });
+
+  it("holds a concurrent burst of guesses to the limit", async () => {
+    const get = panel(new PanelAuthThrottle({ perSource: 10, total: 100 }));
+    const burst = await Promise.all(
+      Array.from({ length: 25 }, (_, i) => get(basic("ada", `wrong${i}`))),
+    );
+    const statuses = burst.map((r) => r.status);
+    expect(statuses.filter((s) => s === 401)).toHaveLength(10);
+    expect(statuses.filter((s) => s === 429)).toHaveLength(15);
+  });
+
+  it("does not spend the budget on correct sign-ins", async () => {
+    const get = panel(new PanelAuthThrottle({ perSource: 2 }));
+    for (let i = 0; i < 5; i++) expect((await get(basic("ada", "hunter2"))).status).toBe(200);
+    expect((await get(basic("ada", "wrong"))).status).toBe(401);
+  });
 });
