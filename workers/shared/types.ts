@@ -77,6 +77,9 @@ export interface NativeWriteFailure {
   method: string;
   native_status: number | null;
   detail: string;
+  /** The exact write that failed, so only its retry can retire the row. NULL
+   *  when the row has absorbed failures of different writes. */
+  write_fingerprint: string | null;
   attempts: number;
   first_seen_at: string;
   last_seen_at: string;
