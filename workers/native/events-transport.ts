@@ -142,7 +142,7 @@ function trimTrailingSlashes(url: string): string {
  * deployment's own WORKOS_EVENTS_URL, or real WorkOS when that only points at
  * the bundled mock. The env key is an environment-wide credential the panel
  * never shows; pairing it with a panel-chosen URL would let anyone holding
- * panel credentials have it delivered to their own server (VULN-3603).
+ * panel credentials have it delivered to their own server.
  */
 export function envKeyEventsUrl(
   boot: Pick<EventsPollerBoot, "envEventsUrl" | "mockEventsUrl">,

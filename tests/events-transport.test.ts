@@ -359,7 +359,7 @@ describe("events transport switcher", () => {
     });
 
     it("never presents WORKOS_API_KEY to an Events API URL chosen in the panel", async () => {
-      // VULN-3603: WORKOS_API_KEY is an environment-wide credential the panel
+      // WORKOS_API_KEY is an environment-wide credential the panel
       // never shows. If a panel operator could pick where it is sent, panel
       // access would be enough to have it delivered to their own server.
       const env = await seedTransportEnv();
