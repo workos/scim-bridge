@@ -51,30 +51,20 @@ export const MAX_SCIM_BODY_BYTES = 10 * 1024 * 1024;
 /** The body as text, or null once it exceeds `maxBytes`. Stops reading at the
  *  cap rather than trusting Content-Length, which a client can omit or understate. */
 async function readBoundedText(request: Request, maxBytes: number): Promise<string | null> {
-  const declared = Number(request.headers.get("Content-Length"));
-  if (Number.isFinite(declared) && declared > maxBytes) return null;
+  if (Number(request.headers.get("Content-Length")) > maxBytes) return null;
   if (!request.body) return "";
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
+  const decoder = new TextDecoder();
+  let text = "";
   let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel();
-      return null;
-    }
-    chunks.push(value);
+  // Leaving the loop early cancels the stream, so the rest is never read.
+  for await (const chunk of request.body) {
+    total += chunk.byteLength;
+    if (total > maxBytes) return null;
+    text += decoder.decode(chunk, { stream: true });
   }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder().decode(bytes);
+  return text + decoder.decode();
 }
+
 const BODYLESS_STATUSES = new Set([204, 205, 304]);
 
 const handler: WorkerHandler<PocEnv> = {
