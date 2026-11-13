@@ -17,18 +17,6 @@ export function antiFramingHeaders(): MiddlewareHandler {
   };
 }
 
-export interface PanelAuthThrottleOptions {
-  /** Failed guesses one source may make per window. */
-  perSource: number;
-  windowMs: number;
-  now?: () => number;
-}
-
-const DEFAULT_THROTTLE: PanelAuthThrottleOptions = {
-  perSource: 10,
-  windowMs: 15 * 60 * 1000,
-};
-
 /**
  * Counts failed Basic-auth guesses per source in fixed windows. There is no
  * cap across sources: one would let anyone who can reach the panel lock the
@@ -37,18 +25,26 @@ const DEFAULT_THROTTLE: PanelAuthThrottleOptions = {
  */
 export class PanelAuthThrottle {
   private readonly failures = new Map<string, { count: number; resetAt: number }>();
-  private readonly options: Required<PanelAuthThrottleOptions>;
-  private tail: Promise<void> = Promise.resolve();
+  private readonly perSource: number;
+  private readonly windowMs: number;
+  private readonly now: () => number;
+  private tail: Promise<unknown> = Promise.resolve();
 
-  constructor(options: Partial<PanelAuthThrottleOptions> = {}) {
-    this.options = { now: Date.now, ...DEFAULT_THROTTLE, ...options };
+  constructor({
+    perSource = 10,
+    windowMs = 15 * 60 * 1000,
+    now = Date.now,
+  }: { perSource?: number; windowMs?: number; now?: () => number } = {}) {
+    this.perSource = perSource;
+    this.windowMs = windowMs;
+    this.now = now;
   }
 
   /** Seconds until `source` may guess again, or null when it may guess now. */
   retryAfter(source: string): number | null {
-    const now = this.options.now();
+    const now = this.now();
     const entry = this.failures.get(source);
-    if (!entry || entry.resetAt <= now || entry.count < this.options.perSource) return null;
+    if (!entry || entry.resetAt <= now || entry.count < this.perSource) return null;
     return Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
   }
 
@@ -59,21 +55,18 @@ export class PanelAuthThrottle {
    */
   exclusive<T>(check: () => Promise<T>): Promise<T> {
     const result = this.tail.then(check);
-    this.tail = result.then(
-      () => undefined,
-      () => undefined,
-    );
+    this.tail = result.catch(() => undefined);
     return result;
   }
 
   recordFailure(source: string): void {
-    const now = this.options.now();
+    const now = this.now();
     for (const [key, entry] of this.failures) {
       if (entry.resetAt <= now) this.failures.delete(key);
     }
     const entry = this.failures.get(source);
     if (entry) entry.count += 1;
-    else this.failures.set(source, { count: 1, resetAt: now + this.options.windowMs });
+    else this.failures.set(source, { count: 1, resetAt: now + this.windowMs });
   }
 }
 
