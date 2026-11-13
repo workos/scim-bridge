@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { handleDsyncWebhook } from "../workers/native/listener";
 import type { PocEnv } from "../workers/shared/types";
+import { NATIVE_TABLES, ScimStore } from "../workers/native/store";
 import { createEnv, seedDirectory } from "./helpers";
 
 /**
@@ -163,5 +164,83 @@ describe("listener attribute fallbacks stay inside the event's directory", () =>
       .bind("victim@b.example")
       .first<{ active: number; user_name: string }>();
     expect(victimRow?.active).toBe(1);
+  });
+});
+
+describe("listener directory ownership is claimed and enforced in the write", () => {
+  const unclaim = (env: PocEnv) =>
+    env.DB.prepare("UPDATE native_users SET directory_id = NULL").run();
+  const owner = async (env: PocEnv) =>
+    (
+      await env.DB.prepare("SELECT directory_id FROM native_users WHERE external_id = ?")
+        .bind("shared-K")
+        .first<{ directory_id: string | null }>()
+    )?.directory_id;
+
+  it("claims a pre-ownership row on an unchanged event, so a later second directory cannot hide it", async () => {
+    const env = await seedEnv(["directory_b"]);
+    await deliver(env, envelope("dsync.user.created", victim("directory_b", "active"), T1));
+    await unclaim(env);
+
+    await deliver(env, envelope("dsync.user.updated", victim("directory_b", "active"), T2));
+    expect(await lastDetail(env)).toBe("no transition");
+    expect(await owner(env)).not.toBeNull();
+
+    await seedDirectory(env.DB, {
+      mode: "workos-only",
+      name: "directory_a",
+      workos_directory_id: "directory_a",
+    });
+    await deliver(env, envelope("dsync.user.deleted", victim("directory_b", "inactive"), T3));
+    const row = await env.DB.prepare("SELECT active FROM native_users WHERE external_id = ?")
+      .bind("shared-K")
+      .first<{ active: number }>();
+    expect(row?.active).toBe(0);
+  });
+
+  it("claims a pre-ownership row it deactivates", async () => {
+    const env = await seedEnv(["directory_b"]);
+    await deliver(env, envelope("dsync.user.created", victim("directory_b", "active"), T1));
+    await unclaim(env);
+
+    await deliver(env, envelope("dsync.user.deleted", victim("directory_b", "inactive"), T2));
+    expect(await owner(env)).not.toBeNull();
+  });
+
+  it("refuses an owned write to a row another directory owns", async () => {
+    const env = await createEnv();
+    const store = new ScimStore(env.DB, NATIVE_TABLES);
+    const user = (directoryId: string, userName: string) => ({
+      id: "shared-K",
+      userName,
+      externalId: "shared-K",
+      active: true,
+      resource: {},
+      directoryId,
+    });
+
+    expect(await store.upsertUser(user("dir-b", "victim@b.example"))).toBe(true);
+    expect(await store.upsertUser(user("dir-a", "mallory@a.example"))).toBe(false);
+    expect(await store.upsertUser(user("dir-b", "victim2@b.example"))).toBe(true);
+
+    const row = await env.DB.prepare(
+      "SELECT user_name, directory_id FROM native_users WHERE id = 'shared-K'",
+    ).first<{ user_name: string; directory_id: string }>();
+    expect(row).toEqual({ user_name: "victim2@b.example", directory_id: "dir-b" });
+  });
+
+  it("keeps two directories' rows apart when their creates race for one IdP id", async () => {
+    const env = await seedEnv(["directory_a", "directory_b"]);
+    const foreign = { directory_id: "directory_a", idp_id: "shared-K", email: "m@a.example" };
+    await Promise.all([
+      deliver(env, envelope("dsync.user.created", victim("directory_b", "active"), T1)),
+      deliver(env, envelope("dsync.user.created", { ...foreign, state: "active" }, T1)),
+    ]);
+
+    const { results } = await env.DB.prepare(
+      "SELECT user_name, directory_id FROM native_users ORDER BY user_name",
+    ).all<{ user_name: string; directory_id: string }>();
+    expect(results.map((r) => r.user_name)).toEqual(["m@a.example", "victim@b.example"]);
+    expect(results[0].directory_id).not.toBe(results[1].directory_id);
   });
 });

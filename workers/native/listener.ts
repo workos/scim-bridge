@@ -397,10 +397,16 @@ async function upsertUserFromEvent(
   if (!existing) {
     // A confirmed SCIM mapping preserves the native id. Directory Sync data.id
     // has its own namespace and must never become an unconfirmed native id.
-    const id = await newRowId(db, "Users", data, nativeId, idpId, directoryId);
-    const resource = userResourceFromEvent(id, idpId, userName, active, data, {});
-    await store.upsertUser({ id, userName, externalId: idpId, active, resource });
-    await claimRow(db, "Users", id, directoryId);
+    await createOwnedRow(db, "Users", data, nativeId, idpId, directoryId, (id) =>
+      store.upsertUser({
+        id,
+        userName,
+        externalId: idpId,
+        active,
+        resource: userResourceFromEvent(id, idpId, userName, active, data, {}),
+        directoryId,
+      }),
+    );
     return { action: "applied", detail: active ? "onboard()" : "provisioned inactive", idpId };
   }
 
@@ -418,7 +424,10 @@ async function upsertUserFromEvent(
     existing.user_name === userName &&
     existing.external_id === idpId &&
     JSON.stringify(resource) === existing.resource;
-  if (unchanged) return { action: "skipped", detail: "no transition", idpId };
+  if (unchanged) {
+    await claimRow(db, "Users", existing.id, directoryId);
+    return { action: "skipped", detail: "no transition", idpId };
+  }
 
   // The userName fallback can match a row that belonged to a different identity:
   // deletes leave tombstones, so a new hire provisioned with a departed user's
@@ -508,6 +517,7 @@ async function deleteUserFromEvent(
     active: false,
     resource,
   });
+  await claimRow(db, "Users", existing.id, directoryId);
   return { action: "applied", detail: "offboard() — deactivated in place", idpId };
 }
 
@@ -528,15 +538,21 @@ async function upsertGroupFromEvent(
     if (!name) return { action: "ignored", detail: "group event carries no name", idpId };
     // As with users, create only under a confirmed SCIM id or the legacy
     // no-resource-id fallback, never an unresolved Directory Sync id.
-    const id = await newRowId(db, "Groups", data, nativeId, idpId, directoryId);
-    const resource = groupResourceFromEvent(id, idpId, name, {});
-    await store.upsertGroup({ id, displayName: name, externalId: idpId, resource });
-    await claimRow(db, "Groups", id, directoryId);
+    await createOwnedRow(db, "Groups", data, nativeId, idpId, directoryId, (id) =>
+      store.upsertGroup({
+        id,
+        displayName: name,
+        externalId: idpId,
+        resource: groupResourceFromEvent(id, idpId, name, {}),
+        directoryId,
+      }),
+    );
     return { action: "applied", detail: `group "${name}" created`, idpId };
   }
 
   const displayName = name ?? existing.display_name;
   if (existing.display_name === displayName && existing.external_id === idpId) {
+    await claimRow(db, "Groups", existing.id, directoryId);
     return { action: "skipped", detail: "no transition", idpId };
   }
   const resource = groupResourceFromEvent(
@@ -639,26 +655,6 @@ async function changeMembership(
       idpId,
     };
   }
-  const newUserId = !user
-    ? await newRowId(
-        db,
-        "Users",
-        userData,
-        nativeUserId,
-        userIdpId ?? crypto.randomUUID(),
-        directoryId,
-      )
-    : null;
-  const newGroupId = !group
-    ? await newRowId(
-        db,
-        "Groups",
-        groupData,
-        nativeGroupId,
-        groupIdpId ?? crypto.randomUUID(),
-        directoryId,
-      )
-    : null;
   let userId = user?.id ?? null;
   let userOnboarded = false;
   if (!userId) {
@@ -679,15 +675,24 @@ async function changeMembership(
       };
     }
     // The same ID contract applies to a partial membership stub.
-    userId = newUserId!;
     const active = userData.state === undefined ? true : userData.state === "active";
-    await store.upsertUser({
-      id: userId,
-      userName,
-      externalId: userIdpId,
-      active,
-      resource: userResourceFromEvent(userId, userIdpId, userName, active, userData, {}),
-    });
+    userId = await createOwnedRow(
+      db,
+      "Users",
+      userData,
+      nativeUserId,
+      userIdpId ?? crypto.randomUUID(),
+      directoryId,
+      (id) =>
+        store.upsertUser({
+          id,
+          userName,
+          externalId: userIdpId,
+          active,
+          resource: userResourceFromEvent(id, userIdpId, userName, active, userData, {}),
+          directoryId,
+        }),
+    );
     stubs += 1;
     userOnboarded = active;
   }
@@ -695,15 +700,24 @@ async function changeMembership(
   let groupId = group?.id ?? null;
   let groupLabel = group?.display_name ?? groupName ?? groupIdpId ?? "";
   if (!groupId) {
-    groupId = newGroupId!;
     const displayName = groupName ?? groupIdpId ?? "unknown group";
     groupLabel = displayName;
-    await store.upsertGroup({
-      id: groupId,
-      displayName,
-      externalId: groupIdpId,
-      resource: groupResourceFromEvent(groupId, groupIdpId, displayName, {}),
-    });
+    groupId = await createOwnedRow(
+      db,
+      "Groups",
+      groupData,
+      nativeGroupId,
+      groupIdpId ?? crypto.randomUUID(),
+      directoryId,
+      (id) =>
+        store.upsertGroup({
+          id,
+          displayName,
+          externalId: groupIdpId,
+          resource: groupResourceFromEvent(id, groupIdpId, displayName, {}),
+          directoryId,
+        }),
+    );
     stubs += 1;
   }
 
@@ -837,6 +851,27 @@ async function newRowId(
   if (!row || row.directory_id === directoryId) return id;
   if (row.directory_id === null && (await isSoleDirectory(db))) return id;
   return crypto.randomUUID();
+}
+
+/**
+ * Write a row this event creates. The write itself refuses an id another
+ * directory owns (it may have taken the id since {@link newRowId} looked), and
+ * the row then goes under a fresh id instead.
+ */
+async function createOwnedRow(
+  db: Datastore,
+  kind: "Users" | "Groups",
+  data: Json,
+  nativeId: string | null,
+  fallback: string,
+  directoryId: string,
+  write: (id: string) => Promise<boolean>,
+): Promise<string> {
+  const id = await newRowId(db, kind, data, nativeId, fallback, directoryId);
+  if (await write(id)) return id;
+  const fresh = crypto.randomUUID();
+  if (!(await write(fresh))) throw new Error(`could not create a native ${kind} row`);
+  return fresh;
 }
 
 /** Stamp an unclaimed native row with the directory whose event wrote it. */
