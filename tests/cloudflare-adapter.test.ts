@@ -47,10 +47,4 @@ describe("Cloudflare Worker container environment", () => {
     expect(Object.hasOwn(instance.envVars, "APP_ENCRYPTION_KEY")).toBe(false);
     expect(instance.envVars.PUBLIC_URL).toBe("https://bridge.example.test");
   });
-
-  it("forwards the private-http opt-in only when it is set", () => {
-    const opted = container({ UPSTREAM_ALLOW_PRIVATE_HTTP: "true" });
-    expect(opted.envVars.UPSTREAM_ALLOW_PRIVATE_HTTP).toBe("true");
-    expect(Object.hasOwn(container().envVars, "UPSTREAM_ALLOW_PRIVATE_HTTP")).toBe(false);
-  });
 });

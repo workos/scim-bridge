@@ -124,10 +124,7 @@ trust, with a warning on every boot.
 
 Upstream endpoints (`native_url`, `workos_url`) must be `https` unless they are
 on loopback; the bridge also refuses to send a bearer token to a stored plain
-`http` endpoint. `UPSTREAM_ALLOW_PRIVATE_HTTP=true` accepts plain http to a
-private host (any hostname, or a private IP address) on a network you trust,
-with a warning on every boot; a public IP address still needs https. If a token
-was ever used over plain http, rotate it.
+`http` endpoint. If a token was ever used over plain http, rotate it.
 
 Both drivers apply their own migrations on boot (`migrations/*.sql` for SQLite,
 `migrations/postgres/*.sql` for Postgres) and are safe to restart. Switching

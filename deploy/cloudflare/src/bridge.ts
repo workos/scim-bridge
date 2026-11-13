@@ -35,7 +35,6 @@ interface Env {
   // Vars — plaintext configuration, safe to commit in wrangler.jsonc.
   PUBLIC_URL: string;
   DATABASE_PATH?: string;
-  UPSTREAM_ALLOW_PRIVATE_HTTP?: string;
 
   // Secrets — `wrangler secret put NAME`. Absent unless you set them.
   PANEL_AUTH_USER?: string;
@@ -83,7 +82,6 @@ export class BridgeContainer extends Container<Env> {
       WEBHOOK_SECRET: env.WEBHOOK_SECRET,
       DIRECTORIES_JSON: env.DIRECTORIES_JSON,
       BRIDGE_STATUS_URL: env.BRIDGE_STATUS_URL,
-      UPSTREAM_ALLOW_PRIVATE_HTTP: env.UPSTREAM_ALLOW_PRIVATE_HTTP,
     });
   }
 }

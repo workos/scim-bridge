@@ -1,6 +1,6 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { isSuccess, joinScimUrl, scimFetch } from "../workers/shared/scim";
 import { sendsTokenInPlaintext, validateUpstreamUrl } from "../workers/shared/upstream-url";
 
@@ -132,45 +132,16 @@ describe("scimFetch refuses to send the bearer token in the clear", () => {
       scimFetch("http://10.0.0.7/scim/v2/Users", { method: "GET", token: "tok" }),
     ).rejects.toThrow(/plain http/);
   });
-});
 
-describe("UPSTREAM_ALLOW_PRIVATE_HTTP", () => {
-  afterEach(() => vi.unstubAllEnvs());
-  const opted = { UPSTREAM_ALLOW_PRIVATE_HTTP: "true" };
-
-  it("accepts plain http to private hosts once the operator opts in", () => {
+  it("refuses plain http to every remote host, private or not", () => {
     for (const url of [
       "http://10.0.0.7/scim/v2",
-      "http://172.20.1.2/scim/v2",
-      "http://192.168.1.5/scim/v2",
       "http://[fd12::5]/scim/v2",
       "http://[::ffff:10.0.0.7]/scim/v2",
       "http://native-app:8080/scim/v2",
-      "http://native.corp.acme.com/scim/v2",
-    ]) {
-      expect(sendsTokenInPlaintext(new URL(url), opted)).toBe(false);
-      expect(sendsTokenInPlaintext(new URL(url), {})).toBe(true);
-    }
-  });
-
-  it("still refuses plain http to a public IP address", () => {
-    for (const url of [
       "http://203.0.113.9/scim/v2",
-      "http://[2001:db8::1]/scim/v2",
-      "http://[::ffff:203.0.113.9]/scim/v2",
     ]) {
-      expect(sendsTokenInPlaintext(new URL(url), opted)).toBe(true);
+      expect(sendsTokenInPlaintext(new URL(url))).toBe(true);
     }
-  });
-
-  it("lets a stored private http endpoint keep working after an upgrade", async () => {
-    vi.stubEnv("UPSTREAM_ALLOW_PRIVATE_HTTP", "true");
-    expect(validateUpstreamUrl("http://native-app:8080/scim/v2")).toBeNull();
-    // The request goes out (and fails to resolve) instead of being refused.
-    const outcome = await scimFetch("http://native-app.invalid/scim/v2/Users", {
-      method: "GET",
-      token: "tok",
-    }).catch((error: unknown) => error);
-    expect(String(outcome instanceof Error ? outcome.message : outcome)).not.toMatch(/plain http/);
   });
 });
