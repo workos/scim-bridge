@@ -17,6 +17,7 @@ import {
   EVENTS_TRANSPORT_KEY,
   EVENTS_URL_KEY,
   clearEventsApiKey,
+  envKeyEventsUrl,
   eventsPollerController,
   setEventsPollTarget,
   setEventsTransport,
@@ -72,7 +73,12 @@ function transportOptions(): TransportActionOptions {
     pinnedEventsUrl:
       controller?.status().pinnedEventsUrl ??
       (envKeyConfigured
-        ? trimTrailingSlash(process.env.WORKOS_EVENTS_URL?.trim() || "https://api.workos.com")
+        ? envKeyEventsUrl({
+            envEventsUrl: trimTrailingSlash(
+              process.env.WORKOS_EVENTS_URL?.trim() || "https://api.workos.com",
+            ),
+            mockEventsUrl: `http://127.0.0.1:${process.env.PORT ?? "8080"}/__demo/native/mock-workos`,
+          })
         : null),
   };
 }
