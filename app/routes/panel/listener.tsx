@@ -117,8 +117,8 @@ export async function loader({ context }: Route.LoaderArgs) {
         : (poller?.defaultTarget ?? "mock")),
     // With WORKOS_API_KEY set the URL is not the panel's to choose — the key
     // is only ever sent to WORKOS_EVENTS_URL — so show that one, read-only.
-    eventsUrl: poller?.pinnedEventsUrl ?? eventsUrl ?? "https://api.workos.com",
-    eventsUrlPinned: Boolean(poller?.pinnedEventsUrl),
+    eventsUrl: opts.pinnedEventsUrl ?? eventsUrl ?? "https://api.workos.com",
+    eventsUrlPinned: Boolean(opts.pinnedEventsUrl),
     // Presence only — the stored key itself is never sent to the page.
     storedKeyConfigured: Boolean(storedKey),
     envKeyConfigured: opts.envKeyConfigured,
