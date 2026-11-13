@@ -95,13 +95,16 @@ export function isLoopbackHost(hostname: string): boolean {
     host === "localhost" ||
     host.endsWith(".localhost") ||
     host === "::1" ||
-    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)
+    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) ||
+    // 127.0.0.0/8 mapped into IPv6, which URL writes as ::ffff:7fxx:xxxx.
+    /^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/.test(host)
   );
 }
 
-/** URL keeps an IPv6 literal in brackets; strip them for comparison. */
+/** URL keeps an IPv6 literal in brackets and a fully qualified name's
+ *  trailing dot; strip both for comparison. */
 function normalizeHost(hostname: string): string {
-  return hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+  return hostname.replace(/^\[/, "").replace(/\]$/, "").replace(/\.$/, "").toLowerCase();
 }
 
 /**

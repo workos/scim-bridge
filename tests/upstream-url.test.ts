@@ -42,6 +42,8 @@ describe("validateUpstreamUrl", () => {
     expect(validateUpstreamUrl("https://acme.example.com/scim/v2")).toBeNull();
     expect(validateUpstreamUrl("http://127.0.0.1:8788/scim/v2")).toBeNull();
     expect(validateUpstreamUrl("http://localhost:8788/scim/v2")).toBeNull();
+    expect(validateUpstreamUrl("http://localhost.:8788/scim/v2")).toBeNull();
+    expect(validateUpstreamUrl("http://[::ffff:127.0.0.1]:8788/scim/v2")).toBeNull();
     // Empty is "not configured yet", which the optional endpoint fields allow.
     expect(validateUpstreamUrl("")).toBeNull();
     expect(validateUpstreamUrl("   ")).toBeNull();
