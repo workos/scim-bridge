@@ -225,31 +225,33 @@ describe("listener directory ownership is claimed and enforced in the write", ()
     expect(row?.active).toBe(1);
   });
 
-  it("fails a membership removal that matches only unclaimed rows once a second directory exists", async () => {
-    const env = await seedEnv(["directory_b"]);
-    const membership = {
-      directory_id: "directory_b",
-      user: victim("directory_b", "active"),
-      group: {
+  it.each(["native_users", "native_groups"])(
+    "fails a membership removal whose %s row is unclaimed once a second directory exists",
+    async (table) => {
+      const env = await seedEnv(["directory_b"]);
+      const membership = {
         directory_id: "directory_b",
-        name: "Admins",
-        raw_attributes: { externalId: "grp-b" },
-      },
-    };
-    await deliver(env, envelope("dsync.group.user_added", membership, T1));
-    await unclaim(env);
-    await env.DB.prepare("UPDATE native_groups SET directory_id = NULL").run();
-    await seedDirectory(env.DB, {
-      mode: "workos-only",
-      name: "directory_a",
-      workos_directory_id: "directory_a",
-    });
+        user: victim("directory_b", "active"),
+        group: {
+          directory_id: "directory_b",
+          name: "Admins",
+          raw_attributes: { externalId: "grp-b" },
+        },
+      };
+      await deliver(env, envelope("dsync.group.user_added", membership, T1));
+      await env.DB.prepare(`UPDATE ${table} SET directory_id = NULL`).run();
+      await seedDirectory(env.DB, {
+        mode: "workos-only",
+        name: "directory_a",
+        workos_directory_id: "directory_a",
+      });
 
-    await deliver(env, envelope("dsync.group.user_removed", membership, T2));
-    expect(await lastDetail(env)).toContain("handler error");
-    const { results } = await env.DB.prepare("SELECT user_id FROM native_group_members").all();
-    expect(results).toHaveLength(1);
-  });
+      await deliver(env, envelope("dsync.group.user_removed", membership, T2));
+      expect(await lastDetail(env)).toContain("handler error");
+      const { results } = await env.DB.prepare("SELECT user_id FROM native_group_members").all();
+      expect(results).toHaveLength(1);
+    },
+  );
 
   it("refuses an owned write to a row another directory owns", async () => {
     const env = await createEnv();
