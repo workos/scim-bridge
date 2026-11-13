@@ -24,7 +24,7 @@ import {
 } from "../workers/shared/native-namespace";
 import { newScimToken } from "../workers/shared/ids";
 import ConnectionParameters from "pg/lib/connection-parameters";
-import { isLoopbackHost } from "../workers/shared/upstream-url";
+import { isLoopbackHost } from "../workers/shared/upstream-url.server";
 import type { PocEnv } from "../workers/shared/types";
 
 /**

@@ -2,7 +2,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 import { isSuccess, joinScimUrl, scimFetch } from "../workers/shared/scim";
-import { sendsTokenInPlaintext, validateUpstreamUrl } from "../workers/shared/upstream-url";
+import { sendsTokenInPlaintext, validateUpstreamUrl } from "../workers/shared/upstream-url.server";
 
 /**
  * The bridge dials operator-supplied `native_url` / `workos_url` from inside the

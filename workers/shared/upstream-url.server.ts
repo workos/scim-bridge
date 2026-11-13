@@ -1,3 +1,5 @@
+import { BlockList, isIP } from "node:net";
+
 /**
  * Conservative validation of an operator-supplied upstream URL (a directory's
  * `native_url` / `workos_url`).
@@ -52,36 +54,29 @@ export function sendsTokenInPlaintext(url: URL): boolean {
   return url.protocol === "http:" && !isLoopbackHost(url.hostname);
 }
 
+const LOOPBACK = new BlockList();
+LOOPBACK.addSubnet("127.0.0.0", 8, "ipv4");
+LOOPBACK.addAddress("::1", "ipv6");
+
+/** The IMDS lives at 169.254.169.254 and its IPv6 twin at fd00:ec2::254; the
+ *  whole IPv4 link-local /16 is treated the same, since no SCIM app lives in it. */
+const METADATA = new BlockList();
+METADATA.addSubnet("169.254.0.0", 16, "ipv4");
+METADATA.addAddress("fd00:ec2::254", "ipv6");
+
 /** Loopback only: a request to it never leaves the machine. */
 export function isLoopbackHost(hostname: string): boolean {
-  const host = normalizeHost(hostname);
-  return (
-    host === "localhost" ||
-    host.endsWith(".localhost") ||
-    host === "::1" ||
-    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)
-  );
+  const host = hostname.replace(/\.$/, "").toLowerCase();
+  return host === "localhost" || host.endsWith(".localhost") || inList(LOOPBACK, host);
 }
 
-/** URL keeps an IPv6 literal in brackets, a fully qualified name's trailing
- *  dot, and writes an IPv4-mapped address as `::ffff:xxxx:xxxx`. Reduce all
- *  three to the plain form so every range check sees one spelling. */
-function normalizeHost(hostname: string): string {
-  const host = hostname.replace(/^\[/, "").replace(/\]$/, "").replace(/\.$/, "").toLowerCase();
-  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
-  if (!mapped) return host;
-  const [high, low] = [parseInt(mapped[1], 16), parseInt(mapped[2], 16)];
-  return [high >> 8, high & 255, low >> 8, low & 255].join(".");
-}
-
-/**
- * Whether a host is a cloud instance-metadata / link-local address. The IMDS
- * lives at 169.254.169.254 and its IPv6 twin at fd00:ec2::254; the whole IPv4
- * link-local /16 is treated the same, since no legitimate SCIM endpoint is in it.
- */
 function isMetadataHost(hostname: string): boolean {
-  const host = normalizeHost(hostname);
-  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
-  if (host === "fd00:ec2::254") return true;
-  return false;
+  return inList(METADATA, hostname);
+}
+
+/** `BlockList` also matches IPv4-mapped IPv6 (`::ffff:7f00:1`) against IPv4 rules. */
+function inList(list: BlockList, hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "");
+  const family = isIP(host);
+  return family !== 0 && list.check(host, family === 6 ? "ipv6" : "ipv4");
 }
