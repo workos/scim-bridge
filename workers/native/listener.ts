@@ -650,11 +650,22 @@ async function changeMembership(
   );
   const user = await findUser(db, store, directoryId, userIdpId, userName, nativeUserId);
   if (!user && op === "remove") {
+    if (!nativeUserId)
+      await refuseUnclaimedOffboard(db, NATIVE_TABLES.users, [
+        ["external_id = ?", userIdpId],
+        ["lower(user_name) = lower(?)", userName],
+      ]);
     return { action: "skipped", detail: "no-op: user not present", idpId };
   }
   const group = await findGroup(db, store, directoryId, groupIdpId, groupName, nativeGroupId);
-  if (!group && op === "remove")
+  if (!group && op === "remove") {
+    if (!nativeGroupId)
+      await refuseUnclaimedOffboard(db, NATIVE_TABLES.groups, [
+        ["external_id = ?", groupIdpId],
+        ["lower(display_name) = lower(?)", groupName],
+      ]);
     return { action: "skipped", detail: "no-op: group not present", idpId };
+  }
   if (
     !group &&
     !(await isNewestAcross(
