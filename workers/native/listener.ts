@@ -493,10 +493,11 @@ async function deleteUserFromEvent(
   const nativeId = await resolveNativeEventId(db, store, directoryId, "Users", data, true);
   const existing = await findUser(db, store, directoryId, idpId, userName, nativeId);
   if (!existing) {
-    await refuseUnclaimedOffboard(db, NATIVE_TABLES.users, [
-      ["external_id = ?", idpId],
-      ["lower(user_name) = lower(?)", userName],
-    ]);
+    if (!nativeId)
+      await refuseUnclaimedOffboard(db, NATIVE_TABLES.users, [
+        ["external_id = ?", idpId],
+        ["lower(user_name) = lower(?)", userName],
+      ]);
     return { action: "skipped", detail: "no-op: user already absent", idpId };
   }
 
@@ -585,10 +586,11 @@ async function deleteGroupFromEvent(
   const nativeId = await resolveNativeEventId(db, store, directoryId, "Groups", data, true);
   const existing = await findGroup(db, store, directoryId, idpId, asString(data.name), nativeId);
   if (!existing) {
-    await refuseUnclaimedOffboard(db, NATIVE_TABLES.groups, [
-      ["external_id = ?", idpId],
-      ["lower(display_name) = lower(?)", asString(data.name)],
-    ]);
+    if (!nativeId)
+      await refuseUnclaimedOffboard(db, NATIVE_TABLES.groups, [
+        ["external_id = ?", idpId],
+        ["lower(display_name) = lower(?)", asString(data.name)],
+      ]);
     return { action: "skipped", detail: "no-op: group already absent", idpId };
   }
   await store.deleteGroup(existing.id);
@@ -832,9 +834,9 @@ async function ownedRow<Row>(
 }
 
 /**
- * A delete that matches only a row no directory has claimed yet (written before
- * rows had an owner, now that several directories share the store) cannot tell
- * whose row it is. Acknowledging it as absent would leave that user active, so
+ * A delete with no confirmed native id that matches only a row no directory has
+ * claimed yet (written before rows had an owner, now that several directories
+ * share the store) cannot tell whose row it is. Acknowledging it as absent would leave that user active, so
  * fail the event instead: the handler error is logged and a redelivery retries.
  */
 async function refuseUnclaimedOffboard(
