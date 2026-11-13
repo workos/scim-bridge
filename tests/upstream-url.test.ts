@@ -34,6 +34,9 @@ describe("validateUpstreamUrl", () => {
     expect(validateUpstreamUrl("http://[fd00:ec2::254]/latest/meta-data/")).toMatch(
       /metadata address/,
     );
+    expect(validateUpstreamUrl("http://[::ffff:169.254.169.254]/latest/")).toMatch(
+      /metadata address/,
+    );
   });
 
   it("accepts an ordinary https endpoint and a loopback http one", () => {
@@ -141,6 +144,7 @@ describe("UPSTREAM_ALLOW_PRIVATE_HTTP", () => {
       "http://172.20.1.2/scim/v2",
       "http://192.168.1.5/scim/v2",
       "http://[fd12::5]/scim/v2",
+      "http://[::ffff:10.0.0.7]/scim/v2",
       "http://native-app:8080/scim/v2",
       "http://native.corp.acme.com/scim/v2",
     ]) {
@@ -150,7 +154,11 @@ describe("UPSTREAM_ALLOW_PRIVATE_HTTP", () => {
   });
 
   it("still refuses plain http to a public IP address", () => {
-    for (const url of ["http://203.0.113.9/scim/v2", "http://[2001:db8::1]/scim/v2"]) {
+    for (const url of [
+      "http://203.0.113.9/scim/v2",
+      "http://[2001:db8::1]/scim/v2",
+      "http://[::ffff:203.0.113.9]/scim/v2",
+    ]) {
       expect(sendsTokenInPlaintext(new URL(url), opted)).toBe(true);
     }
   });
