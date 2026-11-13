@@ -87,6 +87,18 @@ export async function hashProxyToken(token: string): Promise<string> {
   return HASH_PREFIX + (await sha256Hex(token));
 }
 
+/** Names one SCIM write — method, resource and body — so the divergence ledger
+ *  can tell the retry of a failed write from a different write to the same
+ *  resource. */
+export async function writeFingerprint(
+  method: string,
+  kind: string,
+  id: string | null,
+  body: string | null,
+): Promise<string> {
+  return sha256Hex(JSON.stringify([method, kind, id, body ?? ""]));
+}
+
 async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest))

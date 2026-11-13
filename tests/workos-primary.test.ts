@@ -8,6 +8,7 @@ import {
   setDirectoryMode,
   upsertMapping,
 } from "../workers/shared/db";
+import { writeFingerprint } from "../workers/shared/crypto";
 import type { Mode, PocEnv } from "../workers/shared/types";
 import {
   createCtx,
@@ -774,6 +775,12 @@ describe("workos-primary", () => {
           method: "PUT",
           native_status: 500,
           detail: "WorkOS committed this write; native did not",
+          write_fingerprint: await writeFingerprint(
+            "PUT",
+            "Users",
+            "native-1",
+            JSON.stringify(ada),
+          ),
         });
         await setMode(directory, mode);
         const ctx = createCtx();
