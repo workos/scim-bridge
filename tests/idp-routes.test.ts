@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import idpWorker from "../workers/idp/index";
-import { bundledDemoEndpoints } from "../workers/shared/client-tokens";
+import proxyWorker from "../workers/proxy/index";
+import { bundledDemoEndpoints, SIMULATOR_REQUEST_HEADER } from "../workers/shared/client-tokens";
 import { setConfig } from "../workers/shared/db";
 import type { PocEnv } from "../workers/shared/types";
 import {
@@ -8,6 +9,7 @@ import {
   createEnv,
   installFakeUpstreams,
   NATIVE_URL,
+  proxyRequest,
   scimJson,
   seedDirectory,
   type FakeUpstreams,
@@ -297,4 +299,54 @@ describe("IdP simulator routes", () => {
  *  fails loudly if NATIVE_URL ever stops being the origin the route table matches. */
 it("points the simulator at the fake upstream's origin", () => {
   expect(NATIVE_URL.startsWith("https://native.test")).toBe(true);
+});
+
+/**
+ * The route check above runs once, but a seed or tick sends many SCIM requests
+ * after it. The proxy re-checks the row it is about to forward with, so an
+ * endpoint edit landing mid-seed still cannot redirect the rest of the writes.
+ */
+describe("proxy, for simulator traffic", () => {
+  it("refuses to forward once the demo row is repointed", async () => {
+    const env = await createEnv();
+    const demo = await seedDemo(env);
+    await env.DB.prepare("UPDATE scim_directories SET native_url = ? WHERE id = ?")
+      .bind("https://scim.victim.example/scim/v2", demo.id)
+      .run();
+    fake = installFakeUpstreams();
+
+    const res = await proxyWorker.fetch(
+      proxyRequest(
+        demo,
+        "POST",
+        "/scim/v2/Users",
+        { userName: "backdoor@victim.example" },
+        {
+          [SIMULATOR_REQUEST_HEADER]: "1",
+        },
+      ),
+      env,
+      createCtx(),
+    );
+
+    expect(res.status).toBe(403);
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it("forwards while the demo row still points at the bundled fakes", async () => {
+    const env = await createEnv();
+    const demo = await seedDemo(env);
+    fake = installFakeUpstreams();
+
+    const res = await proxyWorker.fetch(
+      proxyRequest(demo, "GET", "/scim/v2/Users", undefined, { [SIMULATOR_REQUEST_HEADER]: "1" }),
+      env,
+      createCtx(),
+    );
+
+    // The loopback fakes are not in this test's fetch table, so the forward itself
+    // fails upstream; what matters is that the proxy tried rather than refused.
+    expect(res.status).not.toBe(403);
+    expect(await res.text()).not.toContain("only drives a directory wired to the bundled fakes");
+  });
 });

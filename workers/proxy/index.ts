@@ -1,10 +1,12 @@
 import type { Datastore } from "../shared/datastore";
+import { pointsAtBundledFakes, SIMULATOR_REQUEST_HEADER } from "../shared/client-tokens";
 import type { Directory, PocEnv, ResourceType, WorkerHandler } from "../shared/types";
 import {
   AmbiguousScimMappingError,
   claimWorkosPrimaryCreate,
   clearNativeWriteFailure,
   deleteMapping,
+  getConfig,
   getDirectoryByToken,
   getMapping,
   getMappingByWorkosId,
@@ -109,6 +111,16 @@ async function handleScim(
   }
   log.directory_id = directory.id;
   log.mode = directory.mode;
+
+  if (
+    request.headers.has(SIMULATOR_REQUEST_HEADER) &&
+    !pointsAtBundledFakes(directory, await getConfig(env.DB, "proxy.loopback_url"))
+  ) {
+    log.error = "simulator request for a directory that no longer points at the bundled fakes";
+    return finish(
+      scimError(403, "The IdP simulator only drives a directory wired to the bundled fakes."),
+    );
+  }
 
   if (!scimPath) {
     return finish(
