@@ -32,6 +32,7 @@
     "hono": "^4.13.8",
     "isbot": "^5.2.2",
     "pg": "^8.23.0",
+    "pg-connection-string": "^2.14.1",
     "radix-ui": "^1.6.7",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",

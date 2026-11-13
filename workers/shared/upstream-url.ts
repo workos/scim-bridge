@@ -10,6 +10,8 @@
  *
  *  - a scheme allowlist (http/https), so `file:`, `gopher:` and friends cannot
  *    be smuggled in;
+ *  - https for anything off this machine: every call carries the directory's
+ *    bearer token, so plain http hands it to anyone on the network path;
  *  - the cloud metadata / link-local addresses, where no real SCIM app lives.
  *
  * Returns a human error for the panel to surface, or null when acceptable. An
@@ -34,7 +36,31 @@ export function validateUpstreamUrl(raw: string): string | null {
     return `${url.hostname} is a cloud metadata address and cannot be an endpoint.`;
   }
 
+  if (sendsTokenInPlaintext(url)) {
+    return (
+      `The endpoint URL must use https: plain http would send this directory's bearer ` +
+      `token unencrypted to ${url.hostname}. Only loopback addresses may use http.`
+    );
+  }
+
   return null;
+}
+
+/** Whether a request to `url` would carry a bearer token over a network in the
+ *  clear: plain http to anything but this machine. */
+export function sendsTokenInPlaintext(url: URL): boolean {
+  return url.protocol === "http:" && !isLoopbackHost(url.hostname);
+}
+
+/** Loopback only: a request to it never leaves the machine. */
+export function isLoopbackHost(hostname: string): boolean {
+  const host = normalizeHost(hostname);
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "::1" ||
+    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)
+  );
 }
 
 /** URL keeps an IPv6 literal in brackets; strip them for comparison. */
