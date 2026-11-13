@@ -121,6 +121,11 @@ async function memberEdges(db: PocEnv["DB"]): Promise<{ group_id: string; user_i
   return results;
 }
 
+/** The directory-bound form of a legacy attribute-derived ordering key. */
+function legacyScope(directoryId: string, key: string): string {
+  return `dsync-legacy:${JSON.stringify([directoryId, key])}`;
+}
+
 const ada = {
   idp_id: "idp-user-1",
   email: "ada@example.com",
@@ -263,7 +268,7 @@ describe("dsync listener", () => {
   describe("mode gating", () => {
     for (const mode of ["passthrough", "dual-write"] as const) {
       it(`stays inert in ${mode} mode but still advances the version ledger`, async () => {
-        const { env } = await seedListenerEnv({ mode });
+        const { env, directory } = await seedListenerEnv({ mode });
 
         const res = await deliver(env, envelope("dsync.user.created", ada, { at: T2 }));
 
@@ -277,7 +282,7 @@ describe("dsync listener", () => {
         expect(event.idp_id).toBe("idp-user-1");
 
         const version = await env.DB.prepare("SELECT * FROM listener_versions WHERE scope = ?")
-          .bind("user:idp-user-1")
+          .bind(legacyScope(directory.id, "user:idp-user-1"))
           .first<{ event_at: string }>();
         expect(version?.event_at).toBe(T2);
       });
@@ -1346,7 +1351,7 @@ describe("dsync listener", () => {
       await deliver(env, envelope("dsync.user.created", ada, { at: T1 }));
 
       const version = await env.DB.prepare("SELECT event_at FROM listener_versions WHERE scope = ?")
-        .bind("user:idp-user-1")
+        .bind(legacyScope(directory.id, "user:idp-user-1"))
         .first<{ event_at: string }>();
       expect(version?.event_at).toBe(T3);
 
@@ -1579,7 +1584,7 @@ describe("dsync listener", () => {
     });
 
     it("keys stubs on the primary email when the user has no idp_id and lets a later create adopt them", async () => {
-      const { env } = await seedListenerEnv();
+      const { env, directory } = await seedListenerEnv();
       const eve = { emails: [{ value: "eve@example.com", primary: true }] };
 
       await deliver(
@@ -1598,7 +1603,7 @@ describe("dsync listener", () => {
       );
       // The ordering scope falls back to the primary email as the user key.
       const version = await env.DB.prepare("SELECT event_at FROM listener_versions WHERE scope = ?")
-        .bind("member:grp-eng:eve@example.com")
+        .bind(legacyScope(directory.id, "member:grp-eng:eve@example.com"))
         .first<{ event_at: string }>();
       expect(version?.event_at).toBe(T1);
 
