@@ -13,7 +13,7 @@ import {
   withDatastoreRetry,
 } from "../../../workers/shared/db";
 import { runBackfill } from "../../../workers/shared/backfill";
-import { joinScimUrl } from "../../../workers/shared/scim";
+import { joinScimUrl } from "../../../workers/shared/scim-url";
 import { callIdpSimulator } from "./idp-simulator";
 import { FlowRail } from "./flow-rail";
 import { readUserSnapshot, type EndpointCount } from "./user-count";

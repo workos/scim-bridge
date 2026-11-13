@@ -36,9 +36,9 @@ import {
   publishMintedToken,
 } from "../../../workers/shared/client-tokens";
 import { checkNativeNamespace } from "../../../workers/shared/native-namespace";
-import { joinScimUrl } from "../../../workers/shared/scim";
+import { joinScimUrl } from "../../../workers/shared/scim-url";
 import { countUsers, getUserCountStatus, type EndpointCount } from "./user-count";
-import { validateUpstreamUrl } from "../../../workers/shared/upstream-url";
+import { validateUpstreamUrl } from "../../../workers/shared/upstream-url.server";
 import type { BackfillSummary, Mode, NativeWriteFailure } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
 import {
