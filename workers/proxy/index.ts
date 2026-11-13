@@ -46,6 +46,27 @@ import {
 import { handleStatus, STATUS_PREFIX } from "./status";
 
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+/** Well above the largest group PATCH an IdP sends, far below what would
+ *  strain the one process every directory shares. */
+export const MAX_SCIM_BODY_BYTES = 10 * 1024 * 1024;
+
+/** The body as text, or null once it exceeds `maxBytes`. Stops reading at the
+ *  cap rather than trusting Content-Length, which a client can omit or understate. */
+async function readBoundedText(request: Request, maxBytes: number): Promise<string | null> {
+  if (Number(request.headers.get("Content-Length")) > maxBytes) return null;
+  if (!request.body) return "";
+  const decoder = new TextDecoder();
+  let text = "";
+  let total = 0;
+  // Leaving the loop early cancels the stream, so the rest is never read.
+  for await (const chunk of request.body) {
+    total += chunk.byteLength;
+    if (total > maxBytes) return null;
+    text += decoder.decode(chunk, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
 const BODYLESS_STATUSES = new Set([204, 205, 304]);
 
 const handler: WorkerHandler<PocEnv> = {
@@ -76,15 +97,13 @@ async function handleScim(
   url: URL,
 ): Promise<Response> {
   const method = request.method.toUpperCase();
-  const rawBody = await request.text();
-  const requestBody = rawBody === "" ? null : rawBody;
   const scimPath = parseScimPath(url.pathname);
 
   const log: ProxyLogInsert = {
     mode: "unknown",
     method,
     path: `${url.pathname.slice(SCIM_PREFIX.length) || "/"}${url.search}`,
-    request_body: requestBody,
+    request_body: null,
   };
   const finish = (response: Response): Response => {
     log.response_status = response.status;
@@ -111,6 +130,18 @@ async function handleScim(
   }
   log.directory_id = directory.id;
   log.mode = directory.mode;
+
+  // Read only once the token names a directory, and never past the cap: an
+  // anonymous caller must not be able to make the bridge buffer a body.
+  const rawBody = await readBoundedText(request, MAX_SCIM_BODY_BYTES);
+  if (rawBody === null) {
+    log.error = `request body over ${MAX_SCIM_BODY_BYTES} bytes`;
+    return finish(
+      scimError(413, `The request body is larger than the ${MAX_SCIM_BODY_BYTES}-byte limit.`),
+    );
+  }
+  const requestBody = rawBody === "" ? null : rawBody;
+  log.request_body = requestBody;
 
   if (!scimPath) {
     return finish(
