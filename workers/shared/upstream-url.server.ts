@@ -48,6 +48,18 @@ export function validateUpstreamUrl(raw: string): string | null {
   return null;
 }
 
+/** Throw before a bearer token would go to `url` in the clear. Checked at send
+ *  time, not only on save: a row stored before https was required must not leak
+ *  its token. */
+export function refusePlaintextToken(url: string): void {
+  if (sendsTokenInPlaintext(new URL(url))) {
+    throw new Error(
+      `Refusing to send a bearer token over plain http to ${new URL(url).hostname}; ` +
+        "set the endpoint to https.",
+    );
+  }
+}
+
 /** Whether a request to `url` would carry a bearer token over a network in the
  *  clear: plain http to anything but this machine. */
 export function sendsTokenInPlaintext(url: URL): boolean {

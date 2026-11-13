@@ -2,7 +2,7 @@ import type { Directory, IdMapping, ResourceType } from "./types";
 import { MIGRATED_ID_HEADER } from "./types";
 import { isEncryptedSecret, timingSafeEqual } from "./crypto";
 import { joinScimUrl, nativeNamespaceKey } from "./scim-url";
-import { sendsTokenInPlaintext } from "./upstream-url.server";
+import { refusePlaintextToken } from "./upstream-url.server";
 import {
   AmbiguousScimMappingError,
   claimWorkosPrimaryCreate,
@@ -282,15 +282,7 @@ export interface ScimFetchOptions {
 }
 
 export async function scimFetch(url: string, options: ScimFetchOptions): Promise<UpstreamResult> {
-  // Checked again here, not only when the URL is saved: a row stored before
-  // https was required, or written by any path that skips the panel, must not
-  // put the bearer token on the wire in the clear.
-  if (sendsTokenInPlaintext(new URL(url))) {
-    throw new Error(
-      `Refusing to send a bearer token over plain http to ${new URL(url).hostname}; ` +
-        "set the endpoint to https.",
-    );
-  }
+  refusePlaintextToken(url);
   const headers = new Headers({ Authorization: `Bearer ${options.token}` });
   if (options.body != null) {
     headers.set("Content-Type", options.contentType ?? SCIM_CONTENT_TYPE);

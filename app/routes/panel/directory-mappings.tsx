@@ -5,6 +5,7 @@ import { datastoreContext } from "../../context";
 import type { IdMapping } from "../../../workers/shared/types";
 import { getDirectoryById, withDatastoreRetry } from "../../../workers/shared/db";
 import { joinScimUrl } from "../../../workers/shared/scim-url";
+import { refusePlaintextToken } from "../../../workers/shared/upstream-url.server";
 import { Callout, Card, Code, Flex, Table, Text } from "@radix-ui/themes";
 import * as EmptyState from "../../ui/empty-state";
 import { Badge } from "../../ui/badge";
@@ -26,6 +27,7 @@ async function fetchWorkosIndex(
   if (!url || !token) return { reachable: false, byId: {} };
   const headers = { Authorization: `Bearer ${token}` };
   try {
+    refusePlaintextToken(url);
     // joinScimUrl (not string concat) so a saved base carrying a query can't fold
     // the path into it, and redirect:"manual" so it can't bounce to an internal host.
     const [uRes, gRes] = await Promise.all([
