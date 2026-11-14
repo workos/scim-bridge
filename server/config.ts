@@ -23,6 +23,8 @@ import {
   partitionedNamespaceNotices,
 } from "../workers/shared/native-namespace";
 import { newScimToken } from "../workers/shared/ids";
+import ConnectionParameters from "pg/lib/connection-parameters";
+import { isLoopbackHost } from "../workers/shared/upstream-url.server";
 import type { PocEnv } from "../workers/shared/types";
 
 /**
@@ -172,6 +174,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (driver === "postgres" && !databaseUrl) {
     throw new Error("DATABASE_URL is required when DATABASE_DRIVER=postgres.");
   }
+  if (driver === "postgres" && databaseUrl) {
+    requireSecurePostgresTransport(databaseUrl, env.DATABASE_ALLOW_PLAINTEXT?.trim() === "true");
+  }
   const webhookSecret = env.WEBHOOK_SECRET?.trim() || null;
   // Refuse to boot rather than serve /webhooks/dsync unauthenticated: the
   // listener skips signature verification when it has no secret, so an
@@ -271,6 +276,41 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
 /** The bundled mock WorkOS events base a demo bridge serves itself — where the
  *  poller points when DEMO_MODE is on and WORKOS_EVENTS_URL says nothing. */
+/**
+ * The database carries every directory's upstream bearer tokens (in the clear
+ * when APP_ENCRYPTION_KEY is unset) and the divergence state the cutover gate
+ * reads, so a Postgres off this machine must be reached over TLS that verifies
+ * the server. node-postgres only uses TLS when the URL asks for it, so a URL
+ * that does not is refused at boot rather than connected in plaintext. The URL
+ * is resolved by node-postgres itself, so `sslmode`, `ssl`, `uselibpqcompat` and
+ * the PGHOST/PGSSLMODE fallbacks mean exactly what they will mean to the connection.
+ * `DATABASE_ALLOW_PLAINTEXT=true` is the escape hatch for a database on a
+ * network you trust, and says so loudly.
+ */
+export function requireSecurePostgresTransport(databaseUrl: string, allowPlaintext: boolean): void {
+  // The settings the pool will actually connect with, PGHOST/PGSSLMODE included.
+  const config = new ConnectionParameters(databaseUrl);
+  const host = config.host ?? "";
+  if (host.startsWith("/") || isLoopbackHost(host)) return;
+  const verified =
+    config.ssl === true ||
+    (typeof config.ssl === "object" && config.ssl.rejectUnauthorized !== false);
+  if (verified) return;
+  if (allowPlaintext) {
+    console.warn(
+      `WARNING: DATABASE_ALLOW_PLAINTEXT=true: connecting to Postgres at ${host} ` +
+        "without verified TLS. Anyone on that network path can read the SCIM bearer tokens " +
+        "stored in it.",
+    );
+    return;
+  }
+  throw new Error(
+    `DATABASE_URL points at ${host} without verified TLS. Add ?sslmode=verify-full ` +
+      "(with sslrootcert= for a private CA), or set DATABASE_ALLOW_PLAINTEXT=true to accept " +
+      "an unencrypted connection on a network you trust.",
+  );
+}
+
 export function demoEventsUrl(config: Pick<AppConfig, "port">): string {
   return `http://127.0.0.1:${config.port}/__demo/native/mock-workos`;
 }

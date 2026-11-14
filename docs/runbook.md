@@ -113,8 +113,18 @@ replicating the file to S3 continuously.
 
 ```bash
 DATABASE_DRIVER=postgres
-DATABASE_URL=postgres://bridge:secret@scim-bridge-db.abc.eu-west-1.rds.amazonaws.com:5432/bridge
+DATABASE_URL='postgres://bridge:secret@scim-bridge-db.abc.eu-west-1.rds.amazonaws.com:5432/bridge?sslmode=verify-full&sslrootcert=/etc/ssl/rds-global-bundle.pem'
 ```
+
+A remote database must use TLS that verifies the server: the bridge refuses to
+boot on a non-loopback `DATABASE_URL` without `sslmode=verify-full` (or
+`require`/`verify-ca`), because the database holds the upstream SCIM tokens.
+`DATABASE_ALLOW_PLAINTEXT=true` accepts a plaintext connection on a network you
+trust, with a warning on every boot.
+
+Upstream endpoints (`native_url`, `workos_url`) must be `https` unless they are
+on loopback; the bridge also refuses to send a bearer token to a stored plain
+`http` endpoint. If a token was ever used over plain http, rotate it.
 
 Both drivers apply their own migrations on boot (`migrations/*.sql` for SQLite,
 `migrations/postgres/*.sql` for Postgres) and are safe to restart. Switching

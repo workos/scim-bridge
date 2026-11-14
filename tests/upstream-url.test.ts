@@ -2,7 +2,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 import { isSuccess, joinScimUrl, scimFetch } from "../workers/shared/scim";
-import { validateUpstreamUrl } from "../workers/shared/upstream-url";
+import { sendsTokenInPlaintext, validateUpstreamUrl } from "../workers/shared/upstream-url.server";
 
 /**
  * The bridge dials operator-supplied `native_url` / `workos_url` from inside the
@@ -12,6 +12,12 @@ import { validateUpstreamUrl } from "../workers/shared/upstream-url";
  * uses. The panel wiring that calls this lives in tests/directory-import.test.ts.
  */
 describe("validateUpstreamUrl", () => {
+  it("refuses plain http to anything off this machine", () => {
+    for (const url of ["http://10.0.0.7/scim/v2", "http://native.example.com/scim/v2"]) {
+      expect(validateUpstreamUrl(url)).toMatch(/must use https/);
+    }
+  });
+
   it("rejects a scheme that is not http or https", () => {
     expect(validateUpstreamUrl("file:///etc/passwd")).toMatch(/must use http or https/);
     expect(validateUpstreamUrl("gopher://x/")).toMatch(/must use http or https/);
@@ -28,6 +34,9 @@ describe("validateUpstreamUrl", () => {
     expect(validateUpstreamUrl("http://[fd00:ec2::254]/latest/meta-data/")).toMatch(
       /metadata address/,
     );
+    expect(validateUpstreamUrl("http://[::ffff:169.254.169.254]/latest/")).toMatch(
+      /metadata address/,
+    );
   });
 
   it("accepts an ordinary https endpoint and a loopback http one", () => {
@@ -36,7 +45,8 @@ describe("validateUpstreamUrl", () => {
     expect(validateUpstreamUrl("https://acme.example.com/scim/v2")).toBeNull();
     expect(validateUpstreamUrl("http://127.0.0.1:8788/scim/v2")).toBeNull();
     expect(validateUpstreamUrl("http://localhost:8788/scim/v2")).toBeNull();
-    expect(validateUpstreamUrl("http://10.0.0.7/scim/v2")).toBeNull();
+    expect(validateUpstreamUrl("http://localhost.:8788/scim/v2")).toBeNull();
+    expect(validateUpstreamUrl("http://[::ffff:127.0.0.1]:8788/scim/v2")).toBeNull();
     // Empty is "not configured yet", which the optional endpoint fields allow.
     expect(validateUpstreamUrl("")).toBeNull();
     expect(validateUpstreamUrl("   ")).toBeNull();
@@ -112,6 +122,26 @@ describe("scimFetch does not follow redirects", () => {
     } finally {
       await new Promise<void>((resolve) => metadata.close(() => resolve()));
       await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    }
+  });
+});
+
+describe("scimFetch refuses to send the bearer token in the clear", () => {
+  it("throws for a stored plain-http endpoint off this machine, before any request", async () => {
+    await expect(
+      scimFetch("http://10.0.0.7/scim/v2/Users", { method: "GET", token: "tok" }),
+    ).rejects.toThrow(/plain http/);
+  });
+
+  it("refuses plain http to every remote host, private or not", () => {
+    for (const url of [
+      "http://10.0.0.7/scim/v2",
+      "http://[fd12::5]/scim/v2",
+      "http://[::ffff:10.0.0.7]/scim/v2",
+      "http://native-app:8080/scim/v2",
+      "http://203.0.113.9/scim/v2",
+    ]) {
+      expect(sendsTokenInPlaintext(new URL(url))).toBe(true);
     }
   });
 });

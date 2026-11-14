@@ -1,6 +1,8 @@
 import type { Directory, IdMapping, ResourceType } from "./types";
 import { MIGRATED_ID_HEADER } from "./types";
 import { isEncryptedSecret, timingSafeEqual } from "./crypto";
+import { joinScimUrl, nativeNamespaceKey } from "./scim-url";
+import { refusePlaintextToken } from "./upstream-url.server";
 import {
   AmbiguousScimMappingError,
   claimWorkosPrimaryCreate,
@@ -13,6 +15,8 @@ import {
 } from "./db";
 import type { NewMapping } from "./db";
 import type { Datastore } from "./datastore";
+
+export { joinScimUrl, nativeNamespaceKey } from "./scim-url";
 
 export const SCIM_PREFIX = "/scim/v2";
 export const SCIM_CONTENT_TYPE = "application/scim+json";
@@ -90,49 +94,6 @@ export function parseJson(text: string | null): Record<string, unknown> | null {
   } catch {
     return null;
   }
-}
-
-export function joinScimUrl(base: string, path: string): string {
-  let url: URL;
-  try {
-    url = new URL(base);
-  } catch {
-    // An unparseable base was already broken; keep the old total behaviour
-    // rather than start throwing here.
-    return base.replace(/\/+$/, "") + path;
-  }
-  // Append to the pathname, not the raw string. A base that carries a query or
-  // fragment (`https://host/scim?x` or a stored `http://169.254.169.254/…?`)
-  // would otherwise fold the forced `/Users` suffix into the query string
-  // (`…?x/Users`), letting an operator-supplied URL divert the request path past
-  // host validation. The base names an endpoint, not a query, so drop both.
-  url.search = "";
-  url.hash = "";
-  url.pathname = url.pathname.replace(/\/+$/, "") + path;
-  return url.toString();
-}
-
-/**
- * Canonical key for the native SCIM namespace a base URL addresses, so two
- * directories configured with equivalent-but-differently-written URLs (default
- * port written out, upper-case host, trailing slash) are recognised as the same
- * native app. Returns null for a URL that can't be parsed — callers that use
- * this to decide whether resources can collide must treat that as "might be the
- * same namespace" rather than assuming isolation.
- */
-export function nativeNamespaceKey(base: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(base);
-  } catch {
-    return null;
-  }
-  const port = url.port && url.port !== defaultPort(url.protocol) ? `:${url.port}` : "";
-  return `${url.protocol.toLowerCase()}//${url.hostname.toLowerCase()}${port}${url.pathname.replace(/\/+$/, "")}`;
-}
-
-function defaultPort(protocol: string): string {
-  return protocol === "https:" ? "443" : protocol === "http:" ? "80" : "";
 }
 
 /**
@@ -321,6 +282,7 @@ export interface ScimFetchOptions {
 }
 
 export async function scimFetch(url: string, options: ScimFetchOptions): Promise<UpstreamResult> {
+  refusePlaintextToken(url);
   const headers = new Headers({ Authorization: `Bearer ${options.token}` });
   if (options.body != null) {
     headers.set("Content-Type", options.contentType ?? SCIM_CONTENT_TYPE);

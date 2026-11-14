@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { RouterContextProvider } from "react-router";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { action, loader as homeLoader } from "../app/routes/panel/home";
 import { action as overviewAction } from "../app/routes/panel/directory-overview";
 import { datastoreContext, demoModeContext } from "../app/context";
@@ -1022,5 +1022,25 @@ describe("save actions reject a dangerous upstream URL", () => {
     expect((await getDirectoryById(env.DB, dir.id))?.native_url).toBe(
       "http://127.0.0.1:8788/scim/v2",
     );
+  });
+
+  it("does not send a stored token to a remote plain-http endpoint saved before https was required", async () => {
+    const env = await createEnv();
+    const dir = await seedDirectory(env.DB, { native_url: "http://native.example/scim/v2" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    onTestFinished(() => fetchSpy.mockRestore());
+
+    const topology = (await postOverview(env, dir.id, { intent: "topology" })) as {
+      topology: { native: { reachable: boolean } };
+    };
+    const test = (await postOverview(env, dir.id, { intent: "test-native" })) as {
+      health: { ok: boolean; detail?: string };
+    };
+
+    expect(topology.topology.native.reachable).toBe(false);
+    expect(test.health.ok).toBe(false);
+    expect(test.health.detail).toMatch(/plain http/);
+    const urls = fetchSpy.mock.calls.map(([input]) => String(input));
+    expect(urls.filter((url) => url.startsWith("http://native.example"))).toEqual([]);
   });
 });

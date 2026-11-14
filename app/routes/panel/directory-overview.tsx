@@ -36,9 +36,12 @@ import {
   publishMintedToken,
 } from "../../../workers/shared/client-tokens";
 import { checkNativeNamespace } from "../../../workers/shared/native-namespace";
-import { joinScimUrl } from "../../../workers/shared/scim";
+import { joinScimUrl } from "../../../workers/shared/scim-url";
 import { countUsers, getUserCountStatus, type EndpointCount } from "./user-count";
-import { validateUpstreamUrl } from "../../../workers/shared/upstream-url";
+import {
+  refusePlaintextToken,
+  validateUpstreamUrl,
+} from "../../../workers/shared/upstream-url.server";
 import type { BackfillSummary, Mode, NativeWriteFailure } from "../../../workers/shared/types";
 import { MODES } from "../../../workers/shared/types";
 import {
@@ -138,6 +141,7 @@ async function checkEndpoint(
     };
   }
   try {
+    refusePlaintextToken(url);
     const response = await fetch(`${joinScimUrl(url, "/Users")}?count=1`, {
       headers: { Authorization: `Bearer ${token}` },
       // Same reason as scimFetch: don't let a saved endpoint redirect this
@@ -302,9 +306,18 @@ export async function action({
   }
 
   if (intent === "topology") {
+    // countUsers is shared with the page, which can't import the https check.
+    const count = (url: string, token: string) => {
+      try {
+        if (url) refusePlaintextToken(url);
+      } catch {
+        return { reachable: false, count: null, truncated: false };
+      }
+      return countUsers(url, token);
+    };
     const [native, workos] = await Promise.all([
-      countUsers(directory.native_url, directory.native_token),
-      countUsers(directory.workos_url, directory.workos_token),
+      count(directory.native_url, directory.native_token),
+      count(directory.workos_url, directory.workos_token),
     ]);
     return { topology: { native, workos } };
   }
