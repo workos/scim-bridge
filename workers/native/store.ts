@@ -95,15 +95,20 @@ export class ScimStore {
     externalId: string | null;
     active: boolean;
     resource: ScimResource;
-  }): Promise<void> {
-    await withDatastoreRetry(() =>
+    /** Owning directory: stamped on insert, and the write is refused (false)
+     *  when the row already belongs to a different directory. */
+    directoryId?: string;
+  }): Promise<boolean> {
+    const result = await withDatastoreRetry(() =>
       this.db
         .prepare(
-          `INSERT INTO ${this.tables.users} (id, user_name, external_id, active, resource) ` +
-            "VALUES (?, ?, ?, ?, ?) " +
+          `INSERT INTO ${this.tables.users} ` +
+            `(id, user_name, external_id, active, resource${ownerColumn(user)}) ` +
+            `VALUES (?, ?, ?, ?, ?${ownerValue(user)}) ` +
             "ON CONFLICT (id) DO UPDATE SET user_name = excluded.user_name, " +
             "external_id = excluded.external_id, active = excluded.active, " +
-            "resource = excluded.resource, updated_at = datetime('now')",
+            "resource = excluded.resource, updated_at = datetime('now')" +
+            ownerGuard(this.tables.users, user),
         )
         .bind(
           user.id,
@@ -111,9 +116,11 @@ export class ScimStore {
           user.externalId,
           user.active ? 1 : 0,
           JSON.stringify(user.resource),
+          ...ownerBinding(user),
         )
         .run(),
     );
+    return result.meta.changes > 0;
   }
 
   async deleteUser(id: string): Promise<boolean> {
@@ -171,19 +178,30 @@ export class ScimStore {
     displayName: string;
     externalId: string | null;
     resource: ScimResource;
-  }): Promise<void> {
-    await withDatastoreRetry(() =>
+    /** As for {@link upsertUser}. */
+    directoryId?: string;
+  }): Promise<boolean> {
+    const result = await withDatastoreRetry(() =>
       this.db
         .prepare(
-          `INSERT INTO ${this.tables.groups} (id, display_name, external_id, resource) ` +
-            "VALUES (?, ?, ?, ?) " +
+          `INSERT INTO ${this.tables.groups} ` +
+            `(id, display_name, external_id, resource${ownerColumn(group)}) ` +
+            `VALUES (?, ?, ?, ?${ownerValue(group)}) ` +
             "ON CONFLICT (id) DO UPDATE SET display_name = excluded.display_name, " +
             "external_id = excluded.external_id, resource = excluded.resource, " +
-            "updated_at = datetime('now')",
+            "updated_at = datetime('now')" +
+            ownerGuard(this.tables.groups, group),
         )
-        .bind(group.id, group.displayName, group.externalId, JSON.stringify(group.resource))
+        .bind(
+          group.id,
+          group.displayName,
+          group.externalId,
+          JSON.stringify(group.resource),
+          ...ownerBinding(group),
+        )
         .run(),
     );
+    return result.meta.changes > 0;
   }
 
   async deleteGroup(id: string): Promise<boolean> {
@@ -270,4 +288,27 @@ export class ScimStore {
     );
     return { total: totalRow?.n ?? 0, rows: results };
   }
+}
+
+interface Owned {
+  directoryId?: string;
+}
+
+const ownerColumn = (row: Owned): string => (row.directoryId === undefined ? "" : ", directory_id");
+const ownerValue = (row: Owned): string => (row.directoryId === undefined ? "" : ", ?");
+const ownerBinding = (row: Owned): string[] =>
+  row.directoryId === undefined ? [] : [row.directoryId];
+
+/**
+ * The conflict tail of an owned upsert (only the native tables carry an owner;
+ * SCIM writes have no directory and leave it alone). An owned write claims an
+ * unclaimed row and does nothing to a row another directory owns, in the same
+ * statement, so two directories racing for one id cannot both write it.
+ */
+function ownerGuard(table: string, row: Owned): string {
+  if (row.directoryId === undefined) return "";
+  return (
+    `, directory_id = COALESCE(${table}.directory_id, excluded.directory_id) ` +
+    `WHERE ${table}.directory_id IS NULL OR ${table}.directory_id = excluded.directory_id`
+  );
 }

@@ -1,9 +1,9 @@
 import type { Datastore } from "../shared/datastore";
 import type { Directory, PocEnv, ResourceType, WorkerHandler } from "../shared/types";
+import { writeFingerprint } from "../shared/crypto";
 import {
   AmbiguousScimMappingError,
   claimWorkosPrimaryCreate,
-  clearNativeWriteFailure,
   deleteMapping,
   getDirectoryByToken,
   getMapping,
@@ -11,10 +11,12 @@ import {
   insertProxyLog,
   type ProxyLogInsert,
   recordNativeWriteFailure,
+  retireNativeWriteFailure,
   releaseWorkosPrimaryCreate,
   shouldPersistLogs,
   upsertMapping,
 } from "../shared/db";
+import type { DivergenceRepair } from "../shared/db";
 import {
   SCIM_CONTENT_TYPE,
   SCIM_PREFIX,
@@ -44,6 +46,27 @@ import {
 import { handleStatus, STATUS_PREFIX } from "./status";
 
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+/** Well above the largest group PATCH an IdP sends, far below what would
+ *  strain the one process every directory shares. */
+export const MAX_SCIM_BODY_BYTES = 10 * 1024 * 1024;
+
+/** The body as text, or null once it exceeds `maxBytes`. Stops reading at the
+ *  cap rather than trusting Content-Length, which a client can omit or understate. */
+async function readBoundedText(request: Request, maxBytes: number): Promise<string | null> {
+  if (Number(request.headers.get("Content-Length")) > maxBytes) return null;
+  if (!request.body) return "";
+  const decoder = new TextDecoder();
+  let text = "";
+  let total = 0;
+  // Leaving the loop early cancels the stream, so the rest is never read.
+  for await (const chunk of request.body) {
+    total += chunk.byteLength;
+    if (total > maxBytes) return null;
+    text += decoder.decode(chunk, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
 const BODYLESS_STATUSES = new Set([204, 205, 304]);
 
 const handler: WorkerHandler<PocEnv> = {
@@ -74,15 +97,13 @@ async function handleScim(
   url: URL,
 ): Promise<Response> {
   const method = request.method.toUpperCase();
-  const rawBody = await request.text();
-  const requestBody = rawBody === "" ? null : rawBody;
   const scimPath = parseScimPath(url.pathname);
 
   const log: ProxyLogInsert = {
     mode: "unknown",
     method,
     path: `${url.pathname.slice(SCIM_PREFIX.length) || "/"}${url.search}`,
-    request_body: requestBody,
+    request_body: null,
   };
   const finish = (response: Response): Response => {
     log.response_status = response.status;
@@ -109,6 +130,18 @@ async function handleScim(
   }
   log.directory_id = directory.id;
   log.mode = directory.mode;
+
+  // Read only once the token names a directory, and never past the cap: an
+  // anonymous caller must not be able to make the bridge buffer a body.
+  const rawBody = await readBoundedText(request, MAX_SCIM_BODY_BYTES);
+  if (rawBody === null) {
+    log.error = `request body over ${MAX_SCIM_BODY_BYTES} bytes`;
+    return finish(
+      scimError(413, `The request body is larger than the ${MAX_SCIM_BODY_BYTES}-byte limit.`),
+    );
+  }
+  const requestBody = rawBody === "" ? null : rawBody;
+  log.request_body = requestBody;
 
   if (!scimPath) {
     return finish(
@@ -219,33 +252,39 @@ async function clearDivergenceForWrite(
   method: string,
   requestBody: string | null,
   native: UpstreamResult,
-  { pathKeysOnly }: { pathKeysOnly: boolean } = { pathKeysOnly: false },
 ): Promise<void> {
   const kind = scimPath.kind;
   if (kind === null) return;
-  const sent = pathKeysOnly ? null : parseJson(requestBody);
-  const returned = pathKeysOnly ? null : parseJson(native.bodyText);
-  // Every key a row for this resource could carry. A create is not addressed by an
-  // id yet, so `workosPrimaryCreate` files it under the externalId or unique
-  // attribute the IdP will retry with — and the retry that repairs it, after a
-  // rollback, is a POST with no path id at all.
-  //
-  // Only the path keys are the caller's request read back. The rest are the write
-  // itself — what was sent and what native echoed for it — so they are usable only
-  // on behalf of a write native says it applied. Callers without that pass
-  // `pathKeysOnly`.
-  const keys = new Set(
-    [
-      scimPath.id,
+  // Each method proves a different repair. A delete proves only what its path
+  // names; native's 404 on an already-gone delete corroborates the path id and
+  // nothing in the body. A create native applied repairs a create filed under the
+  // externalId or unique attribute the IdP retries with — and that retry, after a
+  // rollback, is a POST with no path id. A PUT or PATCH repairs only the row that
+  // records this exact write: a different write to the same resource does not
+  // apply the one native missed.
+  const repairs: [string | null, DivergenceRepair][] = [];
+  if (method === "DELETE") {
+    repairs.push([scimPath.id, { kind: "deleted" }]);
+  } else if (method === "POST") {
+    const sent = parseJson(requestBody);
+    const returned = parseJson(native.bodyText);
+    const fingerprint = await writeFingerprint(method, kind, null, requestBody);
+    for (const key of [
       scimPath.id === null ? `${method} ${scimPath.rest}` : null,
-      sent ? (typeof sent.externalId === "string" ? sent.externalId : null) : null,
+      sent && typeof sent.externalId === "string" ? sent.externalId : null,
       sent ? uniqueAttributeValue(kind, sent) : null,
       returned && typeof returned.id === "string" ? returned.id : null,
-    ].filter((key): key is string => typeof key === "string" && key !== ""),
-  );
-  for (const key of keys) {
+    ]) {
+      repairs.push([key, { kind: "created", fingerprint }]);
+    }
+  } else {
+    const fingerprint = await writeFingerprint(method, kind, scimPath.id, requestBody);
+    repairs.push([scimPath.id, { kind: "retried", fingerprint }]);
+  }
+  for (const [key, repair] of repairs) {
+    if (key === null || key === "") continue;
     try {
-      await clearNativeWriteFailure(db, directory.id, kind, key);
+      await retireNativeWriteFailure(db, directory.id, kind, key, repair);
     } catch {
       // Retiring a stale row must never fail the write that earned it.
     }
@@ -358,9 +397,7 @@ async function dualWrite(
         // write whatever WorkOS does, but here nothing converges until WorkOS drops
         // the resource native already lacks.
         if (deleteAlreadyGone && mirrored) {
-          await clearDivergenceForWrite(env.DB, directory, scimPath, method, requestBody, native, {
-            pathKeysOnly: true,
-          });
+          await clearDivergenceForWrite(env.DB, directory, scimPath, method, requestBody, native);
         }
       }
       if (shouldPersistLogs(directory)) await insertProxyLog(env.DB, log).catch(() => {});
@@ -730,9 +767,10 @@ async function workosPrimaryWrite(
   // from native decoding the path — so it still clears under `resourceKey` below.
   const nativeGone =
     method === "DELETE" && native.result?.status === 404 && pathSpellsId(scimPath, kind);
-  // The resource's key in native-id space: what the IdP addressed, and what a
-  // later successful write to the same resource will clear.
+  // The resource's key in native-id space: what the IdP addressed, and what the
+  // retry of this write, or a converged delete of the resource, will clear.
   const resourceKey = scimPath.id ?? `${method} ${scimPath.rest}`;
+  const fingerprint = await writeFingerprint(method, kind, scimPath.id, requestBody);
 
   if (native.result === null || (!isSuccess(native.result.status) && !nativeGone)) {
     // Only a WorkOS 2xx means WorkOS holds a write native is missing, so a
@@ -744,6 +782,7 @@ async function workosPrimaryWrite(
         kind,
         resourceKey,
         method,
+        fingerprint,
         native,
         workosCommitted,
         log,
@@ -757,8 +796,11 @@ async function workosPrimaryWrite(
     return finish(workosResponse);
   }
   // Reached only when WorkOS no longer holds the resource (it committed, or the
-  // delete found it already gone) and native is settled too, so any standing row
-  // for this resource describes a gap that is now closed.
+  // delete found it already gone) and native is settled too. A converged delete
+  // closes every gap standing for the resource; any other write closes only the
+  // row that records this same write, because a different write to the resource
+  // — a display-name PATCH after a failed membership removal — does not apply the
+  // one native missed.
   //
   // `resourceKey` is the request line read back — the path id, or the method and
   // path for an id-less request. Never the body, never an id native echoed. That
@@ -768,7 +810,13 @@ async function workosPrimaryWrite(
   // hold that id. Widening the key set here from the request body would be a hole:
   // it would let any holder of the directory's proxy token retire an unrelated
   // resource's deprovisioning gap by naming it in the body of a DELETE.
-  await clearNativeWriteFailure(env.DB, directory.id, kind, resourceKey);
+  await retireNativeWriteFailure(
+    env.DB,
+    directory.id,
+    kind,
+    resourceKey,
+    method === "DELETE" ? { kind: "deleted" } : { kind: "retried", fingerprint },
+  );
   if (method === "DELETE" && scimPath.id !== null) {
     try {
       await deleteMapping(env.DB, directory.id, kind, scimPath.id);
@@ -1075,6 +1123,7 @@ async function workosPrimaryCreateClaimed(
   // Before native answers, the only handle on the resource is the id the IdP will
   // retry with, so a create that never reached native is recorded under that.
   const failureKey = externalId ?? uniqueAttributeValue(kind, parsed) ?? `POST /${kind}`;
+  const fingerprint = await writeFingerprint("POST", kind, null, requestBody);
 
   if (native.id === null) {
     // A freshly created WorkOS row can be removed after native explicitly
@@ -1093,7 +1142,14 @@ async function workosPrimaryCreateClaimed(
           { method: "DELETE", token: directory.workos_token },
         );
         if (isSuccess(rollback.status) || rollback.status === 404) {
-          await clearNativeWriteFailure(env.DB, directory.id, kind, failureKey);
+          // Removing the WorkOS row undoes only this create, so it retires only
+          // the row this same create filed. `failureKey` comes from the request
+          // body and native applied nothing, so it is no proof about any other
+          // row under that key — least of all a `DELETE` gap.
+          await retireNativeWriteFailure(env.DB, directory.id, kind, failureKey, {
+            kind: "created",
+            fingerprint,
+          });
           releaseClaim = true;
           log.error = `Native refused the create; removed newly created WorkOS ${kind}/${mirror.createdId}.`;
           return finish(nativeFailureResponse(native));
@@ -1111,6 +1167,7 @@ async function workosPrimaryCreateClaimed(
         method: "POST",
         native_status: native.result?.status ?? null,
         detail: nativeFailureDetail(native, "WorkOS created the resource; native did not"),
+        write_fingerprint: fingerprint,
       });
     }
     return finish(nativeFailureResponse(native));
@@ -1165,8 +1222,14 @@ async function workosPrimaryCreateClaimed(
     // is what keeps them addressable — which is what 'fallback-post' means.
     strategy: workosId === native.id ? "migrated-id" : "fallback-post",
   });
-  await clearNativeWriteFailure(env.DB, directory.id, kind, failureKey);
-  await clearNativeWriteFailure(env.DB, directory.id, kind, native.id);
+  // Native applied a create, which repairs a create it was missing and nothing
+  // else: a resolved native 409 names a pre-existing row whose own gaps stand.
+  for (const key of [failureKey, native.id]) {
+    await retireNativeWriteFailure(env.DB, directory.id, kind, key, {
+      kind: "created",
+      fingerprint,
+    });
+  }
 
   // WorkOS's representation, in the id space the IdP addresses: its own id for
   // this resource, and native ids for any group members.
@@ -1381,6 +1444,7 @@ async function nativeLegFailed(
   kind: ResourceType,
   resourceKey: string,
   method: string,
+  fingerprint: string,
   native: NativeLeg,
   workosCommitted: boolean,
   log: ProxyLogInsert,
@@ -1395,6 +1459,7 @@ async function nativeLegFailed(
       method,
       native_status: native.result?.status ?? null,
       detail,
+      write_fingerprint: fingerprint,
     });
   }
   return nativeFailureResponse(native);

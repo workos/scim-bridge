@@ -1,4 +1,4 @@
-import { joinScimUrl } from "../../../workers/shared/scim";
+import { joinScimUrl } from "../../../workers/shared/scim-url";
 
 export interface EndpointCount {
   reachable: boolean;

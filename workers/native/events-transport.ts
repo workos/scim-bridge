@@ -68,6 +68,8 @@ export interface EventsPollerStatus {
   baseUrl: string | null;
   keySource: EventsKeySource | null;
   envKeyConfigured: boolean;
+  /** The only Events API base WORKOS_API_KEY is sent to; null without one. */
+  pinnedEventsUrl: string | null;
   intervalMs: number;
   /** ISO time of the last poll that completed, across starts and stops. */
   lastPollAt: string | null;
@@ -121,6 +123,11 @@ async function storedApiKey(db: Datastore): Promise<string | null> {
   if (!raw) return null;
   const plain = await decryptSecret(db, raw);
   return plain && !isEncryptedSecret(plain) ? plain : null;
+}
+
+/** WORKOS_EVENTS_URL, or real WorkOS when that is the bundled mock. */
+function envEventsUrl(boot: EventsPollerBoot): string {
+  return boot.envEventsUrl !== boot.mockEventsUrl ? boot.envEventsUrl : DEFAULT_EVENTS_URL;
 }
 
 /** What an absent `native.events_target` means for this boot: the mock when
@@ -183,9 +190,10 @@ async function resolveDesired(db: Datastore, boot: EventsPollerBoot): Promise<De
     };
   }
 
-  const baseUrl =
-    (await getConfig(db, EVENTS_URL_KEY)) ??
-    (boot.envEventsUrl !== boot.mockEventsUrl ? boot.envEventsUrl : DEFAULT_EVENTS_URL);
+  // The env key never goes to a URL chosen in the panel.
+  const baseUrl = boot.envApiKey
+    ? envEventsUrl(boot)
+    : ((await getConfig(db, EVENTS_URL_KEY)) ?? envEventsUrl(boot));
   const stored = boot.envApiKey ? null : await storedApiKey(db);
   const apiKey = boot.envApiKey ?? stored;
   if (!apiKey) {
@@ -220,6 +228,7 @@ export function createEventsPollerController(
     baseUrl: null,
     keySource: null,
     envKeyConfigured: Boolean(boot.envApiKey),
+    pinnedEventsUrl: boot.envApiKey ? envEventsUrl(boot) : null,
     intervalMs,
     lastPollAt: null,
     lastError: null,
@@ -381,6 +390,10 @@ export async function setEventsPollTarget(
         "The Events API URL must use https — a plain-http target would send the API key " +
         "in cleartext. (Loopback addresses are exempt.)",
     };
+  }
+  const pinned = opts.controller?.status().pinnedEventsUrl;
+  if (pinned && url.replace(/\/+$/, "") !== pinned) {
+    return { error: `WORKOS_API_KEY is only sent to ${pinned}, set by WORKOS_EVENTS_URL.` };
   }
   if (!(await anyKeyAvailable(db, opts))) return { error: NEEDS_KEY };
   await setConfig(db, EVENTS_URL_KEY, url.replace(/\/+$/, ""));
