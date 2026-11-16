@@ -23,8 +23,8 @@ import {
   partitionedNamespaceNotices,
   unparseableNativeUrlMessage,
 } from "../../../workers/shared/native-namespace";
-import { nativeNamespaceKey } from "../../../workers/shared/scim";
-import { validateUpstreamUrl } from "../../../workers/shared/upstream-url";
+import { nativeNamespaceKey } from "../../../workers/shared/scim-url";
+import { validateUpstreamUrl } from "../../../workers/shared/upstream-url.server";
 import { MODES, type Mode } from "../../../workers/shared/types";
 import {
   Callout,

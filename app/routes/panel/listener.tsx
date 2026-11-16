@@ -109,7 +109,8 @@ export async function loader({ context }: Route.LoaderArgs) {
       (targetChoice === "workos" || targetChoice === "mock"
         ? targetChoice
         : (poller?.defaultTarget ?? "mock")),
-    eventsUrl: eventsUrl ?? "https://api.workos.com",
+    eventsUrl: poller?.pinnedEventsUrl ?? eventsUrl ?? "https://api.workos.com",
+    eventsUrlPinned: Boolean(poller?.pinnedEventsUrl),
     // Presence only — the stored key itself is never sent to the page.
     storedKeyConfigured: Boolean(storedKey),
     envKeyConfigured: opts.envKeyConfigured,
@@ -177,6 +178,7 @@ export default function PanelListener() {
     transport,
     pollTarget,
     eventsUrl,
+    eventsUrlPinned,
     storedKeyConfigured,
     envKeyConfigured,
     cursor,
@@ -346,12 +348,18 @@ export default function PanelListener() {
                           id="events-url"
                           name="url"
                           placeholder="https://api.workos.com"
+                          readOnly={eventsUrlPinned}
                         />
                       </Box>
                       <Button type="submit" variant="soft">
                         Save target
                       </Button>
                     </Flex>
+                    {eventsUrlPinned ? (
+                      <Text color="gray" size="2">
+                        Set by WORKOS_EVENTS_URL.
+                      </Text>
+                    ) : null}
                   </Flex>
                 </Form>
               ) : null}

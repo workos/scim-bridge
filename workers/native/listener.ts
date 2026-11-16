@@ -135,15 +135,19 @@ export async function processDsyncEvent(
     // stale pre-cutover webhook that is delivered late (out of order) can't be
     // applied after cutover on top of newer state the app already holds. We
     // record the version but never mutate directory rows before cutover.
+    // An event no configured directory claims records nothing: it has no
+    // authority over any row here, so it must not move another directory's clock.
     const scopes = instruction.directoryId
-      ? await eventScopes(
-          db,
-          new ScimStore(db, NATIVE_TABLES),
-          instruction.directoryId,
-          eventType,
-          data,
-        )
-      : [scopeFor(eventType, data)].filter((scope): scope is string => !!scope);
+      ? (
+          await eventScopes(
+            db,
+            new ScimStore(db, NATIVE_TABLES),
+            instruction.directoryId,
+            eventType,
+            data,
+          )
+        ).record
+      : [];
     for (const scope of scopes) await recordEventVersion(db, scope, eventAt);
     await recordEvent(db, {
       eventId,
@@ -216,7 +220,7 @@ async function dispatch(
   directoryId: string,
 ): Promise<Outcome> {
   const scopes = await eventScopes(db, store, directoryId, eventType, data);
-  if (!(await isNewestAcross(db, scopes, eventAt))) {
+  if (!(await isNewestAcross(db, scopes.check, eventAt))) {
     return {
       action: "skipped",
       detail: "superseded by a newer event (out-of-order delivery)",
@@ -224,7 +228,7 @@ async function dispatch(
     };
   }
   const outcome = await applyEvent(db, store, eventType, data, eventAt, directoryId);
-  for (const scope of scopes) await recordEventVersion(db, scope, eventAt);
+  for (const scope of scopes.record) await recordEventVersion(db, scope, eventAt);
   return outcome;
 }
 
@@ -256,17 +260,34 @@ function scopeFor(eventType: string, data: Json): string | null {
   return null;
 }
 
-/** Stable DS ids also check legacy high-water marks when upgrading a listener. */
+/** A legacy attribute-derived key, bound to the directory that owns the event.
+ *  `idp_id`, userName and displayName are chosen by each directory's IdP, so
+ *  without the directory two organizations can share one ordering timeline. */
+function directoryScoped(directoryId: string, legacy: string): string {
+  return `dsync-legacy:${JSON.stringify([directoryId, legacy])}`;
+}
+
+/**
+ * The ordering keys an event is gated on (`check`) and the ones applying it
+ * advances (`record`). Every recorded key is bound to the event's directory.
+ * The unscoped `user:`/`group:`/`member:` keys an older listener wrote are
+ * still checked, so a stale event from before the upgrade stays dropped, but
+ * they are never written again: another directory can no longer advance them.
+ */
 async function eventScopes(
   db: Datastore,
   store: ScimStore,
   directoryId: string,
   eventType: string,
   data: Json,
-): Promise<string[]> {
+): Promise<{ check: string[]; record: string[] }> {
   const scopes = new Set<string>();
+  const unscoped = new Set<string>();
   const legacy = scopeFor(eventType, data);
-  if (legacy) scopes.add(legacy);
+  if (legacy) {
+    unscoped.add(legacy);
+    scopes.add(directoryScoped(directoryId, legacy));
+  }
   const membership =
     eventType === "dsync.group.user_added" || eventType === "dsync.group.user_removed";
   const users = membership
@@ -306,8 +327,11 @@ async function eventScopes(
         ? { idp_id: group.external_id ?? group.display_name }
         : null;
   const currentLegacy = current ? scopeFor(eventType, current) : null;
-  if (currentLegacy) scopes.add(currentLegacy);
-  return [...scopes];
+  if (currentLegacy) {
+    unscoped.add(currentLegacy);
+    scopes.add(directoryScoped(directoryId, currentLegacy));
+  }
+  return { check: [...scopes, ...unscoped], record: [...scopes] };
 }
 
 async function isNewestAcross(
@@ -369,13 +393,20 @@ async function upsertUserFromEvent(
   const active = data.state === "active";
 
   const nativeId = await resolveNativeEventId(db, store, directoryId, "Users", data, !active);
-  const existing = await findUser(store, idpId, userName, nativeId);
+  const existing = await findUser(db, store, directoryId, idpId, userName, nativeId);
   if (!existing) {
     // A confirmed SCIM mapping preserves the native id. Directory Sync data.id
     // has its own namespace and must never become an unconfirmed native id.
-    const id = idForNewEventResource(data, nativeId, idpId);
-    const resource = userResourceFromEvent(id, idpId, userName, active, data, {});
-    await store.upsertUser({ id, userName, externalId: idpId, active, resource });
+    await createOwnedRow(db, "Users", data, nativeId, idpId, directoryId, (id) =>
+      store.upsertUser({
+        id,
+        userName,
+        externalId: idpId,
+        active,
+        resource: userResourceFromEvent(id, idpId, userName, active, data, {}),
+        directoryId,
+      }),
+    );
     return { action: "applied", detail: active ? "onboard()" : "provisioned inactive", idpId };
   }
 
@@ -393,7 +424,10 @@ async function upsertUserFromEvent(
     existing.user_name === userName &&
     existing.external_id === idpId &&
     JSON.stringify(resource) === existing.resource;
-  if (unchanged) return { action: "skipped", detail: "no transition", idpId };
+  if (unchanged) {
+    await claimRow(db, "Users", existing.id, directoryId);
+    return { action: "skipped", detail: "no transition", idpId };
+  }
 
   // The userName fallback can match a row that belonged to a different identity:
   // deletes leave tombstones, so a new hire provisioned with a departed user's
@@ -412,6 +446,7 @@ async function upsertUserFromEvent(
   }
 
   await store.upsertUser({ id: existing.id, userName, externalId: idpId, active, resource });
+  await claimRow(db, "Users", existing.id, directoryId);
   const detail =
     !wasActive && active ? "onboard()" : wasActive && !active ? "offboard()" : "attributes updated";
   return { action: "applied", detail: detail + membershipNote, idpId };
@@ -456,8 +491,15 @@ async function deleteUserFromEvent(
   if (!idpId) return { action: "ignored", detail: "user event carries no idp_id" };
   const userName = userNameFromEvent(data);
   const nativeId = await resolveNativeEventId(db, store, directoryId, "Users", data, true);
-  const existing = await findUser(store, idpId, userName, nativeId);
-  if (!existing) return { action: "skipped", detail: "no-op: user already absent", idpId };
+  const existing = await findUser(db, store, directoryId, idpId, userName, nativeId);
+  if (!existing) {
+    if (!nativeId)
+      await refuseUnclaimedOffboard(db, NATIVE_TABLES.users, [
+        ["external_id = ?", idpId],
+        ["lower(user_name) = lower(?)", userName],
+      ]);
+    return { action: "skipped", detail: "no-op: user already absent", idpId };
+  }
 
   if ((await getConfig(db, "native.delete_policy")) === "hard") {
     // Demo/testing convenience only — loses the rehire safety the soft path
@@ -482,6 +524,7 @@ async function deleteUserFromEvent(
     active: false,
     resource,
   });
+  await claimRow(db, "Users", existing.id, directoryId);
   return { action: "applied", detail: "offboard() — deactivated in place", idpId };
 }
 
@@ -497,19 +540,26 @@ async function upsertGroupFromEvent(
   const name = asString(data.name);
 
   const nativeId = await resolveNativeEventId(db, store, directoryId, "Groups", data);
-  const existing = await findGroup(store, idpId, name, nativeId);
+  const existing = await findGroup(db, store, directoryId, idpId, name, nativeId);
   if (!existing) {
     if (!name) return { action: "ignored", detail: "group event carries no name", idpId };
     // As with users, create only under a confirmed SCIM id or the legacy
     // no-resource-id fallback, never an unresolved Directory Sync id.
-    const id = idForNewEventResource(data, nativeId, idpId);
-    const resource = groupResourceFromEvent(id, idpId, name, {});
-    await store.upsertGroup({ id, displayName: name, externalId: idpId, resource });
+    await createOwnedRow(db, "Groups", data, nativeId, idpId, directoryId, (id) =>
+      store.upsertGroup({
+        id,
+        displayName: name,
+        externalId: idpId,
+        resource: groupResourceFromEvent(id, idpId, name, {}),
+        directoryId,
+      }),
+    );
     return { action: "applied", detail: `group "${name}" created`, idpId };
   }
 
   const displayName = name ?? existing.display_name;
   if (existing.display_name === displayName && existing.external_id === idpId) {
+    await claimRow(db, "Groups", existing.id, directoryId);
     return { action: "skipped", detail: "no transition", idpId };
   }
   const resource = groupResourceFromEvent(
@@ -519,6 +569,7 @@ async function upsertGroupFromEvent(
     parseResource(existing.resource),
   );
   await store.upsertGroup({ id: existing.id, displayName, externalId: idpId, resource });
+  await claimRow(db, "Groups", existing.id, directoryId);
   const detail =
     existing.display_name !== displayName ? `renamed to "${displayName}"` : "attributes updated";
   return { action: "applied", detail, idpId };
@@ -533,8 +584,15 @@ async function deleteGroupFromEvent(
   const idpId = groupKeyFromEvent(data);
   if (!idpId) return { action: "ignored", detail: "group event carries no key" };
   const nativeId = await resolveNativeEventId(db, store, directoryId, "Groups", data, true);
-  const existing = await findGroup(store, idpId, asString(data.name), nativeId);
-  if (!existing) return { action: "skipped", detail: "no-op: group already absent", idpId };
+  const existing = await findGroup(db, store, directoryId, idpId, asString(data.name), nativeId);
+  if (!existing) {
+    if (!nativeId)
+      await refuseUnclaimedOffboard(db, NATIVE_TABLES.groups, [
+        ["external_id = ?", idpId],
+        ["lower(display_name) = lower(?)", asString(data.name)],
+      ]);
+    return { action: "skipped", detail: "no-op: group already absent", idpId };
+  }
   await store.deleteGroup(existing.id);
   return {
     action: "applied",
@@ -590,18 +648,29 @@ async function changeMembership(
     groupData,
     op === "remove",
   );
-  const user = await findUser(store, userIdpId, userName, nativeUserId);
+  const user = await findUser(db, store, directoryId, userIdpId, userName, nativeUserId);
   if (!user && op === "remove") {
+    if (!nativeUserId)
+      await refuseUnclaimedOffboard(db, NATIVE_TABLES.users, [
+        ["external_id = ?", userIdpId],
+        ["lower(user_name) = lower(?)", userName],
+      ]);
     return { action: "skipped", detail: "no-op: user not present", idpId };
   }
-  const group = await findGroup(store, groupIdpId, groupName, nativeGroupId);
-  if (!group && op === "remove")
+  const group = await findGroup(db, store, directoryId, groupIdpId, groupName, nativeGroupId);
+  if (!group && op === "remove") {
+    if (!nativeGroupId)
+      await refuseUnclaimedOffboard(db, NATIVE_TABLES.groups, [
+        ["external_id = ?", groupIdpId],
+        ["lower(display_name) = lower(?)", groupName],
+      ]);
     return { action: "skipped", detail: "no-op: group not present", idpId };
+  }
   if (
     !group &&
     !(await isNewestAcross(
       db,
-      await eventScopes(db, store, directoryId, "dsync.group.updated", groupData),
+      (await eventScopes(db, store, directoryId, "dsync.group.updated", groupData)).check,
       eventAt,
     ))
   ) {
@@ -611,12 +680,6 @@ async function changeMembership(
       idpId,
     };
   }
-  const newUserId = !user
-    ? idForNewEventResource(userData, nativeUserId, userIdpId ?? crypto.randomUUID())
-    : null;
-  const newGroupId = !group
-    ? idForNewEventResource(groupData, nativeGroupId, groupIdpId ?? crypto.randomUUID())
-    : null;
   let userId = user?.id ?? null;
   let userOnboarded = false;
   if (!userId) {
@@ -626,7 +689,7 @@ async function changeMembership(
     if (
       !(await isNewestAcross(
         db,
-        await eventScopes(db, store, directoryId, "dsync.user.updated", userData),
+        (await eventScopes(db, store, directoryId, "dsync.user.updated", userData)).check,
         eventAt,
       ))
     ) {
@@ -637,15 +700,24 @@ async function changeMembership(
       };
     }
     // The same ID contract applies to a partial membership stub.
-    userId = newUserId!;
     const active = userData.state === undefined ? true : userData.state === "active";
-    await store.upsertUser({
-      id: userId,
-      userName,
-      externalId: userIdpId,
-      active,
-      resource: userResourceFromEvent(userId, userIdpId, userName, active, userData, {}),
-    });
+    userId = await createOwnedRow(
+      db,
+      "Users",
+      userData,
+      nativeUserId,
+      userIdpId ?? crypto.randomUUID(),
+      directoryId,
+      (id) =>
+        store.upsertUser({
+          id,
+          userName,
+          externalId: userIdpId,
+          active,
+          resource: userResourceFromEvent(id, userIdpId, userName, active, userData, {}),
+          directoryId,
+        }),
+    );
     stubs += 1;
     userOnboarded = active;
   }
@@ -653,17 +725,29 @@ async function changeMembership(
   let groupId = group?.id ?? null;
   let groupLabel = group?.display_name ?? groupName ?? groupIdpId ?? "";
   if (!groupId) {
-    groupId = newGroupId!;
     const displayName = groupName ?? groupIdpId ?? "unknown group";
     groupLabel = displayName;
-    await store.upsertGroup({
-      id: groupId,
-      displayName,
-      externalId: groupIdpId,
-      resource: groupResourceFromEvent(groupId, groupIdpId, displayName, {}),
-    });
+    groupId = await createOwnedRow(
+      db,
+      "Groups",
+      groupData,
+      nativeGroupId,
+      groupIdpId ?? crypto.randomUUID(),
+      directoryId,
+      (id) =>
+        store.upsertGroup({
+          id,
+          displayName,
+          externalId: groupIdpId,
+          resource: groupResourceFromEvent(id, groupIdpId, displayName, {}),
+          directoryId,
+        }),
+    );
     stubs += 1;
   }
+
+  await claimRow(db, "Users", userId, directoryId);
+  await claimRow(db, "Groups", groupId, directoryId);
 
   const stubNote = stubs > 0 ? ` (${stubs} stub row${stubs > 1 ? "s" : ""} created)` : "";
   const onboardNote = userOnboarded ? "; onboard()" : "";
@@ -734,33 +818,168 @@ async function resolveNativeEventId(
   });
 }
 
+/**
+ * The native tables are one namespace shared by every directory this listener
+ * serves, and the attribute fallbacks below match on values each directory's IdP
+ * chooses. So a fallback only binds a row this directory owns, or an unclaimed
+ * row while this is the only directory configured (where there is no one else
+ * it could belong to). A confirmed SCIM id is trusted as-is.
+ */
+async function ownedRow<Row>(
+  db: Datastore,
+  table: string,
+  where: string,
+  value: string,
+  directoryId: string,
+): Promise<Row | null> {
+  const sole = await isSoleDirectory(db);
+  return withDatastoreRetry(() =>
+    db
+      .prepare(
+        `SELECT * FROM ${table} WHERE ${where} ` +
+          "AND (directory_id = ? OR (directory_id IS NULL AND ? = 1)) ORDER BY id LIMIT 1",
+      )
+      .bind(value, directoryId, sole ? 1 : 0)
+      .first<Row>(),
+  );
+}
+
+/**
+ * A delete with no confirmed native id that matches only a row no directory has
+ * claimed yet (written before rows had an owner, now that several directories
+ * share the store) cannot tell whose row it is. Acknowledging it as absent would leave that user active, so
+ * fail the event instead: the handler error is logged and a redelivery retries.
+ */
+async function refuseUnclaimedOffboard(
+  db: Datastore,
+  table: string,
+  matches: [string, string | null][],
+): Promise<void> {
+  for (const [where, value] of matches) {
+    if (!value) continue;
+    const row = await withDatastoreRetry(() =>
+      db
+        .prepare(`SELECT id FROM ${table} WHERE ${where} AND directory_id IS NULL LIMIT 1`)
+        .bind(value)
+        .first<{ id: string }>(),
+    );
+    if (row) {
+      throw new Error(
+        `refusing to treat the delete as a no-op: unclaimed native row ${row.id} matches it, ` +
+          "and with several directories configured its owner is unknown",
+      );
+    }
+  }
+}
+
+async function isSoleDirectory(db: Datastore): Promise<boolean> {
+  const row = await withDatastoreRetry(() =>
+    db.prepare("SELECT COUNT(*) AS n FROM scim_directories").first<{ n: number }>(),
+  );
+  return Number(row?.n ?? 0) <= 1;
+}
+
+/**
+ * The id for a row this event creates. Without a confirmed SCIM id the legacy
+ * fallback reuses the IdP's key as the row id, which another directory's IdP can
+ * choose too; never let that overwrite a row this directory could not match.
+ */
+async function newRowId(
+  db: Datastore,
+  kind: "Users" | "Groups",
+  data: Json,
+  nativeId: string | null,
+  fallback: string,
+  directoryId: string,
+): Promise<string> {
+  const id = idForNewEventResource(data, nativeId, fallback);
+  if (nativeId) return id;
+  const table = kind === "Users" ? NATIVE_TABLES.users : NATIVE_TABLES.groups;
+  const row = await withDatastoreRetry(() =>
+    db
+      .prepare(`SELECT directory_id FROM ${table} WHERE id = ?`)
+      .bind(id)
+      .first<{ directory_id: string | null }>(),
+  );
+  if (!row || row.directory_id === directoryId) return id;
+  if (row.directory_id === null && (await isSoleDirectory(db))) return id;
+  return crypto.randomUUID();
+}
+
+/**
+ * Write a row this event creates. The write itself refuses an id another
+ * directory owns (it may have taken the id since {@link newRowId} looked), and
+ * the row then goes under a fresh id instead.
+ */
+async function createOwnedRow(
+  db: Datastore,
+  kind: "Users" | "Groups",
+  data: Json,
+  nativeId: string | null,
+  fallback: string,
+  directoryId: string,
+  write: (id: string) => Promise<boolean>,
+): Promise<string> {
+  const id = await newRowId(db, kind, data, nativeId, fallback, directoryId);
+  if (await write(id)) return id;
+  const fresh = crypto.randomUUID();
+  if (!(await write(fresh))) throw new Error(`could not create a native ${kind} row`);
+  return fresh;
+}
+
+/** Stamp an unclaimed native row with the directory whose event wrote it. */
+async function claimRow(
+  db: Datastore,
+  kind: "Users" | "Groups",
+  id: string,
+  directoryId: string,
+): Promise<void> {
+  const table = kind === "Users" ? NATIVE_TABLES.users : NATIVE_TABLES.groups;
+  await withDatastoreRetry(() =>
+    db
+      .prepare(`UPDATE ${table} SET directory_id = ? WHERE id = ? AND directory_id IS NULL`)
+      .bind(directoryId, id)
+      .run(),
+  );
+}
+
 async function findUser(
+  db: Datastore,
   store: ScimStore,
+  directoryId: string,
   idpId: string | null,
   userName: string | null,
   nativeId: string | null = null,
 ): Promise<UserRow | null> {
   // A known SCIM identity cannot be redirected to attributes reused by another row.
   if (nativeId) return store.userById(nativeId);
+  const table = NATIVE_TABLES.users;
   if (idpId) {
-    const byExternalId = await store.userByExternalId(idpId);
+    const byExternalId = await ownedRow<UserRow>(db, table, "external_id = ?", idpId, directoryId);
     if (byExternalId) return byExternalId;
   }
-  return userName ? store.userByUserName(userName) : null;
+  return userName
+    ? ownedRow<UserRow>(db, table, "lower(user_name) = lower(?)", userName, directoryId)
+    : null;
 }
 
 async function findGroup(
+  db: Datastore,
   store: ScimStore,
+  directoryId: string,
   idpId: string | null,
   name: string | null,
   nativeId: string | null = null,
 ): Promise<GroupRow | null> {
   if (nativeId) return store.groupById(nativeId);
+  const table = NATIVE_TABLES.groups;
   if (idpId) {
-    const byExternalId = await store.groupByExternalId(idpId);
+    const byExternalId = await ownedRow<GroupRow>(db, table, "external_id = ?", idpId, directoryId);
     if (byExternalId) return byExternalId;
   }
-  return name ? store.groupByDisplayName(name) : null;
+  return name
+    ? ownedRow<GroupRow>(db, table, "lower(display_name) = lower(?)", name, directoryId)
+    : null;
 }
 
 function userResourceFromEvent(

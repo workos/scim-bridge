@@ -358,6 +358,74 @@ describe("events transport switcher", () => {
       expect(await getConfig(env.DB, EVENTS_URL_KEY)).toBeNull();
     });
 
+    it("never presents WORKOS_API_KEY to an Events API URL chosen in the panel", async () => {
+      // WORKOS_API_KEY is an environment-wide credential the panel
+      // never shows. If a panel operator could pick where it is sent, panel
+      // access would be enough to have it delivered to their own server.
+      const env = await seedTransportEnv();
+      const seen: { origin: string; auth: string | null }[] = [];
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const req = input instanceof Request ? input : new Request(input, init);
+        seen.push({ origin: new URL(req.url).origin, auth: req.headers.get("Authorization") });
+        return Response.json({ data: [], list_metadata: { before: null, after: null } });
+      }) as typeof fetch;
+      controller = createEventsPollerController(env.DB, demoBoot({ envApiKey: "sk_env_victim" }));
+      await controller.reconcile();
+      await controller.settled();
+
+      const result = await setEventsPollTarget(
+        env.DB,
+        { controller, envKeyConfigured: true },
+        { target: "workos", url: "https://capture.attacker.test/workos" },
+      );
+      await controller.settled();
+
+      expect(seen.filter((r) => r.auth === "Bearer sk_env_victim").map((r) => r.origin)).toEqual(
+        [],
+      );
+      expect(result.error).toMatch(/WORKOS_EVENTS_URL/);
+      expect(await getConfig(env.DB, EVENTS_URL_KEY)).toBeNull();
+      expect(await getConfig(env.DB, EVENTS_TARGET_KEY)).toBeNull();
+    });
+
+    it("never presents WORKOS_API_KEY to a persisted non-env URL", async () => {
+      const env = await seedTransportEnv();
+      const real = installTransportFetch(env);
+      await setConfig(env.DB, EVENTS_TARGET_KEY, "workos");
+      await setConfig(env.DB, EVENTS_URL_KEY, "https://capture.attacker.test/workos");
+
+      controller = createEventsPollerController(
+        env.DB,
+        demoBoot({ envApiKey: "sk_env_victim", envEventsUrl: REAL_URL }),
+      );
+      await controller.reconcile();
+      await controller.settled();
+
+      expect(controller.status().baseUrl).toBe(REAL_URL);
+      expect(real.auths).toEqual(["Bearer sk_env_victim"]);
+    });
+
+    it("polls WORKOS_EVENTS_URL with WORKOS_API_KEY when the panel selects real WorkOS", async () => {
+      const env = await seedTransportEnv();
+      const real = installTransportFetch(env);
+      controller = createEventsPollerController(
+        env.DB,
+        demoBoot({ envApiKey: "sk_env_123", envEventsUrl: REAL_URL }),
+      );
+      expect(controller.status().pinnedEventsUrl).toBe(REAL_URL);
+
+      const result = await setEventsPollTarget(
+        env.DB,
+        { controller, envKeyConfigured: true },
+        { target: "workos", url: `${REAL_URL}/` },
+      );
+      await controller.settled();
+
+      expect(result.error).toBeUndefined();
+      expect(controller.status().baseUrl).toBe(REAL_URL);
+      expect(real.auths).toEqual(["Bearer sk_env_123"]);
+    });
+
     it("keeps the poller stopped with a visible reason if config reaches the keyless state anyway", async () => {
       // Defense in depth behind the action validation: config written by hand
       // (or a key cleared out from under a target) must not crash or silently
@@ -415,7 +483,10 @@ describe("events transport switcher", () => {
       await setConfig(env.DB, EVENTS_TARGET_KEY, "workos");
       await setConfig(env.DB, EVENTS_URL_KEY, REAL_URL);
 
-      controller = createEventsPollerController(env.DB, demoBoot({ envApiKey: "sk_env_123" }));
+      controller = createEventsPollerController(
+        env.DB,
+        demoBoot({ envApiKey: "sk_env_123", envEventsUrl: REAL_URL }),
+      );
       const status = await controller.reconcile();
       await controller.settled();
 

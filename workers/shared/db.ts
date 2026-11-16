@@ -653,7 +653,8 @@ export async function deleteMapping(
 export type NewNativeWriteFailure = Pick<
   NativeWriteFailure,
   "directory_id" | "resource_type" | "resource_key" | "method" | "native_status" | "detail"
->;
+> &
+  Partial<Pick<NativeWriteFailure, "write_fingerprint">>;
 
 /**
  * Record that WorkOS holds a write native does not.
@@ -665,7 +666,10 @@ export type NewNativeWriteFailure = Pick<
  *
  * Keyed on the resource rather than the attempt, so an IdP retrying every minute
  * keeps one row (with a rising `attempts`) instead of burying the set of diverged
- * resources under its own noise.
+ * resources under its own noise. A row keeps a fingerprint only while every
+ * failure it absorbed was the same write, and a `DELETE` row stays a `DELETE` row:
+ * a later failure of some other write must not relabel a deprovisioning gap as
+ * something a retry of that write can retire.
  */
 export async function recordNativeWriteFailure(
   db: Datastore,
@@ -675,10 +679,19 @@ export async function recordNativeWriteFailure(
     db
       .prepare(
         "INSERT INTO native_write_failures (directory_id, resource_type, resource_key, method, " +
-          "native_status, detail) VALUES (?, ?, ?, ?, ?, ?) " +
+          "native_status, detail, write_fingerprint) VALUES (?, ?, ?, ?, ?, ?, ?) " +
           "ON CONFLICT (directory_id, resource_type, resource_key) DO UPDATE SET " +
-          "method = excluded.method, native_status = excluded.native_status, " +
-          "detail = excluded.detail, attempts = native_write_failures.attempts + 1, " +
+          "method = CASE WHEN native_write_failures.method = 'DELETE' THEN 'DELETE' " +
+          "ELSE excluded.method END, " +
+          "native_status = CASE WHEN native_write_failures.method = 'DELETE' " +
+          "AND excluded.method != 'DELETE' " +
+          "THEN native_write_failures.native_status ELSE excluded.native_status END, " +
+          "detail = CASE WHEN native_write_failures.method = 'DELETE' " +
+          "AND excluded.method != 'DELETE' " +
+          "THEN native_write_failures.detail ELSE excluded.detail END, " +
+          "write_fingerprint = CASE WHEN native_write_failures.write_fingerprint = " +
+          "excluded.write_fingerprint THEN excluded.write_fingerprint ELSE NULL END, " +
+          "attempts = native_write_failures.attempts + 1, " +
           "last_seen_at = datetime('now'), sweep_token = NULL",
       )
       .bind(
@@ -688,28 +701,53 @@ export async function recordNativeWriteFailure(
         failure.method,
         failure.native_status,
         failure.detail,
+        failure.write_fingerprint ?? null,
       )
       .run(),
   );
 }
 
-/** Drop the divergence record for a resource, because a write to it has now
- *  reached native. Self-healing is the common case — the IdP retries, or the next
- *  change to the same resource lands — and a record that outlives the divergence
- *  it describes trains the operator to ignore the surface. */
-export async function clearNativeWriteFailure(
+/**
+ * What a live write proves about the divergence recorded for one resource key.
+ *
+ * - `deleted`: a delete of exactly this resource converged, so nothing recorded
+ *   for it is still missing from native — including a `DELETE` gap.
+ * - `created`: native applied a create filed under this key, which repairs a
+ *   create native was missing and nothing else.
+ * - `retried`: native applied this exact write (by fingerprint), which repairs
+ *   the row only if the row records that same write.
+ *
+ * A later, different write to the same resource proves nothing: a display-name
+ * PATCH does not apply a failed membership removal.
+ */
+export type DivergenceRepair =
+  | { kind: "deleted" }
+  | { kind: "created"; fingerprint: string }
+  | { kind: "retried"; fingerprint: string };
+
+/** Drop the divergence record for a resource when `repair` proves the write it
+ *  records has now reached native. Self-healing is the common case — the IdP
+ *  retries — and anything a live write cannot prove waits for a reconcile. */
+export async function retireNativeWriteFailure(
   db: Datastore,
   directoryId: string,
   resourceType: ResourceType,
   resourceKey: string,
+  repair: DivergenceRepair,
 ): Promise<void> {
+  const base =
+    "DELETE FROM native_write_failures WHERE directory_id = ? AND resource_type = ? " +
+    "AND resource_key = ?";
+  const [sql, extra] =
+    repair.kind === "deleted"
+      ? [base, []]
+      : repair.kind === "created"
+        ? [`${base} AND method = 'POST' AND write_fingerprint = ?`, [repair.fingerprint]]
+        : [`${base} AND method != 'DELETE' AND write_fingerprint = ?`, [repair.fingerprint]];
   await withDatastoreRetry(() =>
     db
-      .prepare(
-        "DELETE FROM native_write_failures WHERE directory_id = ? AND resource_type = ? " +
-          "AND resource_key = ?",
-      )
-      .bind(directoryId, resourceType, resourceKey)
+      .prepare(sql)
+      .bind(directoryId, resourceType, resourceKey, ...extra)
       .run(),
   );
 }
