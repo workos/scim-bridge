@@ -294,7 +294,10 @@ export function requireSecurePostgresTransport(databaseUrl: string, allowPlainte
   if (host.startsWith("/") || isLoopbackHost(host)) return;
   const verified =
     config.ssl === true ||
-    (typeof config.ssl === "object" && config.ssl.rejectUnauthorized !== false);
+    (typeof config.ssl === "object" &&
+      config.ssl.rejectUnauthorized !== false &&
+      // libpq verify-ca replaces the hostname check with a no-op.
+      !config.ssl.checkServerIdentity);
   if (verified) return;
   if (allowPlaintext) {
     console.warn(

@@ -1,3 +1,6 @@
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { requireSecurePostgresTransport } from "../server/config";
 
@@ -24,6 +27,17 @@ describe("requireSecurePostgresTransport", () => {
   it("refuses sslmode=require when the URL opts into libpq semantics, which skip verification", () => {
     expect(() =>
       requireSecurePostgresTransport(`${remote}?sslmode=require&uselibpqcompat=true`, false),
+    ).toThrow(/without verified TLS/);
+  });
+
+  it("refuses libpq verify-ca, which checks the CA but not the server's hostname", () => {
+    const ca = join(tmpdir(), "bridge-test-ca.pem");
+    writeFileSync(ca, "test ca");
+    expect(() =>
+      requireSecurePostgresTransport(
+        `${remote}?sslmode=verify-ca&uselibpqcompat=true&sslrootcert=${ca}`,
+        false,
+      ),
     ).toThrow(/without verified TLS/);
   });
 
