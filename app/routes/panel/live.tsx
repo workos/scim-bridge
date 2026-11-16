@@ -13,7 +13,8 @@ import {
   withDatastoreRetry,
 } from "../../../workers/shared/db";
 import { runBackfill } from "../../../workers/shared/backfill";
-import { joinScimUrl } from "../../../workers/shared/scim";
+import { joinScimUrl } from "../../../workers/shared/scim-url";
+import { refusePlaintextToken } from "../../../workers/shared/upstream-url.server";
 import { callIdpSimulator } from "./idp-simulator";
 import { FlowRail } from "./flow-rail";
 import { readUserSnapshot, type EndpointCount } from "./user-count";
@@ -87,6 +88,7 @@ async function fetchWorkosDirectory(
   if (!url || !token) return unavailable;
   const headers = { Authorization: `Bearer ${token}` };
   try {
+    refusePlaintextToken(url);
     // joinScimUrl + redirect:"manual": a saved base can neither fold the path into
     // a query nor bounce this bearer-token read to an internal/metadata host.
     const [snapshot, gRes] = await Promise.all([
@@ -119,6 +121,7 @@ async function cleanWorkosDirectory(
   if (!url || !token) return { ok: false, deleted: 0, failed: 0 };
   const headers = { Authorization: `Bearer ${token}` };
   try {
+    refusePlaintextToken(url);
     const [uRes, gRes] = await Promise.all([
       fetch(`${joinScimUrl(url, "/Users")}?count=200`, { headers, redirect: "manual" }),
       fetch(`${joinScimUrl(url, "/Groups")}?count=200`, { headers, redirect: "manual" }),
