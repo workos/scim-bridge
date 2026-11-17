@@ -1,7 +1,7 @@
 import type { Datastore } from "../shared/datastore";
 import type { Directory } from "../shared/types";
 import { getConfig } from "../shared/db";
-import { clientTokenFor } from "../shared/client-tokens";
+import { clientTokenFor, SIMULATOR_REQUEST_HEADER } from "../shared/client-tokens";
 import * as store from "./store";
 import type { IdpEnv, IdpGroup, IdpUser, Origin } from "./types";
 
@@ -28,7 +28,10 @@ async function send(
   path: string,
   body?: unknown,
 ): Promise<ScimResult> {
-  const headers = new Headers({ Authorization: `Bearer ${token}` });
+  const headers = new Headers({
+    Authorization: `Bearer ${token}`,
+    [SIMULATOR_REQUEST_HEADER]: "1",
+  });
   if (body !== undefined) headers.set("Content-Type", SCIM_CONTENT_TYPE);
   const response = await fetch(`${base}${path}`, {
     method,

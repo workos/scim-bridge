@@ -184,6 +184,7 @@ export interface SeedDirectoryOptions {
   proxy_token?: string;
   native_url?: string;
   native_token?: string;
+  workos_url?: string;
   native_token_partitioned?: number;
   workos_token?: string;
   workos_directory_id?: string | null;
@@ -220,7 +221,7 @@ export async function seedDirectory(
       opts.native_url ?? NATIVE_URL,
       opts.native_token ?? "native-secret",
       opts.native_token_partitioned ?? 0,
-      WORKOS_URL,
+      opts.workos_url ?? WORKOS_URL,
       opts.workos_token ?? "workos-secret",
       opts.workos_directory_id ?? null,
       opts.log_persistence ?? 0,

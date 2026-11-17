@@ -1,6 +1,6 @@
 import type { Directory, WorkerHandler } from "../shared/types";
-import { getDirectoryById, withDatastoreRetry } from "../shared/db";
-import { demoDirectoryId } from "../shared/client-tokens";
+import { withDatastoreRetry } from "../shared/db";
+import { drivableDemoDirectory } from "../shared/client-tokens";
 import * as client from "./client";
 import type { ActionContext } from "./client";
 import { seedDirectory } from "./auto";
@@ -112,9 +112,8 @@ async function route(request: Request, env: IdpEnv): Promise<Response> {
     // operator's imported directory holds real upstream credentials and real
     // users, and provisioning one from here would be an unauthenticated write to
     // their production identity systems.
-    const demoId = await demoDirectoryId(env.DB);
-    const directory =
-      directoryId && directoryId === demoId ? await getDirectoryById(env.DB, directoryId) : null;
+    const demo = await drivableDemoDirectory(env.DB);
+    const directory = directoryId && directoryId === demo?.id ? demo : null;
     if (!directory) {
       // Two different mistakes, two different messages. The old single string said
       // "Unknown or missing" for both, so a valid id that failed to parse out of the
@@ -132,7 +131,6 @@ async function route(request: Request, env: IdpEnv): Promise<Response> {
       // Only ever the demo directory. Listing what the caller may drive still turns
       // a dead end into the next step, without telling an anonymous caller which
       // directories this bridge migrates for real.
-      const demo = demoId ? await getDirectoryById(env.DB, demoId) : null;
       return json(
         {
           error: `The IdP simulator only drives the bundled demo directory, not ${directoryId}.`,
