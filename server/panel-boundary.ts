@@ -70,8 +70,15 @@ export class PanelAuthThrottle {
   }
 }
 
-/** The connecting peer. Forwarded-for headers are caller-controlled, so not them. */
-function peerAddress(c: Context): string {
+/**
+ * Who is guessing. Normally the connecting peer, since forwarded-for headers are
+ * caller-controlled. With PANEL_TRUST_PROXY the peer is a reverse proxy shared by
+ * everyone, so use the last X-Forwarded-For entry instead: the address that proxy
+ * appended itself, after anything the caller sent.
+ */
+function sourceAddress(c: Context, trustProxy: boolean): string {
+  const forwarded = trustProxy ? c.req.header("X-Forwarded-For")?.split(",").at(-1)?.trim() : null;
+  if (forwarded) return forwarded;
   try {
     return getConnInfo(c).remote.address ?? "unknown";
   } catch {
@@ -86,9 +93,9 @@ function peerAddress(c: Context): string {
  * only a wrong pair counts against the source.
  */
 export function panelAuthGuard(
-  config: Pick<AppConfig, "panelAuthUser" | "panelAuthPassword" | "demoMode">,
+  config: Pick<AppConfig, "panelAuthUser" | "panelAuthPassword" | "demoMode" | "panelTrustProxy">,
   throttle: PanelAuthThrottle = new PanelAuthThrottle(),
-  sourceOf: (c: Context) => string = peerAddress,
+  sourceOf: (c: Context) => string = (c) => sourceAddress(c, config.panelTrustProxy),
 ): MiddlewareHandler {
   return async (c, next) => {
     if (panelAuthExempt(new URL(c.req.url).pathname, config)) return next();
