@@ -1,5 +1,5 @@
 import type { Directory } from "../shared/types";
-import { getDirectoryById } from "../shared/db";
+import { drivableDemoDirectory } from "../shared/client-tokens";
 import { performTick } from "./auto";
 import * as store from "./store";
 import type { IdpEnv } from "./types";
@@ -38,13 +38,14 @@ class IdpScheduler {
   }
 
   private async tick(env: IdpEnv, directoryId: string): Promise<void> {
-    const directory = await getDirectoryById(env.DB, directoryId);
+    const demo = await drivableDemoDirectory(env.DB);
+    const directory = demo?.id === directoryId ? demo : null;
     if (!directory) {
       await this.stop(env, directoryId);
       return;
     }
     try {
-      await performTick({ env, directory: directory as Directory, origin: "auto" });
+      await performTick({ env, directory, origin: "auto" });
     } catch (error) {
       await store.logActivity(env.DB, {
         directory_id: directoryId,

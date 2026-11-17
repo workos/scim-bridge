@@ -29,8 +29,9 @@
  * Anything that mints or rotates a token is responsible for telling these stores
  * about it; there is no way to recompute it later.
  */
-import { getConfig, setConfig } from "./db";
+import { getConfig, getDirectoryById, setConfig } from "./db";
 import type { Datastore } from "./datastore";
+import type { Directory } from "./types";
 
 /** Config key naming the one directory the bundled simulators are allowed to drive. */
 export const DEMO_DIRECTORY_ID_KEY = "idp.demo_directory_id";
@@ -39,6 +40,53 @@ export const DEMO_DIRECTORY_ID_KEY = "idp.demo_directory_id";
 export async function demoDirectoryId(db: Datastore): Promise<string | null> {
   return getConfig(db, DEMO_DIRECTORY_ID_KEY);
 }
+
+/** Both upstream legs of the seeded demo directory: this process's own fakes. */
+export function bundledDemoEndpoints(loopbackBase: string): {
+  native_url: string;
+  workos_url: string;
+} {
+  return {
+    native_url: `${loopbackBase}/__demo/native/scim/v2`,
+    workos_url: `${loopbackBase}/__demo/native/mock-workos/scim/v2`,
+  };
+}
+
+/**
+ * The demo directory the unauthenticated simulators may drive, or null.
+ *
+ * The id alone is not enough: an operator can repoint the demo row at a real
+ * SCIM app, and the simulator's stored proxy token would then write to it. So
+ * the row is re-checked on every use and only qualifies while both upstream
+ * legs are still this process's bundled fakes.
+ */
+export async function drivableDemoDirectory(db: Datastore): Promise<Directory | null> {
+  const [id, loopbackBase] = await Promise.all([
+    demoDirectoryId(db),
+    getConfig(db, "proxy.loopback_url"),
+  ]);
+  if (!id) return null;
+  const directory = await getDirectoryById(db, id);
+  return directory && pointsAtBundledFakes(directory, loopbackBase) ? directory : null;
+}
+
+/** Whether both upstream legs of `directory` are this process's own fakes. */
+export function pointsAtBundledFakes(
+  directory: Pick<Directory, "native_url" | "workos_url">,
+  loopbackBase: string | null,
+): boolean {
+  if (!loopbackBase) return false;
+  const bundled = bundledDemoEndpoints(loopbackBase);
+  return directory.native_url === bundled.native_url && directory.workos_url === bundled.workos_url;
+}
+
+/**
+ * Marks a SCIM request as sent by the IdP simulator. The entry check above is a
+ * moment in time, and a seed or tick sends many requests after it, so the proxy
+ * re-checks the very row it is about to forward with whenever this is present.
+ * Omitting it gains a caller nothing: they would need the proxy token anyway.
+ */
+export const SIMULATOR_REQUEST_HEADER = "X-Scim-Bridge-Simulator";
 
 /** Tokens this process was started with (native-app mode's DIRECTORIES_JSON). */
 const remembered = new Map<string, string>();
