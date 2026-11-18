@@ -81,6 +81,8 @@ export interface AppConfig {
    *  mutations — for scripting the panel from another origin. Off by default,
    *  and mirrors `panelAuthDisabled`: consent, logged loudly at boot. */
   panelCsrfDisabled: boolean;
+  /** Count failed panel sign-ins by the last X-Forwarded-For entry, not the peer. */
+  panelTrustProxy: boolean;
   /** `native-app` role: bearer token the bridge presents to this app's /scim/v2. */
   nativeScimToken: string | null;
   /** `native-app` role: HMAC secret of the WorkOS webhook endpoint feeding /webhooks/dsync. */
@@ -265,6 +267,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     panelAuthPassword,
     panelAuthDisabled,
     panelCsrfDisabled,
+    panelTrustProxy: bool(env.PANEL_TRUST_PROXY),
     nativeScimToken: env.NATIVE_SCIM_TOKEN?.trim() || null,
     webhookSecret,
     bridgeStatusUrl: bridgeStatusUrl ? trimTrailingSlash(bridgeStatusUrl) : null,

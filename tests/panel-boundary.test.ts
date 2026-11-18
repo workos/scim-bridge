@@ -2,7 +2,12 @@ import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { antiFramingHeaders, PanelAuthThrottle, panelAuthGuard } from "../server/panel-boundary";
 
-const config = { panelAuthUser: "ada", panelAuthPassword: "hunter2", demoMode: false };
+const config = {
+  panelAuthUser: "ada",
+  panelAuthPassword: "hunter2",
+  demoMode: false,
+  panelTrustProxy: false,
+};
 
 function basic(user: string, pass: string): string {
   return `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
@@ -99,5 +104,43 @@ describe("failed panel sign-ins are throttled", () => {
       Array.from({ length: 11 }, () => get(basic("ada", "hunter2"))),
     );
     expect(overlapping.map((r) => r.status)).toEqual(Array(11).fill(200));
+  });
+});
+
+describe("behind a reverse proxy", () => {
+  /** A panel behind the guard's real source lookup; every request shares one peer. */
+  function proxied(trustProxy: boolean) {
+    const app = new Hono();
+    app.use(
+      "*",
+      panelAuthGuard(
+        { ...config, panelTrustProxy: trustProxy },
+        new PanelAuthThrottle({ perSource: 2 }),
+      ),
+    );
+    app.get("/panel", (c) => c.text("tokens live here"));
+    return (authorization: string, forwardedFor: string) =>
+      app.request("/panel", {
+        headers: { Authorization: authorization, "X-Forwarded-For": forwardedFor },
+      });
+  }
+
+  it("with PANEL_TRUST_PROXY, one caller's wrong guesses do not lock out another", async () => {
+    const get = proxied(true);
+    for (let i = 0; i < 3; i++) await get(basic("ada", "x"), "198.51.100.7");
+    expect((await get(basic("ada", "hunter2"), "198.51.100.7")).status).toBe(429);
+    expect((await get(basic("ada", "hunter2"), "203.0.113.9")).status).toBe(200);
+  });
+
+  it("counts by the entry the proxy appended, not one the caller sent", async () => {
+    const get = proxied(true);
+    for (let i = 0; i < 3; i++) await get(basic("ada", "x"), `10.0.0.${i}, 198.51.100.7`);
+    expect((await get(basic("ada", "hunter2"), "198.51.100.7")).status).toBe(429);
+  });
+
+  it("ignores X-Forwarded-For unless told to trust it", async () => {
+    const get = proxied(false);
+    for (let i = 0; i < 3; i++) await get(basic("ada", "x"), `10.0.0.${i}`);
+    expect((await get(basic("ada", "hunter2"), "203.0.113.9")).status).toBe(429);
   });
 });

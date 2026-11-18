@@ -112,6 +112,7 @@ imported through the control panel.
 | `DATABASE_PATH` | no | `/data/scim-bridge.db` | SQLite file path. Mount a volume here to persist. The default is a path *inside the image*; running outside a container, set it to somewhere that exists. |
 | `PANEL_AUTH_USER` / `PANEL_AUTH_PASSWORD` | **yes** | — | HTTP Basic credentials guarding the control panel. The bridge refuses to start without them. |
 | `PANEL_AUTH_DISABLED` | no | `false` | Set to `true` to run `/panel` unauthenticated on purpose, when something in front of the bridge already authenticates it. |
+| `PANEL_TRUST_PROXY` | no | `false` | Set to `true` when the bridge is reachable only through your reverse proxy, which appends the caller to `X-Forwarded-For`. Failed panel sign-ins are then locked out per caller instead of per proxy. The Cloudflare adapter sets it. |
 | `APP_ENCRYPTION_KEY` | no | — | When set, encrypts each directory's native + WorkOS bearer tokens at rest (AES-256-GCM). Keep it stable; leave unset to store them in plaintext. |
 | `DEMO_MODE` | no | `false` | Mount the bundled IdP + native-app simulators under `/__demo` for a self-contained end-to-end demo. |
 

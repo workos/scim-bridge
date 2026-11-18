@@ -82,6 +82,7 @@ export class BridgeContainer extends Container<Env> {
       WEBHOOK_SECRET: env.WEBHOOK_SECRET,
       DIRECTORIES_JSON: env.DIRECTORIES_JSON,
       BRIDGE_STATUS_URL: env.BRIDGE_STATUS_URL,
+      PANEL_TRUST_PROXY: "true",
     });
   }
 }
@@ -98,6 +99,11 @@ export default {
     // One instance, always the same one. SQLite has a single writer, and every
     // request has to see the same database — including the panel, which reads what
     // the SCIM data plane just wrote.
-    return getContainer(env.BRIDGE, "singleton").fetch(request);
+    //
+    // The container sees every request arrive from this Worker, so name the caller
+    // for its sign-in throttle. Overwritten, never appended, so a caller cannot pick it.
+    const forwarded = new Request(request);
+    forwarded.headers.set("X-Forwarded-For", request.headers.get("CF-Connecting-IP") ?? "");
+    return getContainer(env.BRIDGE, "singleton").fetch(forwarded);
   },
 };
