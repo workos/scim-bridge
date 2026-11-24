@@ -8,9 +8,10 @@ each handoff.
 
 **The short version, when you are migrating many directories:**
 
-1. Send WorkOS one CSV naming your organizations → get back one credentials
-   sheet (Step A)
-2. Deploy the bridge, paste that sheet into **Bulk import** (Step B)
+1. Send WorkOS one CSV naming your organizations → get back one CSV with
+   your WorkOS SCIM endpoints (Step A)
+2. Deploy the bridge, fill in the endpoints and tokens, and use **Bulk import**
+   (Step B)
 3. Repoint IdPs — no credential change needed if you import each existing
    token (Step C)
 4. Stand up **one** listener for all directories, keyed by directory id
@@ -18,8 +19,8 @@ each handoff.
 5. **Pilot one directory end to end**, then advance the rest in waves with the
    bulk mode controls (Step E)
 
-Every per-directory operation has a bulk counterpart: import, mode
-changes, and the divergence counters all work across the whole list.
+Directory import, mode changes, and divergence counters all work across the
+whole list.
 
 Two parties act in this guide:
 
@@ -54,20 +55,17 @@ entry per directory to migrate. Each entry carries:
 
 WorkOS runs its internal-admin bulk-import over that list — creating an
 organization (where needed) and a **migrated directory** per entry, tagged with
-your `external_id` — and hands back a **ready-to-import bridge CSV** with the
-WorkOS side already filled in:
+your `external_id` — and hands back a **bridge import CSV** with the WorkOS
+SCIM endpoint filled in:
 
 ```csv
 name,native_url,native_token,workos_url,workos_token
-Acme — Okta,,,https://api.workos.com/scim/v2.0/AbC…,se_…
+Acme — Okta,,,https://api.workos.com/scim/v2.0/AbC…,
 ```
 
-- `workos_url` + `workos_token` — the WorkOS SCIM endpoint the bridge writes to
-  and the bearer token it presents, **filled in for you**. The token is returned
-  only here; treat it accordingly.
-- `native_url` + `native_token` — **left blank** for you to complete in
-  [Step B](#step-b--deploy-the-bridge-and-import-the-directories) with your
-  existing app's SCIM endpoint and token.
+- `workos_url` — the WorkOS SCIM endpoint the bridge writes to.
+- `workos_token`, `native_url`, and `native_token` — left blank. Fill these in
+  during [Step B](#step-b--deploy-the-bridge-and-import-the-directories).
 
 This CSV _is_ the bridge's bulk-import file — you finish it and load it in Step B,
 no reshaping. Directories provisioned this way are **imported directories**:
@@ -147,8 +145,8 @@ WorkOS webhooks do **not** target the bridge — they go to your app's listener
 
 Deploy ([runbook: deploy](./runbook.md#deploy)), then finish the CSV WorkOS
 handed you in Step A and load it — **Bulk import** takes the whole file, or you
-can add one directory at a time in the panel. Step A already filled `workos_url`
-and `workos_token`; you complete the two native columns:
+can add one directory at a time in the panel. Keep the `workos_url` from Step A
+and fill in the other fields:
 
 ```csv
 name,native_url,native_token,workos_url,workos_token
@@ -162,7 +160,11 @@ Acme — Okta,https://acme.example.com/scim/v2,tok_native,https://api.workos.com
   [the namespace rule](./runbook.md#deployment-requirement-one-directory-per-native-scim-namespace).
   The CSV can never attest — a flat-URL second directory is set up on its
   directory page after import.
-- `workos_url` + `workos_token` — already present from Step A; leave them as-is.
+- `workos_token` — in the [WorkOS Dashboard](https://dashboard.workos.com/),
+  open the matching directory and generate a new token in **Bearer tokens**.
+  Copy it when it appears: WorkOS only shows it once. Put it in your local
+  CSV or enter it in the bridge panel. Do not send the completed CSV back
+  to WorkOS or share it in a ticket.
 
 Two fields are set on the directory's page after import, not in this CSV:
 

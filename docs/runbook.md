@@ -246,10 +246,10 @@ warning clears.
 
 Open `/panel`.
 
-- **One directory** → *Import directory*: name, your native SCIM base URL + token,
-  and the WorkOS directory endpoint + token (from the credentials sheet WorkOS
-  returns when it provisions your directories — see the
-  [migration guide, Step A](./migration-guide.md#step-a--workos-provisions-your-directories)).
+- **One directory** → *Import directory*: name, your native SCIM base URL and
+  token, and the WorkOS directory endpoint and bearer token. WorkOS provides the
+  endpoint at provisioning; generate the token in the WorkOS Dashboard (see the
+  [migration guide, Step B](./migration-guide.md#step-b--deploy-the-bridge-and-import-the-directories)).
   The optional **Existing IdP bearer token** field is the proxy token to use — see
   [zero IdP-touch](#zero-idp-touch-deployment) below.
 - **Many** → *Bulk import*: paste CSV
@@ -260,13 +260,11 @@ Open `/panel`.
   directory already has — refuses the **whole** file: nothing is imported, so
   you never have to work out which half landed.
 
-  The WorkOS half of each row — `workos_url`, `workos_token`,
-  `workos_directory_id` — is pasted straight from the credentials sheet WorkOS
-  returns at provisioning time
-  ([migration guide, Step A](./migration-guide.md#step-a--workos-provisions-your-directories)).
-  Provisioning is a WorkOS-side operation — imported directories can't be
-  created from the dashboard — so if you don't have that sheet yet, that's the
-  step to do first.
+  WorkOS fills `workos_url` in the provisioning CSV. Generate a bearer token
+  for each directory and fill in `workos_token` before the bridge starts syncing
+  to WorkOS. Get the optional `workos_directory_id` from the WorkOS Dashboard.
+  If you don't have the provisioning CSV yet, start with the
+  [migration guide, Step A](./migration-guide.md#step-a--workos-provisions-your-directories).
 
 Then copy the directory's **SCIM base URL + proxy token** into your IdP's SCIM
 config. It starts in `passthrough`, so repointing the IdP changes no behavior —

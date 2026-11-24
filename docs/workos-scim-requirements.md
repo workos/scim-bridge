@@ -22,7 +22,7 @@ back to a checklist item.
 
 - [ ] **The imported directory type matches the actual upstream IdP.** The
       `type` in the list you give WorkOS is selected by you, not auto-detected from
-      SCIM traffic or the bridge credentials CSV. Confirm it with WorkOS during
+      SCIM traffic or the bridge import CSV. Confirm it with WorkOS during
       [Step A](./migration-guide.md#step-a--workos-provisions-your-directories),
       including for a previously imported directory. Do not select Generic SCIM
       just to bypass a provider-specific validation.
