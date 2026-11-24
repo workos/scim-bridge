@@ -66,7 +66,9 @@ export default function PanelLayout() {
 
   return (
     <Box className="min-h-screen">
-      <Flex direction="column" gap="5" maxWidth="1040px" mx="auto" px="6" py="7">
+      {/* Wide enough for the flow diagram (flow-rail.tsx) to sit inside its card
+          with the IdP node drawn, which is its widest form. */}
+      <Flex direction="column" gap="5" maxWidth="1280px" mx="auto" px="6" py="7">
         <Flex direction="column" gap="1">
           <Heading as="h1" size="7">
             <Logotype />
