@@ -107,14 +107,14 @@ automated by a workflow holding `GITHUB_TOKEN`.
 - [ ] **Remove the vendored internal UI code** — blocks everything
       below. Until then the image and the repo both contain WorkOS-internal
       source.
-- [ ] **Publish once while still internal.** Tag a release, or run the workflow
+- [x] **Publish once while still internal.** Tag a release, or run the workflow
       manually with `push_image` ticked. Nothing exists at
       `ghcr.io/workos/scim-bridge` until a first push creates the package, and a
       package that does not exist cannot be made public.
-- [ ] **GHCR package → public.** Org → Packages → `scim-bridge` → Package
+- [x] **GHCR package → public.** Org → Packages → `scim-bridge` → Package
       settings → Change visibility → Public. Until this is done, a pull returns
       `denied` for everyone outside the org.
-- [ ] **Delete the "Not yet" note in the README**, under *Running a published
+- [x] **Delete the "Not yet" note in the README**, under *Running a published
       image instead of building*, and re-read every `ghcr.io` line in the README
       to confirm it is now true. The note exists because until the two steps
       above are done, `docker pull ghcr.io/workos/scim-bridge:latest` fails with
@@ -127,7 +127,7 @@ automated by a workflow holding `GITHUB_TOKEN`.
       the link appeared; if it did not, set it in Package settings.
 - [ ] **Repository → public**. Settings → Danger Zone. Org-admin
       only.
-- [ ] **Verify as an outsider**, not as yourself:
+- [x] **Verify as an outsider**, not as yourself:
       `docker logout ghcr.io && docker pull ghcr.io/workos/scim-bridge:latest`
       from a machine with no WorkOS credentials. Logged in, a private package
       pulls fine and proves nothing.

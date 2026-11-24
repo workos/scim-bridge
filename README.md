@@ -63,13 +63,6 @@ the `scim-bridge-data` volume.
 
 ### Running a published image instead of building
 
-> **Not yet.** Nothing has been pushed to `ghcr.io/workos/scim-bridge` — today
-> the command below fails with `unauthorized`, which looks like a permissions
-> problem and is really "this has not been published". Build from this checkout
-> until it has; the two paths produce the same image.
-> ([`docs/releasing.md`](./docs/releasing.md#human-steps-going-public) tracks the
-> publish, and removing this note is a step in it.)
-
 ```bash
 docker run -p 8080:8080 -v scim-bridge-data:/data \
   -e PUBLIC_URL=https://scim-bridge.acme.com \
