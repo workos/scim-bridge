@@ -161,21 +161,23 @@ Acme — Okta,https://acme.example.com/scim/v2,tok_native,https://api.workos.com
   The CSV can never attest — a flat-URL second directory is set up on its
   directory page after import.
 - `workos_token` — in the [WorkOS Dashboard](https://dashboard.workos.com/),
-  open the matching directory and generate a new token in **Bearer tokens**.
-  Copy it when it appears: WorkOS only shows it once. Put it in your local
-  CSV or enter it in the bridge panel. Do not send the completed CSV back
-  to WorkOS or share it in a ticket.
+  open the matching directory and select **Generate new token** under
+  **Bearer tokens**. Copy it when it appears: WorkOS only shows it once.
+  Put it in your local CSV or enter it as the **WorkOS bearer token** in the
+  bridge panel. Do not send the completed CSV back to WorkOS or share it in a
+  ticket.
 
-Two fields are set on the directory's page after import, not in this CSV:
+The provisioning CSV omits two optional fields the bridge accepts as trailing
+columns, in this order:
 
-- `proxy_token` — the bridge mints one on import and does **not** display it;
-  press **Rotate** on the directory page to get a copyable token, shown once
-  ([tokens are hashed](./runbook.md#proxy-tokens-are-hashed-so-they-cant-be-read-back)).
-  If your IdP already presents a bearer token you want to keep, paste it into the
-  **Existing IdP bearer token** field instead and the IdP needs no credential
-  change ([zero IdP-touch](./runbook.md#zero-idp-touch-deployment)).
 - `workos_directory_id` — the WorkOS `directory_id` from Step A's note; the DSync
-  listener and status endpoint key on it (Step D).
+  listener and status endpoint key on it (Step D). You can also set it on the
+  directory's page after import.
+- `proxy_token` — if your IdP already presents a bearer token you want to keep,
+  supply it at import or use **Existing IdP bearer token** when importing one
+  directory. Otherwise, the bridge mints a token on import. Select **Rotate**
+  on the directory page to get a copyable token, shown once
+  ([tokens are hashed](./runbook.md#proxy-tokens-are-hashed-so-they-cant-be-read-back)).
 
 ## Step C — repoint the IdP
 
