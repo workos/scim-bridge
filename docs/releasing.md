@@ -104,7 +104,7 @@ The pipeline is ready before the repository is. These are the remaining steps,
 all of them permission changes an org admin makes by hand; none can or should be
 automated by a workflow holding `GITHUB_TOKEN`.
 
-- [ ] **Remove the vendored internal UI code** — blocks everything
+- [x] **Remove the vendored internal UI code** — blocks everything
       below. Until then the image and the repo both contain WorkOS-internal
       source.
 - [x] **Publish once while still internal.** Tag a release, or run the workflow
@@ -121,11 +121,11 @@ automated by a workflow holding `GITHUB_TOKEN`.
       `unauthorized` — which reads as "you lack permission", not "this is not
       published yet". Do this in the same change that publishes; a caveat whose
       removal depends on someone remembering is a caveat that ships.
-- [ ] **Confirm the package is linked to the repo.** The workflow stamps
+- [x] **Confirm the package is linked to the repo.** The workflow stamps
       `org.opencontainers.image.source`, which GitHub uses to link the package
       to `workos/scim-bridge` and show this README on the package page. Check
       the link appeared; if it did not, set it in Package settings.
-- [ ] **Repository → public**. Settings → Danger Zone. Org-admin
+- [x] **Repository → public**. Settings → Danger Zone. Org-admin
       only.
 - [x] **Verify as an outsider**, not as yourself:
       `docker logout ghcr.io && docker pull ghcr.io/workos/scim-bridge:latest`
